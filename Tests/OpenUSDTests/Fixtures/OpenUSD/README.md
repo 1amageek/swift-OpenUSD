@@ -20,9 +20,12 @@ Source paths:
 | `testSdfZipFile.testenv/` | `pxr/usd/sdf/testenv/testSdfZipFile.testenv/` |
 | `testSdfUsdzResolver/` | `pxr/usd/sdf/testenv/testSdfUsdzResolver/` |
 | `testSdfParsing.testenv/01_empty.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/01_empty.usda` |
+| `testSdfParsing.testenv/02_simple.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/02_simple.usda` |
 | `testSdfParsing.testenv/20_optionalsemicolons.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/20_optionalsemicolons.usda` |
+| `testSdfParsing.testenv/41_noEndingNewline.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/41_noEndingNewline.usda` |
 | `testSdfParsing.testenv/132_references.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/132_references.usda` |
 | `testSdfParsing.testenv/152_payloads.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/152_payloads.usda` |
+| `testSdfParsing.testenv/203_newlines.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/203_newlines.usda` |
 | `testSdfParsing.testenv/204_really_empty.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/204_really_empty.usda` |
 | `testUsdReadOutOfBounds/corrupt.usd` | `pxr/usd/usd/testenv/testUsdReadOutOfBounds/corrupt.usd` |
 | `testUsdUsdcBugGHSA02.testenv/root.usdc` | `pxr/usd/usd/testenv/testUsdUsdcBugGHSA02.testenv/root.usdc` |

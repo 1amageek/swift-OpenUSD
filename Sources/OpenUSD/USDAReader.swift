@@ -284,8 +284,8 @@ public struct USDAReader: USDSceneReader {
     private func parseDirectPrims(in text: String) throws -> [USDAPrim] {
         var prims: [USDAPrim] = []
         var searchIndex = text.startIndex
-        while let defIndex = nextDirectDef(in: text, from: searchIndex) {
-            let prim = try parsePrim(at: defIndex, in: text)
+        while let declarationIndex = nextDirectPrimDeclaration(in: text, from: searchIndex) {
+            let prim = try parsePrim(at: declarationIndex, in: text)
             prims.append(prim)
             searchIndex = prim.fullRange.upperBound
         }
@@ -295,16 +295,16 @@ public struct USDAReader: USDSceneReader {
     private func directAttributeText(from text: String) throws -> String {
         var output = ""
         var searchIndex = text.startIndex
-        while let defIndex = nextDirectDef(in: text, from: searchIndex) {
-            output += String(text[searchIndex..<defIndex])
-            let prim = try parsePrim(at: defIndex, in: text)
+        while let declarationIndex = nextDirectPrimDeclaration(in: text, from: searchIndex) {
+            output += String(text[searchIndex..<declarationIndex])
+            let prim = try parsePrim(at: declarationIndex, in: text)
             searchIndex = prim.fullRange.upperBound
         }
         output += String(text[searchIndex..<text.endIndex])
         return output
     }
 
-    private func nextDirectDef(in text: String, from startIndex: String.Index) -> String.Index? {
+    private func nextDirectPrimDeclaration(in text: String, from startIndex: String.Index) -> String.Index? {
         var index = startIndex
         var bracketDepth = 0
         var parenthesisDepth = 0
@@ -328,7 +328,7 @@ public struct USDAReader: USDSceneReader {
                     parenthesisDepth = max(0, parenthesisDepth - 1)
                 } else if bracketDepth == 0,
                           parenthesisDepth == 0,
-                          isDefKeyword(at: index, in: text) {
+                          primDeclarationKeyword(at: index, in: text) != nil {
                     return index
                 }
             }
@@ -337,8 +337,11 @@ public struct USDAReader: USDSceneReader {
         return nil
     }
 
-    private func parsePrim(at defIndex: String.Index, in text: String) throws -> USDAPrim {
-        var cursor = text.index(defIndex, offsetBy: 3)
+    private func parsePrim(at declarationIndex: String.Index, in text: String) throws -> USDAPrim {
+        guard let keyword = primDeclarationKeyword(at: declarationIndex, in: text) else {
+            throw USDImportError.invalidData("USDA prim declaration has an unsupported specifier.")
+        }
+        var cursor = text.index(declarationIndex, offsetBy: keyword.count)
         skipWhitespace(in: text, index: &cursor)
         var typeName: String?
         let name: String?
@@ -387,7 +390,7 @@ public struct USDAReader: USDSceneReader {
             name: name,
             metadataBody: metadataBody,
             body: body,
-            fullRange: defIndex..<text.index(after: closeBrace)
+            fullRange: declarationIndex..<text.index(after: closeBrace)
         )
     }
 
@@ -407,11 +410,14 @@ public struct USDAReader: USDSceneReader {
         )
     }
 
-    private func isDefKeyword(at index: String.Index, in text: String) -> Bool {
-        guard text[index...].hasPrefix("def") else {
-            return false
+    private func primDeclarationKeyword(at index: String.Index, in text: String) -> String? {
+        let keywords = ["class", "over", "def"]
+        guard let keyword = keywords.first(where: { text[index...].hasPrefix($0) }) else {
+            return nil
         }
-        let keywordEnd = text.index(index, offsetBy: 3)
+        guard let keywordEnd = text.index(index, offsetBy: keyword.count, limitedBy: text.endIndex) else {
+            return nil
+        }
         let hasLeadingBoundary: Bool
         if index == text.startIndex {
             hasLeadingBoundary = true
@@ -420,7 +426,7 @@ public struct USDAReader: USDSceneReader {
             hasLeadingBoundary = previous.isWhitespace || previous == "{" || previous == "}" || previous == ";"
         }
         let hasTrailingBoundary = keywordEnd == text.endIndex || text[keywordEnd].isWhitespace
-        return hasLeadingBoundary && hasTrailingBoundary
+        return hasLeadingBoundary && hasTrailingBoundary ? keyword : nil
     }
 
     private func skipWhitespace(in text: String, index: inout String.Index) {
@@ -607,20 +613,73 @@ public struct USDAReader: USDSceneReader {
         guard let body = try compositionFieldBody(named: name, in: text) else {
             return []
         }
-        let expression = try NSRegularExpression(pattern: "@([^@]*)@(?:<([^>]*)>)?(?:\\s*\\(([^)]*)\\))?")
-        let range = NSRange(body.startIndex..<body.endIndex, in: body)
-        return try expression.matches(in: body, range: range).compactMap { match in
-            guard let assetPathRange = Range(match.range(at: 1), in: body) else {
-                return nil
+        return try parseAssetReferences(in: body)
+    }
+
+    private func parseAssetReferences(
+        in body: String
+    ) throws -> [(assetPath: String, primPath: String?, layerOffset: USDLayerOffset)] {
+        var references: [(assetPath: String, primPath: String?, layerOffset: USDLayerOffset)] = []
+        var cursor = body.startIndex
+        while cursor < body.endIndex {
+            guard body[cursor] == "@" else {
+                cursor = body.index(after: cursor)
+                continue
             }
-            let primPathRange = Range(match.range(at: 2), in: body)
-            let layerOffsetBodyRange = Range(match.range(at: 3), in: body)
-            return (
-                assetPath: String(body[assetPathRange]),
-                primPath: primPathRange.map { String(body[$0]) },
-                layerOffset: try layerOffsetBodyRange.map { try parseLayerOffset(in: String(body[$0])) } ?? .identity
-            )
+            let assetPath = try parseAssetPath(startingAt: cursor, in: body, endIndex: &cursor)
+            skipWhitespace(in: body, index: &cursor)
+            let primPath = try parseOptionalPrimPath(in: body, index: &cursor)
+            skipWhitespace(in: body, index: &cursor)
+            let layerOffset = try parseOptionalLayerOffset(in: body, index: &cursor)
+            references.append((assetPath: assetPath, primPath: primPath, layerOffset: layerOffset))
         }
+        return references
+    }
+
+    private func parseAssetPath(
+        startingAt openDelimiter: String.Index,
+        in text: String,
+        endIndex: inout String.Index
+    ) throws -> String {
+        var cursor = text.index(after: openDelimiter)
+        var assetPath = ""
+        while cursor < text.endIndex {
+            if text[cursor] == "@" {
+                let next = text.index(after: cursor)
+                if next < text.endIndex, text[next] == "@" {
+                    assetPath.append("@")
+                    cursor = text.index(after: next)
+                    continue
+                }
+                endIndex = next
+                return assetPath
+            }
+            assetPath.append(text[cursor])
+            cursor = text.index(after: cursor)
+        }
+        throw USDImportError.invalidData("USDA asset path is unterminated.")
+    }
+
+    private func parseOptionalPrimPath(in text: String, index: inout String.Index) throws -> String? {
+        guard index < text.endIndex, text[index] == "<" else {
+            return nil
+        }
+        guard let closeAngle = text[index...].firstIndex(of: ">") else {
+            throw USDImportError.invalidData("USDA composition arc prim path is unterminated.")
+        }
+        let value = String(text[text.index(after: index)..<closeAngle])
+        index = text.index(after: closeAngle)
+        return value
+    }
+
+    private func parseOptionalLayerOffset(in text: String, index: inout String.Index) throws -> USDLayerOffset {
+        guard index < text.endIndex, text[index] == "(" else {
+            return .identity
+        }
+        let closeParenthesis = try matchingParenthesis(startingAt: index, in: text)
+        let body = String(text[text.index(after: index)..<closeParenthesis])
+        index = text.index(after: closeParenthesis)
+        return try parseLayerOffset(in: body)
     }
 
     private func parseLayerOffset(in text: String) throws -> USDLayerOffset {

@@ -1372,6 +1372,7 @@ struct OpenUSDTests {
     func openUSDSDFParsingEmptyFixturesReadLayers() throws {
         for fixturePath in [
             "testSdfParsing.testenv/01_empty.usda",
+            "testSdfParsing.testenv/203_newlines.usda",
             "testSdfParsing.testenv/204_really_empty.usda",
         ] {
             let layer = try USDAReader().readLayer(from: openUSDFixture(fixturePath))
@@ -1382,6 +1383,25 @@ struct OpenUSDTests {
             #expect(layer.composition.isEmpty)
             #expect(layer.primTransforms.isEmpty)
         }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingSimpleFixtureReadsDefAndOverPrimTransforms() throws {
+        let data = try openUSDFixture("testSdfParsing.testenv/02_simple.usda")
+
+        let layer = try USDAReader().readLayer(from: data)
+
+        #expect(layer.defaultPrim == nil)
+        #expect(layer.metersPerUnit == nil)
+        #expect(layer.upAxis == nil)
+        #expect(layer.composition.isEmpty)
+        #expect(layer.primTransforms.keys.sorted() == [
+            "/TestOver",
+            "/TestOverWithoutTypename",
+            "/overview_cam",
+            "/overview_cam/Head",
+        ])
+        #expect(layer.primTransforms.values.allSatisfy { $0 == .identity })
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -1413,6 +1433,23 @@ struct OpenUSDTests {
             "/Test1/Leg",
             "/Test1/Leg/Thigh",
             "/Test1/Whatever",
+        ])
+        #expect(layer.primTransforms.values.allSatisfy { $0 == .identity })
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingNoEndingNewlineFixtureReadsLayer() throws {
+        let data = try openUSDFixture("testSdfParsing.testenv/41_noEndingNewline.usda")
+
+        let layer = try USDAReader().readLayer(from: data)
+
+        #expect(layer.defaultPrim == nil)
+        #expect(layer.metersPerUnit == nil)
+        #expect(layer.upAxis == nil)
+        #expect(layer.composition.isEmpty)
+        #expect(layer.primTransforms.keys.sorted() == [
+            "/overview_cam",
+            "/overview_cam/Head",
         ])
         #expect(layer.primTransforms.values.allSatisfy { $0 == .identity })
     }
@@ -1451,6 +1488,26 @@ struct OpenUSDTests {
             targetPrimPath: nil,
             layerOffset: USDLayerOffset(offset: 11, scale: 22)
         )))
+        #expect(references.contains(USDCompositionArc(
+            assetPath: "@/test/layer3.usda@",
+            sitePrimPath: "/TestMixed2",
+            targetPrimPath: "/Prim"
+        )))
+        #expect(references.contains(USDCompositionArc(
+            assetPath: "@/test/layer4.usda@",
+            sitePrimPath: "/TestMixed2",
+            targetPrimPath: nil
+        )))
+        #expect(references.contains(USDCompositionArc(
+            assetPath: "@/test/layer3.usda@",
+            sitePrimPath: "/TestMixed3",
+            targetPrimPath: "/Prim"
+        )))
+        #expect(references.contains(USDCompositionArc(
+            assetPath: "@/test/layer4.usda@",
+            sitePrimPath: "/TestMixed3",
+            targetPrimPath: nil
+        )))
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -1486,6 +1543,26 @@ struct OpenUSDTests {
             sitePrimPath: "/TestFile5",
             targetPrimPath: nil,
             layerOffset: USDLayerOffset(offset: 11, scale: 22)
+        )))
+        #expect(payloads.contains(USDCompositionArc(
+            assetPath: "@/test/layer3.usda@",
+            sitePrimPath: "/TestMixed2",
+            targetPrimPath: "/Prim"
+        )))
+        #expect(payloads.contains(USDCompositionArc(
+            assetPath: "@/test/layer4.usda@",
+            sitePrimPath: "/TestMixed2",
+            targetPrimPath: nil
+        )))
+        #expect(payloads.contains(USDCompositionArc(
+            assetPath: "@/test/layer3.usda@",
+            sitePrimPath: "/TestMixed3",
+            targetPrimPath: "/Prim"
+        )))
+        #expect(payloads.contains(USDCompositionArc(
+            assetPath: "@/test/layer4.usda@",
+            sitePrimPath: "/TestMixed3",
+            targetPrimPath: nil
         )))
     }
 
