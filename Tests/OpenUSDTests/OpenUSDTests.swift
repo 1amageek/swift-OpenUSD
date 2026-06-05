@@ -1484,6 +1484,18 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingBadPrimDeclarationNewlineFixtureThrowsTypedError() throws {
+        let data = try openUSDFixture("testSdfParsing.testenv/22_bad_newline2.usda")
+
+        let message = try usdImportFailureMessage {
+            _ = try USDAReader().readLayer(from: data)
+        }
+
+        #expect(message.contains("prim declaration"))
+        #expect(message.contains("lines"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingEndTokenFixtureIgnoresTrailingGarbage() throws {
         let data = try openUSDFixture("testSdfParsing.testenv/07_end.usda")
 

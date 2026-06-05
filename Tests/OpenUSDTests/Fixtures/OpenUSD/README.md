@@ -31,6 +31,7 @@ Source paths:
 | `testSdfParsing.testenv/13_bad_value.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/13_bad_value.usda` |
 | `testSdfParsing.testenv/14_bad_value.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/14_bad_value.usda` |
 | `testSdfParsing.testenv/20_optionalsemicolons.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/20_optionalsemicolons.usda` |
+| `testSdfParsing.testenv/22_bad_newline2.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/22_bad_newline2.usda` |
 | `testSdfParsing.testenv/41_noEndingNewline.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/41_noEndingNewline.usda` |
 | `testSdfParsing.testenv/46_weirdStringContent.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/46_weirdStringContent.usda` |
 | `testSdfParsing.testenv/132_references.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/132_references.usda` |

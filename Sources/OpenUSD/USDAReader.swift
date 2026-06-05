@@ -569,7 +569,7 @@ public struct USDAReader: USDSceneReader {
         }
         let specifier = try primSpecifier(for: keyword)
         var cursor = text.index(declarationIndex, offsetBy: keyword.count)
-        skipWhitespace(in: text, index: &cursor)
+        try skipPrimDeclarationWhitespace(in: text, index: &cursor)
         var typeName: String?
         let name: String?
         if cursor < text.endIndex, text[cursor] == "\"" {
@@ -589,7 +589,7 @@ public struct USDAReader: USDSceneReader {
                 throw USDImportError.invalidData("USDA prim declaration is missing a type name.")
             }
             typeName = String(text[typeStart..<cursor])
-            skipWhitespace(in: text, index: &cursor)
+            try skipPrimDeclarationWhitespace(in: text, index: &cursor)
             guard cursor < text.endIndex, text[cursor] == "\"" else {
                 throw USDImportError.invalidData("USDA prim declaration is missing a quoted name.")
             }
@@ -689,6 +689,15 @@ public struct USDAReader: USDSceneReader {
 
     private func skipWhitespace(in text: String, index: inout String.Index) {
         while index < text.endIndex, text[index].isWhitespace {
+            index = text.index(after: index)
+        }
+    }
+
+    private func skipPrimDeclarationWhitespace(in text: String, index: inout String.Index) throws {
+        while index < text.endIndex, text[index].isWhitespace {
+            if text[index].isNewline {
+                throw USDImportError.invalidData("USDA prim declaration cannot split specifier, type, and name across lines.")
+            }
             index = text.index(after: index)
         }
     }
