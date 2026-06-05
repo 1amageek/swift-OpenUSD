@@ -43,6 +43,7 @@ Source paths:
 | `testSdfParsing.testenv/30_bad_specifier.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/30_bad_specifier.usda` |
 | `testSdfParsing.testenv/32_relationship_syntax.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/32_relationship_syntax.usda` |
 | `testSdfParsing.testenv/33_bad_relationship_duplicate_target.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/33_bad_relationship_duplicate_target.usda` |
+| `testSdfParsing.testenv/38_attribute_connections.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/38_attribute_connections.usda` |
 | `testSdfParsing.testenv/41_noEndingNewline.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/41_noEndingNewline.usda` |
 | `testSdfParsing.testenv/46_weirdStringContent.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/46_weirdStringContent.usda` |
 | `testSdfParsing.testenv/53_bad_typeName.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/53_bad_typeName.usda` |

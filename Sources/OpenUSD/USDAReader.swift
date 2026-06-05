@@ -1034,6 +1034,9 @@ public struct USDAReader: USDSceneReader {
                     in: text
                 ) {
                     mergePropertySpec(declaration, into: &specs, specIndexByPath: &specIndexByPath)
+                    for childSpec in declaration.childSpecs {
+                        mergeLayerSpec(childSpec, into: &specs, specIndexByPath: &specIndexByPath)
+                    }
                 }
                 isStatementStart = false
             }
@@ -1089,8 +1092,11 @@ public struct USDAReader: USDSceneReader {
         guard !normalizedName.baseName.isEmpty else {
             return nil
         }
-        let hasAssignment = try propertyDeclarationHasAssignment(afterPropertyName: cursor, in: text)
+        let isListEdit = qualifiers.contains(where: isListEditQualifier)
+        let valueStart = try propertyAssignmentValueStart(afterPropertyName: cursor, in: text)
+        let hasAssignment = valueStart != nil
         let specType: USDSpecType = authoredTypeName == "rel" ? .relationship : .attribute
+        let propertyPath = propertyPath(parentPrimPath: parentPrimPath, propertyName: normalizedName.baseName)
         var fieldNames: Set<String> = []
         if qualifiers.contains("custom") {
             fieldNames.insert("custom")
@@ -1125,11 +1131,20 @@ public struct USDAReader: USDSceneReader {
            hasAssignment {
             fieldNames.insert("targetPaths")
         }
+        let childSpecs = try childTargetSpecs(
+            forPropertyPath: propertyPath,
+            specType: specType,
+            valueField: normalizedName.valueField,
+            isListEdit: isListEdit,
+            valueStart: valueStart,
+            in: text
+        )
         return USDAPropertySpecDeclaration(
-            path: propertyPath(parentPrimPath: parentPrimPath, propertyName: normalizedName.baseName),
+            path: propertyPath,
             specType: specType,
             typeName: specType == .attribute ? authoredTypeName : nil,
-            fieldNames: fieldNames
+            fieldNames: fieldNames,
+            childSpecs: childSpecs
         )
     }
 
@@ -1145,11 +1160,11 @@ public struct USDAReader: USDSceneReader {
         qualifier == "delete" || qualifier == "add" || qualifier == "reorder"
     }
 
-    private func propertyDeclarationHasAssignment(afterPropertyName cursor: String.Index, in text: String) throws -> Bool {
+    private func propertyAssignmentValueStart(afterPropertyName cursor: String.Index, in text: String) throws -> String.Index? {
         var cursor = cursor
         while cursor < text.endIndex, text[cursor].isWhitespace {
             if text[cursor].isNewline {
-                return false
+                return nil
             }
             cursor = text.index(after: cursor)
         }
@@ -1158,15 +1173,20 @@ public struct USDAReader: USDSceneReader {
             cursor = text.index(after: closeParenthesis)
             while cursor < text.endIndex, text[cursor].isWhitespace {
                 if text[cursor].isNewline {
-                    return false
+                    return nil
                 }
                 cursor = text.index(after: cursor)
             }
         }
         guard cursor < text.endIndex else {
-            return false
+            return nil
         }
-        return text[cursor] == "="
+        guard text[cursor] == "=" else {
+            return nil
+        }
+        cursor = text.index(after: cursor)
+        try skipPropertyValueStartWhitespace(in: text, index: &cursor)
+        return cursor
     }
 
     private func normalizedPropertyName(_ authoredName: String) -> (baseName: String, valueField: USDAPropertyValueField?) {
@@ -1183,6 +1203,99 @@ public struct USDAReader: USDSceneReader {
 
     private func propertyPath(parentPrimPath: String, propertyName: String) -> String {
         "\(parentPrimPath).\(propertyName)"
+    }
+
+    private func childTargetSpecs(
+        forPropertyPath propertyPath: String,
+        specType: USDSpecType,
+        valueField: USDAPropertyValueField?,
+        isListEdit: Bool,
+        valueStart: String.Index?,
+        in text: String
+    ) throws -> [USDLayerSpec] {
+        guard let valueStart, !isListEdit else {
+            return []
+        }
+        let childSpecType: USDSpecType?
+        if specType == .relationship {
+            childSpecType = .relationshipTarget
+        } else if valueField == .connectionPaths {
+            childSpecType = .connection
+        } else {
+            childSpecType = nil
+        }
+        guard let childSpecType else {
+            return []
+        }
+        let targetPaths = try parsePropertyTargetPaths(startingAt: valueStart, in: text)
+        var seenPaths: Set<String> = []
+        return targetPaths.compactMap { targetPath in
+            guard !targetPath.isEmpty else {
+                return nil
+            }
+            let path = targetSpecPath(propertyPath: propertyPath, targetPath: targetPath)
+            guard seenPaths.insert(path).inserted else {
+                return nil
+            }
+            return USDLayerSpec(path: path, specType: childSpecType)
+        }
+    }
+
+    private func parsePropertyTargetPaths(startingAt valueStart: String.Index, in text: String) throws -> [String] {
+        var cursor = valueStart
+        skipWhitespace(in: text, index: &cursor)
+        guard cursor < text.endIndex else {
+            return []
+        }
+        if text[cursor...].hasPrefix("None") {
+            return []
+        }
+        if text[cursor] == "<" {
+            return [try parseAngleTargetPath(in: text, index: &cursor)]
+        }
+        guard text[cursor] == "[" else {
+            return []
+        }
+        let closeBracket = try matchingBracket(startingAt: cursor, in: text)
+        cursor = text.index(after: cursor)
+        var targetPaths: [String] = []
+        while cursor < closeBracket {
+            let character = text[cursor]
+            if character == "#" {
+                skipLineComment(in: text, index: &cursor)
+                continue
+            }
+            if character == "\"" || character == "'" {
+                try skipQuotedString(in: text, index: &cursor)
+                continue
+            }
+            if character == "<" {
+                targetPaths.append(try parseAngleTargetPath(in: text, index: &cursor))
+                continue
+            }
+            cursor = text.index(after: cursor)
+        }
+        return targetPaths
+    }
+
+    private func parseAngleTargetPath(in text: String, index: inout String.Index) throws -> String {
+        guard index < text.endIndex, text[index] == "<" else {
+            throw USDImportError.invalidData("USDA target path is missing an opening angle bracket.")
+        }
+        let targetStart = text.index(after: index)
+        var cursor = targetStart
+        while cursor < text.endIndex, text[cursor] != ">" {
+            cursor = text.index(after: cursor)
+        }
+        guard cursor < text.endIndex else {
+            throw USDImportError.invalidData("USDA target path is unterminated.")
+        }
+        index = text.index(after: cursor)
+        return String(text[targetStart..<cursor])
+    }
+
+    private func targetSpecPath(propertyPath: String, targetPath: String) -> String {
+        "\(propertyPath)[\(targetPath)]"
     }
 
     private func mergePropertySpec(
@@ -1208,6 +1321,23 @@ public struct USDAReader: USDSceneReader {
             typeName: declaration.typeName,
             fieldNames: orderedPropertyFieldNames(declaration.fieldNames)
         ))
+    }
+
+    private func mergeLayerSpec(
+        _ newSpec: USDLayerSpec,
+        into specs: inout [USDLayerSpec],
+        specIndexByPath: inout [String: Int]
+    ) {
+        if let index = specIndexByPath[newSpec.path] {
+            var spec = specs[index]
+            var fieldNames = Set(spec.fieldNames)
+            fieldNames.formUnion(newSpec.fieldNames)
+            spec.fieldNames = orderedPropertyFieldNames(fieldNames)
+            specs[index] = spec
+            return
+        }
+        specIndexByPath[newSpec.path] = specs.count
+        specs.append(newSpec)
     }
 
     private func orderedPropertyFieldNames(_ fieldNames: Set<String>) -> [String] {
@@ -2451,6 +2581,7 @@ private struct USDAPropertySpecDeclaration {
     var specType: USDSpecType
     var typeName: String?
     var fieldNames: Set<String>
+    var childSpecs: [USDLayerSpec]
 }
 
 private enum USDAPropertyValueField {
