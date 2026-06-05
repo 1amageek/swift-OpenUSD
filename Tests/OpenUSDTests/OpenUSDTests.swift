@@ -1427,6 +1427,23 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func usdcLayerReaderPreservesCompressedNumericArrayFieldValues() throws {
+        let fixture = makeUSDCLayerNumericFieldFixture(compressedArrays: true)
+
+        let layer = try USDCReader().readLayer(from: fixture)
+
+        #expect(layer.specs.map(\.path) == ["/", "/Scope"])
+        let scope = try #require(layer.spec(at: "/Scope"))
+        #expect(scope.specType == .prim)
+        #expect(scope.fields["doubleArray"] == .doubleArray([1.25, 2.5]))
+        #expect(scope.fields["boolArray"] == .boolArray([true, false, true]))
+        #expect(scope.fields["ucharArray"] == .intArray([1, 255]))
+        #expect(scope.fields["uintArray"] == .intArray([42, 84]))
+        #expect(scope.fields["int64Array"] == .intArray([-84, 168]))
+        #expect(scope.fields["uint64Array"] == .intArray([84, 168]))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func usdcLayerReaderPreservesListOperationFieldValues() throws {
         let fixture = makeUSDCLayerListOperationFixture()
 
@@ -2706,7 +2723,7 @@ private func makeUSDCLayerMetadataFieldFixture() -> Data {
     ])
 }
 
-private func makeUSDCLayerNumericFieldFixture() -> Data {
+private func makeUSDCLayerNumericFieldFixture(compressedArrays: Bool = false) -> Data {
     let version = USDCCrateVersion(major: 0, minor: 8, patch: 0)
     let tokens = [
         "specifier",
@@ -2729,14 +2746,14 @@ private func makeUSDCLayerNumericFieldFixture() -> Data {
     var valueData = Data()
     let vec2fOffset = appendUSDCVec2fScalar(USDPoint2D(x: 1.5, y: -2.25), to: &valueData)
     let vec2dOffset = appendUSDCVec2dScalar(USDPoint2D(x: 3.25, y: 4.5), to: &valueData)
-    let doubleArrayOffset = appendUSDCDoubleArray([1.25, 2.5], to: &valueData)
+    let doubleArrayOffset = appendUSDCDoubleArray([1.25, 2.5], compressed: compressedArrays, to: &valueData)
     let int64Offset = appendUSDCInt64Scalar(-84, to: &valueData)
     let uint64Offset = appendUSDCUInt64Scalar(84, to: &valueData)
-    let boolArrayOffset = appendUSDCBoolArray([true, false, true], to: &valueData)
-    let ucharArrayOffset = appendUSDCUInt8Array([1, 255], to: &valueData)
-    let uintArrayOffset = appendUSDCUInt32Array([42, 84], to: &valueData)
-    let int64ArrayOffset = appendUSDCInt64Array([-84, 168], to: &valueData)
-    let uint64ArrayOffset = appendUSDCUInt64Array([84, 168], to: &valueData)
+    let boolArrayOffset = appendUSDCBoolArray([true, false, true], compressed: compressedArrays, to: &valueData)
+    let ucharArrayOffset = appendUSDCUInt8Array([1, 255], compressed: compressedArrays, to: &valueData)
+    let uintArrayOffset = appendUSDCUInt32Array([42, 84], compressed: compressedArrays, to: &valueData)
+    let int64ArrayOffset = appendUSDCInt64Array([-84, 168], compressed: compressedArrays, to: &valueData)
+    let uint64ArrayOffset = appendUSDCUInt64Array([84, 168], compressed: compressedArrays, to: &valueData)
     let fields = [
         USDCCrateField(
             tokenIndex: 0,
@@ -2761,7 +2778,7 @@ private func makeUSDCLayerNumericFieldFixture() -> Data {
         ),
         USDCCrateField(
             tokenIndex: 5,
-            valueRep: USDCCrateValueRep(type: .double, isInlined: false, isArray: true, payload: doubleArrayOffset)
+            valueRep: arrayValueRep(type: .double, payload: doubleArrayOffset, compressed: compressedArrays)
         ),
         USDCCrateField(
             tokenIndex: 6,
@@ -2785,23 +2802,23 @@ private func makeUSDCLayerNumericFieldFixture() -> Data {
         ),
         USDCCrateField(
             tokenIndex: 11,
-            valueRep: USDCCrateValueRep(type: .bool, isInlined: false, isArray: true, payload: boolArrayOffset)
+            valueRep: arrayValueRep(type: .bool, payload: boolArrayOffset, compressed: compressedArrays)
         ),
         USDCCrateField(
             tokenIndex: 12,
-            valueRep: USDCCrateValueRep(type: .uChar, isInlined: false, isArray: true, payload: ucharArrayOffset)
+            valueRep: arrayValueRep(type: .uChar, payload: ucharArrayOffset, compressed: compressedArrays)
         ),
         USDCCrateField(
             tokenIndex: 13,
-            valueRep: USDCCrateValueRep(type: .uInt, isInlined: false, isArray: true, payload: uintArrayOffset)
+            valueRep: arrayValueRep(type: .uInt, payload: uintArrayOffset, compressed: compressedArrays)
         ),
         USDCCrateField(
             tokenIndex: 14,
-            valueRep: USDCCrateValueRep(type: .int64, isInlined: false, isArray: true, payload: int64ArrayOffset)
+            valueRep: arrayValueRep(type: .int64, payload: int64ArrayOffset, compressed: compressedArrays)
         ),
         USDCCrateField(
             tokenIndex: 15,
-            valueRep: USDCCrateValueRep(type: .uInt64, isInlined: false, isArray: true, payload: uint64ArrayOffset)
+            valueRep: arrayValueRep(type: .uInt64, payload: uint64ArrayOffset, compressed: compressedArrays)
         ),
     ]
     let specs = [
@@ -3240,46 +3257,66 @@ private func appendUSDCUInt64Scalar(_ value: UInt64, to data: inout Data) -> UIn
     return offset
 }
 
-private func appendUSDCBoolArray(_ values: [Bool], to data: inout Data) -> UInt64 {
-    let offset = alignUSDCValueData(&data)
-    data.appendLittleEndian(UInt64(values.count))
-    for value in values {
-        data.append(value ? UInt8(1) : UInt8(0))
+private func arrayValueRep(type: USDCCrateValueType, payload: UInt64, compressed: Bool) -> USDCCrateValueRep {
+    var valueRep = USDCCrateValueRep(type: type, isInlined: false, isArray: true, payload: payload)
+    if compressed {
+        valueRep.rawValue |= USDCCrateValueRep.isCompressedBit
     }
-    return offset
+    return valueRep
 }
 
-private func appendUSDCUInt8Array(_ values: [UInt8], to data: inout Data) -> UInt64 {
+private func appendUSDCBoolArray(_ values: [Bool], compressed: Bool = false, to data: inout Data) -> UInt64 {
     let offset = alignUSDCValueData(&data)
     data.appendLittleEndian(UInt64(values.count))
-    data.append(contentsOf: values)
-    return offset
-}
-
-private func appendUSDCUInt32Array(_ values: [UInt32], to data: inout Data) -> UInt64 {
-    let offset = alignUSDCValueData(&data)
-    data.appendLittleEndian(UInt64(values.count))
+    var rawValueData = Data()
     for value in values {
-        data.appendLittleEndian(value)
+        rawValueData.append(value ? UInt8(1) : UInt8(0))
     }
+    appendUSDCArrayPayload(rawValueData, compressed: compressed, to: &data)
     return offset
 }
 
-private func appendUSDCInt64Array(_ values: [Int64], to data: inout Data) -> UInt64 {
+private func appendUSDCUInt8Array(_ values: [UInt8], compressed: Bool = false, to data: inout Data) -> UInt64 {
     let offset = alignUSDCValueData(&data)
     data.appendLittleEndian(UInt64(values.count))
-    for value in values {
-        data.appendLittleEndian(value)
-    }
+    appendUSDCArrayPayload(Data(values), compressed: compressed, to: &data)
     return offset
 }
 
-private func appendUSDCUInt64Array(_ values: [UInt64], to data: inout Data) -> UInt64 {
+private func appendUSDCUInt32Array(_ values: [UInt32], compressed: Bool = false, to data: inout Data) -> UInt64 {
     let offset = alignUSDCValueData(&data)
     data.appendLittleEndian(UInt64(values.count))
+    if compressed {
+        let compressedData = compressedUInt32Payload(values)
+        data.appendLittleEndian(UInt64(compressedData.count))
+        data.append(compressedData)
+        return offset
+    }
     for value in values {
         data.appendLittleEndian(value)
     }
+    return offset
+}
+
+private func appendUSDCInt64Array(_ values: [Int64], compressed: Bool = false, to data: inout Data) -> UInt64 {
+    let offset = alignUSDCValueData(&data)
+    data.appendLittleEndian(UInt64(values.count))
+    var rawValueData = Data()
+    for value in values {
+        rawValueData.appendLittleEndian(value)
+    }
+    appendUSDCArrayPayload(rawValueData, compressed: compressed, to: &data)
+    return offset
+}
+
+private func appendUSDCUInt64Array(_ values: [UInt64], compressed: Bool = false, to data: inout Data) -> UInt64 {
+    let offset = alignUSDCValueData(&data)
+    data.appendLittleEndian(UInt64(values.count))
+    var rawValueData = Data()
+    for value in values {
+        rawValueData.appendLittleEndian(value)
+    }
+    appendUSDCArrayPayload(rawValueData, compressed: compressed, to: &data)
     return offset
 }
 
@@ -3331,13 +3368,25 @@ private func appendUSDCVec3dScalar(_ vector: USDPoint3D, to data: inout Data) ->
     return offset
 }
 
-private func appendUSDCDoubleArray(_ values: [Double], to data: inout Data) -> UInt64 {
+private func appendUSDCDoubleArray(_ values: [Double], compressed: Bool = false, to data: inout Data) -> UInt64 {
     let offset = alignUSDCValueData(&data)
     data.appendLittleEndian(UInt64(values.count))
+    var rawValueData = Data()
     for value in values {
-        data.appendLittleEndian(value.bitPattern)
+        rawValueData.appendLittleEndian(value.bitPattern)
     }
+    appendUSDCArrayPayload(rawValueData, compressed: compressed, to: &data)
     return offset
+}
+
+private func appendUSDCArrayPayload(_ rawValueData: Data, compressed: Bool, to data: inout Data) {
+    if compressed {
+        let compressedData = testFastCompression(rawValueData)
+        data.appendLittleEndian(UInt64(compressedData.count))
+        data.append(compressedData)
+    } else {
+        data.append(rawValueData)
+    }
 }
 
 private func appendUSDCTokenArray(_ tokenIndexes: [UInt32], compressed: Bool, to data: inout Data) -> UInt64 {
