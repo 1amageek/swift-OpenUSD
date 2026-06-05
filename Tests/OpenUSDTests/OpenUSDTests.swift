@@ -1447,6 +1447,23 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingUnterminatedFixtureThrowsTypedError() throws {
+        for fixturePath in [
+            "testSdfParsing.testenv/05_bad_file.usda",
+            "testSdfParsing.testenv/08_bad_file.usda",
+            "testSdfParsing.testenv/09_bad_type.usda",
+        ] {
+            let data = try openUSDFixture(fixturePath)
+
+            let message = try usdImportFailureMessage {
+                _ = try USDAReader().readLayer(from: data)
+            }
+
+            #expect(message.contains("unterminated"))
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingEndTokenFixtureIgnoresTrailingGarbage() throws {
         let data = try openUSDFixture("testSdfParsing.testenv/07_end.usda")
 
