@@ -369,6 +369,9 @@ public struct USDAReader: USDSceneReader {
             name = quoted.value
             cursor = quoted.endIndex
         }
+        if let name {
+            try validatePrimName(name)
+        }
         skipWhitespace(in: text, index: &cursor)
         let metadataBody: String
         if cursor < text.endIndex, text[cursor] == "(" {
@@ -407,6 +410,20 @@ public struct USDAReader: USDSceneReader {
             String(text[text.index(after: quoteStart)..<quoteEnd]),
             text.index(after: quoteEnd)
         )
+    }
+
+    private func validatePrimName(_ name: String) throws {
+        guard let firstScalar = name.unicodeScalars.first else {
+            throw USDImportError.invalidData("USDA prim name is not a valid identifier.")
+        }
+        guard firstScalar.value == 0x5f || firstScalar.properties.isXIDStart else {
+            throw USDImportError.invalidData("USDA prim name \(name) is not a valid identifier.")
+        }
+        for scalar in name.unicodeScalars.dropFirst() {
+            guard scalar.properties.isXIDContinue else {
+                throw USDImportError.invalidData("USDA prim name \(name) is not a valid identifier.")
+            }
+        }
     }
 
     private func primDeclarationKeyword(at index: String.Index, in text: String) -> String? {

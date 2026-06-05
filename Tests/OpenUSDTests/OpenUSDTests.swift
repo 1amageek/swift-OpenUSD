@@ -1490,6 +1490,21 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingUTF8BadIdentifierFixtureThrowsTypedError() throws {
+        let data = try openUSDFixture("testSdfParsing.testenv/218_utf8_bad_identifier.usda")
+
+        do {
+            _ = try USDAReader().readLayer(from: data)
+            Issue.record("Expected invalid UTF-8 prim identifier to fail.")
+        } catch USDImportError.invalidData(let message) {
+            #expect(message.contains("valid identifier"))
+            #expect(message.contains("㤼01৪∫"))
+        } catch {
+            Issue.record("Expected USDImportError.invalidData, got \(error).")
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingReferencesFixtureReadsSupportedExternalArcs() throws {
         let data = try openUSDFixture("testSdfParsing.testenv/132_references.usda")
 
