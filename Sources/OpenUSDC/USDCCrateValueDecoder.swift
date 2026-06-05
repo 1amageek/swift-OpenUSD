@@ -68,6 +68,12 @@ struct USDCCrateValueDecoder {
             return .stringListOp(try readStringListOp(valueRep))
         case .pathListOp:
             return .pathListOp(try readPathListOp(valueRep))
+        case .referenceListOp:
+            return .referenceListOp(try readReferenceListOp(valueRep))
+        case .payloadListOp:
+            return .payloadListOp(try readPayloadListOp(valueRep))
+        case .payload:
+            return .payload(try readPayloadValue(valueRep))
         case .double:
             guard !valueRep.isArray else {
                 return nil
@@ -203,6 +209,12 @@ struct USDCCrateValueDecoder {
             return .stringListOp(try readStringListOp(valueRep))
         case .pathListOp:
             return .pathListOp(try readPathListOp(valueRep))
+        case .referenceListOp:
+            return .referenceListOp(try readReferenceListOp(valueRep))
+        case .payloadListOp:
+            return .payloadListOp(try readPayloadListOp(valueRep))
+        case .payload:
+            return .payload(try readPayloadValue(valueRep))
         case .float:
             if valueRep.isArray {
                 return .doubleArray(try readFloatArrayValue(valueRep))
@@ -428,6 +440,85 @@ struct USDCCrateValueDecoder {
             values: paths,
             missingValueMessage: "USDC path listOp references a path outside PATHS."
         )
+    }
+
+    private func readReferenceListOp(_ valueRep: USDCCrateValueRep) throws -> USDCListOp<USDCReference> {
+        try readListOp(valueRep, expectedType: .referenceListOp, label: "reference listOp") { cursor in
+            try readReference(cursor: &cursor)
+        }
+    }
+
+    private func readPayloadListOp(_ valueRep: USDCCrateValueRep) throws -> USDCListOp<USDCPayload> {
+        try readListOp(valueRep, expectedType: .payloadListOp, label: "payload listOp") { cursor in
+            try readPayload(cursor: &cursor)
+        }
+    }
+
+    private func readPayloadValue(_ valueRep: USDCCrateValueRep) throws -> USDCPayload {
+        guard valueRep.type == .payload, !valueRep.isArray else {
+            throw USDImportError.invalidData("USDC payload value is malformed.")
+        }
+        guard !valueRep.isInlined, !valueRep.isCompressed else {
+            throw USDImportError.invalidData("USDC payload value has unsupported representation bits.")
+        }
+        guard valueRep.payload != 0 else {
+            throw USDImportError.invalidData("USDC payload value offset is missing.")
+        }
+        var cursor = try payloadOffset(valueRep, label: "payload")
+        return try readPayload(cursor: &cursor)
+    }
+
+    private func readReference(cursor: inout Int) throws -> USDCReference {
+        let assetPath = try readStringIndex(cursor: &cursor, label: "USDC reference asset path")
+        let primPath = try readPathIndex(cursor: &cursor, label: "USDC reference prim path")
+        let layerOffset = try readLayerOffset(cursor: &cursor, label: "USDC reference layer offset")
+        try readEmptyDictionary(cursor: &cursor, label: "USDC reference custom data")
+        return USDCReference(assetPath: assetPath, primPath: primPath, layerOffset: layerOffset)
+    }
+
+    private func readPayload(cursor: inout Int) throws -> USDCPayload {
+        let assetPath = try readStringIndex(cursor: &cursor, label: "USDC payload asset path")
+        let primPath = try readPathIndex(cursor: &cursor, label: "USDC payload prim path")
+        let layerOffset: USDCLayerOffset
+        if crate.version >= USDCCrateVersion(major: 0, minor: 8, patch: 0) {
+            layerOffset = try readLayerOffset(cursor: &cursor, label: "USDC payload layer offset")
+        } else {
+            layerOffset = .identity
+        }
+        return USDCPayload(assetPath: assetPath, primPath: primPath, layerOffset: layerOffset)
+    }
+
+    private func readStringIndex(cursor: inout Int, label: String) throws -> String {
+        let stringIndex = try checkedInt(UInt64(try crate.readFileUInt32(at: cursor)), label: "\(label) string index")
+        cursor += MemoryLayout<UInt32>.size
+        guard stringIndex < strings.count else {
+            throw USDImportError.invalidData("\(label) references a string outside STRINGS.")
+        }
+        return strings[stringIndex]
+    }
+
+    private func readPathIndex(cursor: inout Int, label: String) throws -> String {
+        let paths = try crate.readPaths()
+        let pathIndex = try checkedInt(UInt64(try crate.readFileUInt32(at: cursor)), label: "\(label) path index")
+        cursor += MemoryLayout<UInt32>.size
+        guard pathIndex < paths.count else {
+            throw USDImportError.invalidData("\(label) references a path outside PATHS.")
+        }
+        return paths[pathIndex]
+    }
+
+    private func readLayerOffset(cursor: inout Int, label: String) throws -> USDCLayerOffset {
+        let offset = try readFloat64(cursor: &cursor, label: "\(label) offset")
+        let scale = try readFloat64(cursor: &cursor, label: "\(label) scale")
+        return USDCLayerOffset(offset: offset, scale: scale)
+    }
+
+    private func readEmptyDictionary(cursor: inout Int, label: String) throws {
+        let count = try checkedInt(try crate.readFileUInt64(at: cursor), label: "\(label) dictionary count")
+        cursor += MemoryLayout<UInt64>.size
+        guard count == 0 else {
+            throw USDImportError.unsupportedFeature("\(label) dictionaries with entries are not materialized yet.")
+        }
     }
 
     private func readIndexedStringListOp(

@@ -1257,6 +1257,39 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func usdcLayerReaderPreservesCompositionArcFieldValues() throws {
+        let fixture = makeUSDCLayerCompositionArcFixture()
+
+        let layer = try USDCReader().readLayer(from: fixture)
+
+        #expect(layer.specs.map(\.path) == ["/", "/Scope"])
+        let scope = try #require(layer.spec(at: "/Scope"))
+        #expect(scope.specType == .prim)
+        #expect(scope.fields["references"] == .referenceListOp(USDCListOp(
+            addedItems: [
+                USDCReference(
+                    assetPath: "assets/ref.usda",
+                    primPath: "/Scope.target",
+                    layerOffset: USDCLayerOffset(offset: 1.5, scale: 2)
+                ),
+            ]
+        )))
+        #expect(scope.fields["payload"] == .payloadListOp(USDCListOp(
+            prependedItems: [
+                USDCPayload(
+                    assetPath: "assets/payload.usdc",
+                    primPath: "/PayloadTarget",
+                    layerOffset: USDCLayerOffset(offset: -2, scale: 0.5)
+                ),
+            ]
+        )))
+        #expect(scope.fields["singlePayload"] == .payload(USDCPayload(
+            assetPath: "assets/single.usda",
+            primPath: "/Scope"
+        )))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSingleUSDCFixtureReadsCompressedStructuralTables() throws {
         let data = try openUSDFixture("testUsdUsdzFileFormat/single/test.usdc")
 
@@ -1681,6 +1714,90 @@ private func makeUSDCLayerListOpFixture() -> Data {
     ])
 }
 
+private func makeUSDCLayerCompositionArcFixture() -> Data {
+    let version = USDCCrateVersion(major: 0, minor: 8, patch: 0)
+    let tokens = [
+        "specifier",
+        "Scope",
+        "target",
+        "references",
+        "payload",
+        "singlePayload",
+        "PayloadTarget",
+        "assets/ref.usda",
+        "assets/payload.usdc",
+        "assets/single.usda",
+    ]
+    var valueData = Data()
+    let referenceListOpOffset = appendUSDCReferenceListOp(
+        addedItems: [
+            USDCEncodedReference(
+                assetPathStringIndex: 0,
+                primPathIndex: 2,
+                layerOffset: USDCLayerOffset(offset: 1.5, scale: 2)
+            ),
+        ],
+        to: &valueData
+    )
+    let payloadListOpOffset = appendUSDCPayloadListOp(
+        prependedItems: [
+            USDCEncodedPayload(
+                assetPathStringIndex: 1,
+                primPathIndex: 3,
+                layerOffset: USDCLayerOffset(offset: -2, scale: 0.5)
+            ),
+        ],
+        to: &valueData
+    )
+    let payloadOffset = appendUSDCPayload(
+        USDCEncodedPayload(
+            assetPathStringIndex: 2,
+            primPathIndex: 1,
+            layerOffset: .identity
+        ),
+        to: &valueData
+    )
+    let fields = [
+        USDCCrateField(
+            tokenIndex: 0,
+            valueRep: USDCCrateValueRep(type: .specifier, isInlined: true, isArray: false, payload: 0)
+        ),
+        USDCCrateField(
+            tokenIndex: 3,
+            valueRep: USDCCrateValueRep(type: .referenceListOp, isInlined: false, isArray: false, payload: referenceListOpOffset)
+        ),
+        USDCCrateField(
+            tokenIndex: 4,
+            valueRep: USDCCrateValueRep(type: .payloadListOp, isInlined: false, isArray: false, payload: payloadListOpOffset)
+        ),
+        USDCCrateField(
+            tokenIndex: 5,
+            valueRep: USDCCrateValueRep(type: .payload, isInlined: false, isArray: false, payload: payloadOffset)
+        ),
+    ]
+    let specs = [
+        USDCCrateSpec(pathIndex: 0, fieldSetIndex: 0, specType: .pseudoRoot),
+        USDCCrateSpec(pathIndex: 1, fieldSetIndex: 1, specType: .prim),
+    ]
+
+    return makeUSDCFixture(version: version, valueData: valueData, sections: [
+        ("TOKENS", makeUSDCTokenSection(version: version, tokenData: nullSeparatedTokenData(tokens))),
+        ("STRINGS", makeUSDCStringsSection([7, 8, 9])),
+        ("FIELDS", makeUSDCFieldsSection(version: version, fields: fields)),
+        ("FIELDSETS", makeUSDCFieldSetsSection(version: version, indexes: [
+            UInt32.max,
+            0, 1, 2, 3, UInt32.max,
+        ])),
+        ("PATHS", makeUSDCCompressedPathsSection(
+            pathCount: 4,
+            pathIndexes: [0, 1, 2, 3],
+            elementTokenIndexes: [0, 1, -2, 6],
+            jumps: [-1, 2, -2, -2]
+        )),
+        ("SPECS", makeUSDCSpecsSection(version: version, specs: specs)),
+    ])
+}
+
 private func makeUSDCMeshSceneFixture(
     compressedPoints: Bool = false,
     compressedXformOpOrder: Bool = false
@@ -1964,6 +2081,135 @@ private func appendUSDCListOpItems(_ items: [UInt32], to data: inout Data) {
     for item in items {
         data.appendLittleEndian(item)
     }
+}
+
+private struct USDCEncodedReference {
+    var assetPathStringIndex: UInt32
+    var primPathIndex: UInt32
+    var layerOffset: USDCLayerOffset
+}
+
+private struct USDCEncodedPayload {
+    var assetPathStringIndex: UInt32
+    var primPathIndex: UInt32
+    var layerOffset: USDCLayerOffset
+}
+
+private func appendUSDCReferenceListOp(
+    explicitItems: [USDCEncodedReference] = [],
+    addedItems: [USDCEncodedReference] = [],
+    prependedItems: [USDCEncodedReference] = [],
+    appendedItems: [USDCEncodedReference] = [],
+    deletedItems: [USDCEncodedReference] = [],
+    orderedItems: [USDCEncodedReference] = [],
+    to data: inout Data
+) -> UInt64 {
+    appendUSDCListOp(
+        explicitItems: explicitItems,
+        addedItems: addedItems,
+        prependedItems: prependedItems,
+        appendedItems: appendedItems,
+        deletedItems: deletedItems,
+        orderedItems: orderedItems,
+        to: &data
+    ) { reference, output in
+        output.appendLittleEndian(reference.assetPathStringIndex)
+        output.appendLittleEndian(reference.primPathIndex)
+        output.appendLittleEndian(reference.layerOffset.offset.bitPattern)
+        output.appendLittleEndian(reference.layerOffset.scale.bitPattern)
+        output.appendLittleEndian(UInt64(0))
+    }
+}
+
+private func appendUSDCPayloadListOp(
+    explicitItems: [USDCEncodedPayload] = [],
+    addedItems: [USDCEncodedPayload] = [],
+    prependedItems: [USDCEncodedPayload] = [],
+    appendedItems: [USDCEncodedPayload] = [],
+    deletedItems: [USDCEncodedPayload] = [],
+    orderedItems: [USDCEncodedPayload] = [],
+    to data: inout Data
+) -> UInt64 {
+    appendUSDCListOp(
+        explicitItems: explicitItems,
+        addedItems: addedItems,
+        prependedItems: prependedItems,
+        appendedItems: appendedItems,
+        deletedItems: deletedItems,
+        orderedItems: orderedItems,
+        to: &data
+    ) { payload, output in
+        appendUSDCPayloadBytes(payload, to: &output)
+    }
+}
+
+private func appendUSDCListOp<Item>(
+    isExplicit: Bool = false,
+    explicitItems: [Item] = [],
+    addedItems: [Item] = [],
+    prependedItems: [Item] = [],
+    appendedItems: [Item] = [],
+    deletedItems: [Item] = [],
+    orderedItems: [Item] = [],
+    to data: inout Data,
+    appendItem: (Item, inout Data) -> Void
+) -> UInt64 {
+    let offset = alignUSDCValueData(&data)
+    var header: UInt8 = isExplicit ? 1 << 0 : 0
+    if !explicitItems.isEmpty {
+        header |= 1 << 1
+    }
+    if !addedItems.isEmpty {
+        header |= 1 << 2
+    }
+    if !deletedItems.isEmpty {
+        header |= 1 << 3
+    }
+    if !orderedItems.isEmpty {
+        header |= 1 << 4
+    }
+    if !prependedItems.isEmpty {
+        header |= 1 << 5
+    }
+    if !appendedItems.isEmpty {
+        header |= 1 << 6
+    }
+    data.append(header)
+    appendUSDCListOpItems(explicitItems, to: &data, appendItem: appendItem)
+    appendUSDCListOpItems(addedItems, to: &data, appendItem: appendItem)
+    appendUSDCListOpItems(prependedItems, to: &data, appendItem: appendItem)
+    appendUSDCListOpItems(appendedItems, to: &data, appendItem: appendItem)
+    appendUSDCListOpItems(deletedItems, to: &data, appendItem: appendItem)
+    appendUSDCListOpItems(orderedItems, to: &data, appendItem: appendItem)
+    return offset
+}
+
+private func appendUSDCListOpItems<Item>(
+    _ items: [Item],
+    to data: inout Data,
+    appendItem: (Item, inout Data) -> Void
+) {
+    guard !items.isEmpty else {
+        return
+    }
+    data.appendLittleEndian(UInt64(items.count))
+    for item in items {
+        appendItem(item, &data)
+    }
+}
+
+@discardableResult
+private func appendUSDCPayload(_ payload: USDCEncodedPayload, to data: inout Data) -> UInt64 {
+    let offset = alignUSDCValueData(&data)
+    appendUSDCPayloadBytes(payload, to: &data)
+    return offset
+}
+
+private func appendUSDCPayloadBytes(_ payload: USDCEncodedPayload, to data: inout Data) {
+    data.appendLittleEndian(payload.assetPathStringIndex)
+    data.appendLittleEndian(payload.primPathIndex)
+    data.appendLittleEndian(payload.layerOffset.offset.bitPattern)
+    data.appendLittleEndian(payload.layerOffset.scale.bitPattern)
 }
 
 private func alignUSDCValueData(_ data: inout Data) -> UInt64 {
