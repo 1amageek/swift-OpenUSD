@@ -53,6 +53,7 @@ Source paths:
 | `testSdfParsing.testenv/204_really_empty.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/204_really_empty.usda` |
 | `testSdfParsing.testenv/217_utf8_identifiers.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/217_utf8_identifiers.usda` |
 | `testSdfParsing.testenv/218_utf8_bad_identifier.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/218_utf8_bad_identifier.usda` |
+| `testSdfParsing.testenv/219_utf8_bad_type_name.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/219_utf8_bad_type_name.usda` |
 | `testUsdReadOutOfBounds/corrupt.usd` | `pxr/usd/usd/testenv/testUsdReadOutOfBounds/corrupt.usd` |
 | `testUsdUsdcBugGHSA02.testenv/root.usdc` | `pxr/usd/usd/testenv/testUsdUsdcBugGHSA02.testenv/root.usdc` |
 | `testUsdUsdzBugGHSA01.testenv/root.usdz` | `pxr/usd/usd/testenv/testUsdUsdzBugGHSA01.testenv/root.usdz` |

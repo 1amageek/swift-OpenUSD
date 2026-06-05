@@ -1627,6 +1627,19 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingUTF8BadTypeNameFixtureThrowsTypedError() throws {
+        let data = try openUSDFixture("testSdfParsing.testenv/219_utf8_bad_type_name.usda")
+
+        let message = try usdImportFailureMessage {
+            _ = try USDAReader().readLayer(from: data)
+        }
+
+        #expect(message.contains("property type name"))
+        #expect(message.contains("valid identifier"))
+        #expect(message.contains("㤼01৪∫"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingHiddenMetadataFixtureReadsLayer() throws {
         let data = try openUSDFixture("testSdfParsing.testenv/93_hidden.usda")
 

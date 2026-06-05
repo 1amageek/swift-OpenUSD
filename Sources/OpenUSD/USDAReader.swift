@@ -147,9 +147,98 @@ public struct USDAReader: USDSceneReader {
             try validateTokenMetadata(named: "permission", allowedValues: ["private", "public"], in: prim.metadataBody)
             try validateTokenMetadata(named: "permission", allowedValues: ["private", "public"], in: directAttributeText)
             try validateCompositionListEdits(in: prim.metadataBody)
+            try validatePropertyTypeNames(in: directAttributeText)
             try validateScalarAssignments(in: directAttributeText)
             try validatePrimAttributeSyntax(in: prim.body)
         }
+    }
+
+    private func validatePropertyTypeNames(in text: String) throws {
+        var cursor = text.startIndex
+        var isStatementStart = true
+        var parenthesisDepth = 0
+        var bracketDepth = 0
+        var braceDepth = 0
+        while cursor < text.endIndex {
+            let character = text[cursor]
+            if character == "#" {
+                skipLineComment(in: text, index: &cursor)
+                isStatementStart = true
+                continue
+            }
+            if character == "\"" || character == "'" {
+                try skipQuotedString(in: text, index: &cursor)
+                continue
+            }
+            if character == "(" {
+                parenthesisDepth += 1
+            } else if character == ")" {
+                parenthesisDepth = max(0, parenthesisDepth - 1)
+            } else if character == "[" {
+                bracketDepth += 1
+            } else if character == "]" {
+                bracketDepth = max(0, bracketDepth - 1)
+            } else if character == "{" {
+                braceDepth += 1
+            } else if character == "}" {
+                braceDepth = max(0, braceDepth - 1)
+            }
+
+            let isAtTopLevel = parenthesisDepth == 0 && bracketDepth == 0 && braceDepth == 0
+            if isAtTopLevel && (character == "\n" || character == "\r" || character == ";") {
+                isStatementStart = true
+                cursor = text.index(after: cursor)
+                continue
+            }
+            if isAtTopLevel, isStatementStart {
+                if character.isWhitespace {
+                    cursor = text.index(after: cursor)
+                    continue
+                }
+                try validatePropertyDeclarationTypeName(startingAt: cursor, in: text)
+                isStatementStart = false
+            }
+            cursor = text.index(after: cursor)
+        }
+    }
+
+    private func validatePropertyDeclarationTypeName(startingAt index: String.Index, in text: String) throws {
+        var cursor = index
+        if let qualifier = propertyDeclarationQualifier(at: cursor, in: text) {
+            cursor = text.index(cursor, offsetBy: qualifier.count)
+            skipWhitespace(in: text, index: &cursor)
+        }
+        guard cursor < text.endIndex else {
+            return
+        }
+        let tokenStart = cursor
+        while cursor < text.endIndex {
+            let character = text[cursor]
+            if character.isWhitespace || character == "=" || character == "(" || character == "{" || character == ";" {
+                break
+            }
+            cursor = text.index(after: cursor)
+        }
+        guard tokenStart < cursor else {
+            return
+        }
+        var typeName = String(text[tokenStart..<cursor])
+        if let arraySuffix = typeName.firstIndex(of: "[") {
+            typeName = String(typeName[..<arraySuffix])
+        }
+        guard isValidUSDIdentifier(typeName) else {
+            throw USDImportError.invalidData("USDA property type name \(typeName) is not a valid identifier.")
+        }
+    }
+
+    private func propertyDeclarationQualifier(at index: String.Index, in text: String) -> String? {
+        for qualifier in ["custom", "uniform", "varying"] {
+            guard token(qualifier, matchesAt: index, in: text) else {
+                continue
+            }
+            return qualifier
+        }
+        return nil
     }
 
     private func validateBoolMetadata(named name: String, in text: String) throws {
@@ -887,17 +976,24 @@ public struct USDAReader: USDSceneReader {
     }
 
     private func validatePrimName(_ name: String) throws {
+        guard isValidUSDIdentifier(name) else {
+            throw USDImportError.invalidData("USDA prim name \(name) is not a valid identifier.")
+        }
+    }
+
+    private func isValidUSDIdentifier(_ name: String) -> Bool {
         guard let firstScalar = name.unicodeScalars.first else {
-            throw USDImportError.invalidData("USDA prim name is not a valid identifier.")
+            return false
         }
         guard firstScalar.value == 0x5f || firstScalar.properties.isXIDStart else {
-            throw USDImportError.invalidData("USDA prim name \(name) is not a valid identifier.")
+            return false
         }
         for scalar in name.unicodeScalars.dropFirst() {
             guard scalar.properties.isXIDContinue else {
-                throw USDImportError.invalidData("USDA prim name \(name) is not a valid identifier.")
+                return false
             }
         }
+        return true
     }
 
     private func primDeclarationKeyword(at index: String.Index, in text: String) -> String? {
