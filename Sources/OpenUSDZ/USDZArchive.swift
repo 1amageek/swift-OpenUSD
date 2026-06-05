@@ -261,16 +261,19 @@ private struct USDZBinaryReader {
     }
 
     private func readUInt16(at offset: Int) throws -> UInt16 {
-        let bytes = try readBytes(at: offset, byteCount: 2)
-        return UInt16(bytes[0]) | (UInt16(bytes[1]) << 8)
+        let byteCount = MemoryLayout<UInt16>.size
+        try validateRange(offset: offset, byteCount: byteCount)
+        return UInt16(readByteUnchecked(at: offset))
+            | (UInt16(readByteUnchecked(at: offset + 1)) << 8)
     }
 
     private func readUInt32(at offset: Int) throws -> UInt32 {
-        let bytes = try readBytes(at: offset, byteCount: 4)
-        return UInt32(bytes[0])
-            | (UInt32(bytes[1]) << 8)
-            | (UInt32(bytes[2]) << 16)
-            | (UInt32(bytes[3]) << 24)
+        let byteCount = MemoryLayout<UInt32>.size
+        try validateRange(offset: offset, byteCount: byteCount)
+        return UInt32(readByteUnchecked(at: offset))
+            | (UInt32(readByteUnchecked(at: offset + 1)) << 8)
+            | (UInt32(readByteUnchecked(at: offset + 2)) << 16)
+            | (UInt32(readByteUnchecked(at: offset + 3)) << 24)
     }
 
     private func readUTF8String(in range: Range<Int>) throws -> String {
@@ -292,18 +295,19 @@ private struct USDZBinaryReader {
         }
         let start = data.index(data.startIndex, offsetBy: range.lowerBound)
         let end = data.index(data.startIndex, offsetBy: range.upperBound)
-        return Data(data[start..<end])
+        return data[start..<end]
     }
 
-    private func readBytes(at offset: Int, byteCount: Int) throws -> [UInt8] {
+    private func readByteUnchecked(at offset: Int) -> UInt8 {
+        return data[data.index(data.startIndex, offsetBy: offset)]
+    }
+
+    private func validateRange(offset: Int, byteCount: Int) throws {
         guard offset >= 0,
               byteCount >= 0,
               offset <= data.count - byteCount else {
             throw USDImportError.invalidData("USDZ read is outside the package.")
         }
-        let start = data.index(data.startIndex, offsetBy: offset)
-        let end = data.index(start, offsetBy: byteCount)
-        return Array(data[start..<end])
     }
 
     private func checkedInt(_ value: UInt32, label: String) throws -> Int {
