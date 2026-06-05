@@ -43,6 +43,7 @@ flowchart LR
 |---|---|---|---|
 | `pxr/usd/usd/testenv/testUsdFileFormats` | `ascii.usd` | `partial` | `openUSDFileFormatAsciiFixtureReadsLayerSpecs`; full spec parity is blocked by the current `USDALayer` surface |
 | `pxr/usd/usd/testenv/testUsdFileFormats` | `crate.usd` | `ported` | `openUSDFileFormatCrateFixtureReadsStructuralTables`, `openUSDFileFormatCrateFixtureKeepsLazyReadsStableAfterSourceDataMutation`, `openUSDFileFormatCrateFixtureReadsLayerSpecs` |
+| `pxr/usd/sdf/testenv/testSdfUsdcVersioning` | `deprecated_0_7_0.usd` | `partial` | `openUSDSDFUSDCVersioningDeprecated070FixtureReadsLayer`; warning and export-upgrade assertions are blocked until diagnostic and writer APIs exist |
 | `pxr/usd/sdf/testenv/testSdfZipFile.testenv` | `test_reader.usdz`, `src/*` | `partial` | `openUSDSDFZipFileReaderFixtureReadsEntryInfoAndData`; writer assertions are blocked until a Swift USDZ writer API exists |
 | `pxr/usd/usd/testenv/testUsdReadOutOfBounds` | `corrupt.usd` | `ported` | `openUSDReadOutOfBoundsFixtureThrowsTypedError` |
 | `pxr/usd/usd/testenv/testUsdUsdcBugGHSA02.testenv` | `root.usdc` | `ported` | `openUSDUSDCSecurityFixtureThrowsTypedError` |
@@ -64,8 +65,10 @@ flowchart LR
 | 5 | `testUsdUsdzBugGHSA01` | `ported` | Keep checking that corrupt USDZ security fixtures produce typed archive or crate failures. |
 | 6 | `testSdfZipFile` reader assertions | `partial` | Keep checking file names, entry metadata, alignment, CRC, and source payload bytes. |
 | 7 | `testSdfZipFile` writer assertions | `blocked` | Define a Swift USDZ writer API before porting writer, discard, alignment, and empty archive writer tests. |
-| 8 | `pxr/usd/sdf/testenv` file and value parsing subset | `pending` | Port USDA value parsing tests that map to `USDAReader` and `USDLayer`. |
-| 9 | Stage composition, Sdf editing, schema, plugin, imaging tests | `blocked` | Define public APIs first, then port relevant upstream suites. |
+| 8 | `testSdfUsdcVersioning` diagnostic and writer assertions | `blocked` | Define diagnostic warning capture and writer/export APIs before porting deprecated-version warning and export-upgrade assertions. |
+| 9 | `testSdfUsdcInvalidPrimChildren` | `pending` | Add `primChildren` validation, then port invalid child-name and duplicate-child fixtures. |
+| 10 | `pxr/usd/sdf/testenv` file and value parsing subset | `pending` | Port USDA value parsing tests that map to `USDAReader` and `USDLayer`. |
+| 11 | Stage composition, Sdf editing, schema, plugin, imaging tests | `blocked` | Define public APIs first, then port relevant upstream suites. |
 
 ## Completion Rules
 
