@@ -1047,7 +1047,7 @@ enum USDCFastCompression {
         let chunkCount = Int(bytes[0])
         if chunkCount == 0 {
             return try USDCLZ4Block.decompress(
-                Array(bytes.dropFirst()),
+                bytes.dropFirst(),
                 maximumOutputByteCount: maximumOutputByteCount
             )
         }
@@ -1070,7 +1070,7 @@ enum USDCFastCompression {
             let remainingOutput = maximumOutputByteCount - output.count
             let maximumOutput = min(maximumChunkOutputByteCount, remainingOutput)
             let chunk = try USDCLZ4Block.decompress(
-                Array(bytes[cursor..<(cursor + chunkSize)]),
+                bytes[cursor..<(cursor + chunkSize)],
                 maximumOutputByteCount: maximumOutput
             )
             output.append(contentsOf: chunk)
@@ -1084,15 +1084,15 @@ enum USDCFastCompression {
 }
 
 private enum USDCLZ4Block {
-    static func decompress(_ bytes: [UInt8], maximumOutputByteCount: Int) throws -> [UInt8] {
+    static func decompress(_ bytes: ArraySlice<UInt8>, maximumOutputByteCount: Int) throws -> [UInt8] {
         guard maximumOutputByteCount >= 0 else {
             throw USDImportError.invalidData("USDC LZ4 output byte count is invalid.")
         }
-        var cursor = 0
+        var cursor = bytes.startIndex
         var output: [UInt8] = []
         output.reserveCapacity(maximumOutputByteCount)
 
-        while cursor < bytes.count {
+        while cursor < bytes.endIndex {
             let token = bytes[cursor]
             cursor += 1
 
@@ -1101,7 +1101,7 @@ private enum USDCLZ4Block {
                 bytes: bytes,
                 cursor: &cursor
             )
-            guard literalCount <= bytes.count - cursor else {
+            guard literalCount <= bytes.endIndex - cursor else {
                 throw USDImportError.invalidData("USDC LZ4 literal run is truncated.")
             }
             try append(
@@ -1110,10 +1110,10 @@ private enum USDCLZ4Block {
                 maximumOutputByteCount: maximumOutputByteCount
             )
             cursor += literalCount
-            guard cursor < bytes.count else {
+            guard cursor < bytes.endIndex else {
                 break
             }
-            guard cursor <= bytes.count - 2 else {
+            guard cursor <= bytes.endIndex - 2 else {
                 throw USDImportError.invalidData("USDC LZ4 match offset is truncated.")
             }
             let matchOffset = Int(bytes[cursor]) | (Int(bytes[cursor + 1]) << 8)
@@ -1137,11 +1137,11 @@ private enum USDCLZ4Block {
         return output
     }
 
-    private static func readLength(initialLength: Int, bytes: [UInt8], cursor: inout Int) throws -> Int {
+    private static func readLength(initialLength: Int, bytes: ArraySlice<UInt8>, cursor: inout Int) throws -> Int {
         var length = initialLength
         if initialLength == 15 {
             while true {
-                guard cursor < bytes.count else {
+                guard cursor < bytes.endIndex else {
                     throw USDImportError.invalidData("USDC LZ4 extended length is truncated.")
                 }
                 let value = Int(bytes[cursor])
