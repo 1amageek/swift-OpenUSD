@@ -52,6 +52,8 @@ Source paths:
 | `testSdfParsing.testenv/150_bad_kind_metadata_1.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/150_bad_kind_metadata_1.usda` |
 | `testSdfParsing.testenv/152_payloads.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/152_payloads.usda` |
 | `testSdfParsing.testenv/153_bad_payloads.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/153_bad_payloads.usda` |
+| `testSdfParsing.testenv/154_relationship_noLoadHint.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/154_relationship_noLoadHint.usda` |
+| `testSdfParsing.testenv/155_bad_relationship_noLoadHint.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/155_bad_relationship_noLoadHint.usda` |
 | `testSdfParsing.testenv/203_newlines.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/203_newlines.usda` |
 | `testSdfParsing.testenv/204_really_empty.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/204_really_empty.usda` |
 | `testSdfParsing.testenv/217_utf8_identifiers.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/217_utf8_identifiers.usda` |

@@ -143,6 +143,7 @@ public struct USDAReader: USDSceneReader {
             let directAttributeText = try directAttributeText(from: prim.body)
             try validateBoolMetadata(named: "hidden", in: prim.metadataBody)
             try validateBoolMetadata(named: "hidden", in: directAttributeText)
+            try validateBoolMetadata(named: "noLoadHint", in: directAttributeText)
             try validateStringMetadata(named: "kind", in: prim.metadataBody)
             try validateTokenMetadata(named: "permission", allowedValues: ["private", "public"], in: prim.metadataBody)
             try validateTokenMetadata(named: "permission", allowedValues: ["private", "public"], in: directAttributeText)
@@ -327,7 +328,7 @@ public struct USDAReader: USDSceneReader {
                 valueCursor = text.index(after: valueCursor)
             }
             let value = String(text[valueStart..<valueCursor])
-            guard value == "true" || value == "false" else {
+            guard value == "true" || value == "false" || value == "True" || value == "False" else {
                 throw USDImportError.invalidData("USDA \(name) metadata contains invalid bool value \(value).")
             }
             cursor = valueCursor

@@ -1685,6 +1685,27 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingRelationshipNoLoadHintFixtureReadsLayer() throws {
+        let data = try openUSDFixture("testSdfParsing.testenv/154_relationship_noLoadHint.usda")
+
+        let layer = try USDAReader().readLayer(from: data)
+
+        #expect(layer.prims.map(\.path) == ["/Root"])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingBadRelationshipNoLoadHintFixtureThrowsTypedError() throws {
+        let data = try openUSDFixture("testSdfParsing.testenv/155_bad_relationship_noLoadHint.usda")
+
+        let message = try usdImportFailureMessage {
+            _ = try USDAReader().readLayer(from: data)
+        }
+
+        #expect(message.contains("noLoadHint metadata"))
+        #expect(message.contains("hoovooloo"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingPermissionMetadataFixtureReadsLayer() throws {
         let data = try openUSDFixture("testSdfParsing.testenv/116_permission_metadata.usda")
 
