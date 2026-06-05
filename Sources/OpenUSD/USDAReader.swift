@@ -112,16 +112,18 @@ public struct USDAReader: USDSceneReader {
     }
 
     private func parseMeshes(in text: String) throws -> [USDMesh] {
-        try parseMeshes(in: text, inheritedTransform: .identity)
+        try parseMeshes(in: text, inheritedTransform: .identity, parentPrimPath: "")
     }
 
     private func parseMeshes(
         in text: String,
-        inheritedTransform: USDTransformMatrix4x4
+        inheritedTransform: USDTransformMatrix4x4,
+        parentPrimPath: String
     ) throws -> [USDMesh] {
         var meshes: [USDMesh] = []
         let prims = try parseDirectPrims(in: text)
         for prim in prims {
+            let primPath = primPath(for: prim, parentPrimPath: parentPrimPath)
             let directBody = try directAttributeText(from: prim.body)
             let localTransform = try parseLocalTransform(in: directBody)
             let primTransform = localTransform.resetsParentStack
@@ -130,13 +132,15 @@ public struct USDAReader: USDSceneReader {
             if prim.typeName == "Mesh" {
                 meshes.append(try materializeMesh(
                     prim: prim,
+                    primPath: primPath,
                     directBody: directBody,
                     transform: primTransform
                 ))
             }
             meshes.append(contentsOf: try parseMeshes(
                 in: prim.body,
-                inheritedTransform: primTransform
+                inheritedTransform: primTransform,
+                parentPrimPath: primPath
             ))
         }
         return meshes
@@ -144,6 +148,7 @@ public struct USDAReader: USDSceneReader {
 
     private func materializeMesh(
         prim: USDAPrim,
+        primPath: String,
         directBody: String,
         transform: USDTransformMatrix4x4
     ) throws -> USDMesh {
@@ -178,6 +183,7 @@ public struct USDAReader: USDSceneReader {
         }
         return USDMesh(
             name: prim.name,
+            primPath: primPath,
             points: transformedPoints,
             faceVertexCounts: counts,
             faceVertexIndices: indices,
@@ -190,6 +196,16 @@ public struct USDAReader: USDSceneReader {
             displayOpacity: displayOpacity,
             extent: extent
         )
+    }
+
+    private func primPath(for prim: USDAPrim, parentPrimPath: String) -> String {
+        guard let name = prim.name else {
+            return parentPrimPath.isEmpty ? "/" : parentPrimPath
+        }
+        if parentPrimPath.isEmpty || parentPrimPath == "/" {
+            return "/\(name)"
+        }
+        return "\(parentPrimPath)/\(name)"
     }
 
     private func parseDirectPrims(in text: String) throws -> [USDAPrim] {

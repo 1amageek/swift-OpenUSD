@@ -2,6 +2,7 @@ public struct USDMesh: Sendable, Hashable {
     public static let fallbackSubdivisionScheme = "catmullClark"
 
     public var name: String?
+    public var primPath: String?
     public var points: [USDPoint3D]
     public var faceVertexCounts: [Int]
     public var faceVertexIndices: [Int]
@@ -16,6 +17,7 @@ public struct USDMesh: Sendable, Hashable {
 
     public init(
         name: String? = nil,
+        primPath: String? = nil,
         points: [USDPoint3D] = [],
         faceVertexCounts: [Int] = [],
         faceVertexIndices: [Int] = [],
@@ -29,6 +31,7 @@ public struct USDMesh: Sendable, Hashable {
         extent: [USDPoint3D]? = nil
     ) {
         self.name = name
+        self.primPath = primPath
         self.points = points
         self.faceVertexCounts = faceVertexCounts
         self.faceVertexIndices = faceVertexIndices

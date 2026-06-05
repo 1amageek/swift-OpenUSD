@@ -142,6 +142,7 @@ struct OpenUSDTests {
         #expect(scene.meshes.count == 1)
         let mesh = try #require(scene.meshes.first)
         #expect(mesh.name == "Triangle")
+        #expect(mesh.primPath == "/Triangle")
         #expect(mesh.points == [
             USDPoint3D(x: 0, y: 0, z: 0),
             USDPoint3D(x: 1, y: 0, z: 0),
@@ -150,6 +151,34 @@ struct OpenUSDTests {
         #expect(mesh.faceVertexCounts == [3])
         #expect(mesh.faceVertexIndices == [0, 1, 2])
         #expect(mesh.subdivisionScheme == "none")
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaReaderPreservesNestedMeshPrimPath() throws {
+        let data = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Model"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def "Model"
+        {
+            def Mesh "Triangle"
+            {
+                point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+                int[] faceVertexCounts = [3]
+                int[] faceVertexIndices = [0, 1, 2]
+                uniform token subdivisionScheme = "none"
+            }
+        }
+        """.utf8)
+
+        let scene = try USDAReader().read(from: data)
+
+        #expect(scene.meshes.map(\.primPath) == ["/Model/Triangle"])
+        #expect(scene.meshes.map(\.name) == ["Triangle"])
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -1561,6 +1590,165 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func usdzReaderFiltersReferenceTargetPrimPath() throws {
+        let root = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Scene"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def "Scene" (
+            references = @./refs/meshes.usda@</Keep>
+        )
+        {
+        }
+        """.utf8)
+        let referencedLayer = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Keep"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def Mesh "Keep"
+        {
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            uniform token subdivisionScheme = "none"
+        }
+
+        def Mesh "Drop"
+        {
+            point3f[] points = [(0, 0, 1), (1, 0, 1), (0, 1, 1)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            uniform token subdivisionScheme = "none"
+        }
+        """.utf8)
+        let package = makeUSDZFixture(entries: [
+            ("root.usda", root),
+            ("refs/meshes.usda", referencedLayer),
+        ], alignPayloads: true)
+
+        let scene = try USDZReader().read(from: package)
+
+        #expect(scene.meshes.map(\.name) == ["Keep"])
+        #expect(scene.meshes.map(\.primPath) == ["/Keep"])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdzReaderIncludesReferenceTargetSubtreeMeshes() throws {
+        let root = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Scene"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def "Scene" (
+            references = @./refs/model.usda@</Model>
+        )
+        {
+        }
+        """.utf8)
+        let referencedLayer = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Model"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def "Model"
+        {
+            def Mesh "Child"
+            {
+                point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+                int[] faceVertexCounts = [3]
+                int[] faceVertexIndices = [0, 1, 2]
+                uniform token subdivisionScheme = "none"
+            }
+        }
+
+        def Mesh "Outside"
+        {
+            point3f[] points = [(0, 0, 1), (1, 0, 1), (0, 1, 1)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            uniform token subdivisionScheme = "none"
+        }
+        """.utf8)
+        let package = makeUSDZFixture(entries: [
+            ("root.usda", root),
+            ("refs/model.usda", referencedLayer),
+        ], alignPayloads: true)
+
+        let scene = try USDZReader().read(from: package)
+
+        #expect(scene.meshes.map(\.name) == ["Child"])
+        #expect(scene.meshes.map(\.primPath) == ["/Model/Child"])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdzReaderIncludesPayloadTargetSubtreeMeshes() throws {
+        let root = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Scene"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def "Scene" (
+            payload = @./payloads/model.usda@</Model>
+        )
+        {
+        }
+        """.utf8)
+        let payloadLayer = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Model"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def "Model"
+        {
+            def Mesh "PayloadChild"
+            {
+                point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+                int[] faceVertexCounts = [3]
+                int[] faceVertexIndices = [0, 1, 2]
+                uniform token subdivisionScheme = "none"
+            }
+        }
+
+        def Mesh "Outside"
+        {
+            point3f[] points = [(0, 0, 1), (1, 0, 1), (0, 1, 1)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            uniform token subdivisionScheme = "none"
+        }
+        """.utf8)
+        let package = makeUSDZFixture(entries: [
+            ("root.usda", root),
+            ("payloads/model.usda", payloadLayer),
+        ], alignPayloads: true)
+
+        let scene = try USDZReader().read(from: package)
+
+        #expect(scene.meshes.map(\.name) == ["PayloadChild"])
+        #expect(scene.meshes.map(\.primPath) == ["/Model/PayloadChild"])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func usdzReaderTraversesUSDCReferences() throws {
         let package = makeUSDZFixture(entries: [
             ("root.usdc", makeUSDCReferenceLayerFixture(assetPath: "assets/ref.usda")),
@@ -2169,13 +2357,14 @@ private func makeUSDCReferenceLayerFixture(assetPath: String) -> Data {
         "Scope",
         "references",
         assetPath,
+        "Triangle",
     ]
     var valueData = Data()
     let referenceListOperationOffset = appendUSDCReferenceListOperation(
         addedItems: [
             USDCEncodedReference(
                 assetPathStringIndex: 0,
-                primPathIndex: 1,
+                primPathIndex: 2,
                 layerOffset: .identity
             ),
         ],
@@ -2205,10 +2394,10 @@ private func makeUSDCReferenceLayerFixture(assetPath: String) -> Data {
             0, 1, UInt32.max,
         ])),
         ("PATHS", makeUSDCCompressedPathsSection(
-            pathCount: 2,
-            pathIndexes: [0, 1],
-            elementTokenIndexes: [0, 1],
-            jumps: [-1, -2]
+            pathCount: 3,
+            pathIndexes: [0, 1, 2],
+            elementTokenIndexes: [0, 1, 4],
+            jumps: [-1, 0, -2]
         )),
         ("SPECS", makeUSDCSpecsSection(version: version, specs: specs)),
     ])

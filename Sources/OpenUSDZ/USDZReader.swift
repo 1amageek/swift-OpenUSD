@@ -132,19 +132,94 @@ public struct USDZReader: USDSceneReader {
     }
 
     private func readResolvedScene(defaultLayerPath: String, in archive: USDZArchive) throws -> USDScene {
-        let resolvedLayers = try readResolvedLayers(defaultLayerPath: defaultLayerPath, in: archive)
-        let meshes = resolvedLayers.flatMap { $0.scene?.meshes ?? [] }
+        let resolvedLayerInstances = try readResolvedLayerInstances(defaultLayerPath: defaultLayerPath, in: archive)
+        let meshes = resolvedLayerInstances.flatMap { layerInstance in
+            filteredMeshes(in: layerInstance.layer.scene, matching: layerInstance.targetPrimPath)
+        }
         guard !meshes.isEmpty else {
             throw USDImportError.invalidData("USDZ scene contains no Mesh prims.")
         }
-        let rootLayer = resolvedLayers.first
-        let firstScene = resolvedLayers.compactMap(\.scene).first
+        let rootLayer = resolvedLayerInstances.first?.layer
+        let firstScene = resolvedLayerInstances.compactMap(\.layer.scene).first
         return USDScene(
             defaultPrim: rootLayer?.defaultPrim ?? rootLayer?.scene?.defaultPrim ?? firstScene?.defaultPrim,
             metersPerUnit: rootLayer?.metersPerUnit ?? rootLayer?.scene?.metersPerUnit ?? firstScene?.metersPerUnit ?? 1,
             upAxis: rootLayer?.upAxis ?? rootLayer?.scene?.upAxis ?? firstScene?.upAxis ?? .y,
             meshes: meshes
         )
+    }
+
+    private func readResolvedLayerInstances(
+        defaultLayerPath: String,
+        in archive: USDZArchive
+    ) throws -> [USDZResolvedLayerInstance] {
+        var visitedLayerInstances: Set<USDZLayerInstanceKey> = []
+        var pendingLayerInstances = [
+            USDZPendingLayerInstance(layerPath: defaultLayerPath, targetPrimPath: nil as String?)
+        ]
+        var resolvedLayerInstances: [USDZResolvedLayerInstance] = []
+
+        while let pendingLayerInstance = pendingLayerInstances.first {
+            pendingLayerInstances.removeFirst()
+            let instanceKey = USDZLayerInstanceKey(
+                layerPath: pendingLayerInstance.layerPath,
+                targetPrimPath: pendingLayerInstance.targetPrimPath
+            )
+            guard visitedLayerInstances.insert(instanceKey).inserted else {
+                continue
+            }
+
+            let layer = try readLayer(at: pendingLayerInstance.layerPath, in: archive)
+            resolvedLayerInstances.append(USDZResolvedLayerInstance(
+                layer: layer,
+                targetPrimPath: pendingLayerInstance.targetPrimPath
+            ))
+            for assetPath in layer.composition.subLayerAssetPaths {
+                guard let resolvedLayerPath = try archive.resolveLayerPath(
+                    for: assetPath,
+                    referencedFrom: pendingLayerInstance.layerPath
+                ) else {
+                    throw USDImportError.invalidData(
+                        "USDZ package could not resolve asset \(assetPath) from \(pendingLayerInstance.layerPath)."
+                    )
+                }
+                pendingLayerInstances.append(USDZPendingLayerInstance(
+                    layerPath: resolvedLayerPath,
+                    targetPrimPath: pendingLayerInstance.targetPrimPath
+                ))
+            }
+            for arc in layer.composition.references + layer.composition.payloads {
+                guard let resolvedLayerPath = try archive.resolveLayerPath(
+                    for: arc.assetPath,
+                    referencedFrom: pendingLayerInstance.layerPath
+                ) else {
+                    throw USDImportError.invalidData(
+                        "USDZ package could not resolve asset \(arc.assetPath) from \(pendingLayerInstance.layerPath)."
+                    )
+                }
+                pendingLayerInstances.append(USDZPendingLayerInstance(
+                    layerPath: resolvedLayerPath,
+                    targetPrimPath: arc.primPath
+                ))
+            }
+        }
+        return resolvedLayerInstances
+    }
+
+    private func filteredMeshes(in scene: USDScene?, matching targetPrimPath: String?) -> [USDMesh] {
+        guard let scene else {
+            return []
+        }
+        guard let targetPrimPath, !targetPrimPath.isEmpty, targetPrimPath != "/" else {
+            return scene.meshes
+        }
+        let descendantPrefix = "\(targetPrimPath)/"
+        return scene.meshes.filter { mesh in
+            guard let primPath = mesh.primPath else {
+                return false
+            }
+            return primPath == targetPrimPath || primPath.hasPrefix(descendantPrefix)
+        }
     }
 
     private func readResolvedLayers(defaultLayerPath: String, in archive: USDZArchive) throws -> [USDZResolvedLayer] {
@@ -254,6 +329,21 @@ private struct USDZResolvedLayer: Sendable {
     var upAxis: USDUpAxis?
     var composition: USDLayerComposition
     var scene: USDScene?
+}
+
+private struct USDZResolvedLayerInstance: Sendable {
+    var layer: USDZResolvedLayer
+    var targetPrimPath: String?
+}
+
+private struct USDZPendingLayerInstance: Sendable {
+    var layerPath: String
+    var targetPrimPath: String?
+}
+
+private struct USDZLayerInstanceKey: Sendable, Hashable {
+    var layerPath: String
+    var targetPrimPath: String?
 }
 
 private enum USDCReaderSignature {

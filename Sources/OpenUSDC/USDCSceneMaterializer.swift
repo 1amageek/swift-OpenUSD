@@ -189,6 +189,7 @@ struct USDCSceneMaterializer {
             }
             meshes.append(USDMesh(
                 name: primName(from: meshPath),
+                primPath: meshPath,
                 points: transformedPoints,
                 faceVertexCounts: faceVertexCounts,
                 faceVertexIndices: faceVertexIndices,
