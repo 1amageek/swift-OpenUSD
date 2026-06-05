@@ -2,7 +2,19 @@ import Foundation
 import OpenUSD
 
 enum USDCIntegerCompression {
+    static func decompressUInt32(_ data: Data, count: Int) throws -> [UInt32] {
+        try data.withUnsafeBytes { bytes in
+            try decompressUInt32(bytes, count: count)
+        }
+    }
+
     static func decompressUInt32(_ bytes: [UInt8], count: Int) throws -> [UInt32] {
+        try bytes.withUnsafeBytes { rawBytes in
+            try decompressUInt32(rawBytes, count: count)
+        }
+    }
+
+    private static func decompressUInt32(_ bytes: UnsafeRawBufferPointer, count: Int) throws -> [UInt32] {
         guard count >= 0 else {
             throw USDImportError.invalidData("USDC compressed integer count is invalid.")
         }

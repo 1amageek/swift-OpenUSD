@@ -1292,9 +1292,9 @@ struct USDCCrateValueDecoder {
                 label: "USDC compressed \(label) byte count"
             )
             cursor += MemoryLayout<UInt64>.size
-            let compressedBytes = try crate.readFileBytes(at: cursor, byteCount: compressedByteCount)
+            let compressedData = try crate.readFileDataSlice(at: cursor, byteCount: compressedByteCount)
             cursor += compressedByteCount
-            return try USDCIntegerCompression.decompressUInt32(compressedBytes, count: count)
+            return try USDCIntegerCompression.decompressUInt32(compressedData, count: count)
         }
         let byteCount = try checkedMultiplication(count, MemoryLayout<UInt32>.size, label: "USDC \(label) byte count")
         let data = try crate.readFileDataSlice(at: cursor, byteCount: byteCount)
@@ -1557,9 +1557,9 @@ struct USDCCrateValueDecoder {
             label: "USDC compressed \(label) byte count"
         )
         cursor += MemoryLayout<UInt64>.size
-        let compressedBytes = try crate.readFileBytes(at: cursor, byteCount: compressedByteCount)
+        let compressedData = try crate.readFileDataSlice(at: cursor, byteCount: compressedByteCount)
         cursor += compressedByteCount
-        return .owned(try USDCFastCompression.decompress(compressedBytes, expectedByteCount: byteCount))
+        return .owned(try USDCFastCompression.decompress(compressedData, expectedByteCount: byteCount))
     }
 
     private func arrayPayloadCursor(_ valueRep: USDCCrateValueRep, label: String) throws -> Int {
