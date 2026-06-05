@@ -17,10 +17,10 @@ public struct USDZReader: USDSceneReader {
         return try readResolvedScene(defaultLayerPath: defaultLayerPath, in: archive)
     }
 
-    public func read(from data: Data, at rootPath: String) throws -> USDScene {
+    public func read(from data: Data, rootLayerPath: String) throws -> USDScene {
         let archive = try readArchive(from: data)
-        let rootLayerPath = try rootLayerPath(rootPath, in: archive)
-        return try readResolvedScene(defaultLayerPath: rootLayerPath, in: archive)
+        let resolvedRootLayerPath = try resolveRootLayerPath(rootLayerPath, in: archive)
+        return try readResolvedScene(defaultLayerPath: resolvedRootLayerPath, in: archive)
     }
 
     public func readLayerGraph(from data: Data) throws -> USDZLayerGraph {
@@ -29,10 +29,20 @@ public struct USDZReader: USDSceneReader {
         return try readLayerGraph(defaultLayerPath: defaultLayerPath, in: archive)
     }
 
-    public func readLayerGraph(from data: Data, at rootPath: String) throws -> USDZLayerGraph {
+    public func readLayerGraph(from data: Data, rootLayerPath: String) throws -> USDZLayerGraph {
         let archive = try readArchive(from: data)
-        let rootLayerPath = try rootLayerPath(rootPath, in: archive)
-        return try readLayerGraph(defaultLayerPath: rootLayerPath, in: archive)
+        let resolvedRootLayerPath = try resolveRootLayerPath(rootLayerPath, in: archive)
+        return try readLayerGraph(defaultLayerPath: resolvedRootLayerPath, in: archive)
+    }
+
+    @available(*, deprecated, message: "Use read(from:rootLayerPath:) instead.")
+    public func read(from data: Data, at rootPath: String) throws -> USDScene {
+        try read(from: data, rootLayerPath: rootPath)
+    }
+
+    @available(*, deprecated, message: "Use readLayerGraph(from:rootLayerPath:) instead.")
+    public func readLayerGraph(from data: Data, at rootPath: String) throws -> USDZLayerGraph {
+        try readLayerGraph(from: data, rootLayerPath: rootPath)
     }
 
     private func readLayerGraph(defaultLayerPath: String, in archive: USDZArchive) throws -> USDZLayerGraph {
@@ -79,15 +89,15 @@ public struct USDZReader: USDSceneReader {
         throw USDImportError.unsupportedFeature("USDZ default layer must be the first file and use a USD extension.")
     }
 
-    private func rootLayerPath(_ rootPath: String, in archive: USDZArchive) throws -> String {
-        let layerPath = try USDZLayerPath.parse(rootPath)
+    private func resolveRootLayerPath(_ rootLayerPath: String, in archive: USDZArchive) throws -> String {
+        let layerPath = try USDZLayerPath.parse(rootLayerPath)
         guard !layerPath.entryPaths.isEmpty else {
             throw USDImportError.invalidData("USDZ layer path is empty.")
         }
-        return try rootLayerPath(entryPaths: layerPath.entryPaths, in: archive).stringValue
+        return try resolveRootLayerPath(entryPaths: layerPath.entryPaths, in: archive).stringValue
     }
 
-    private func rootLayerPath(entryPaths: [String], in archive: USDZArchive) throws -> USDZLayerPath {
+    private func resolveRootLayerPath(entryPaths: [String], in archive: USDZArchive) throws -> USDZLayerPath {
         var currentArchive = archive
         var resolvedEntryPaths: [String] = []
         for (index, entryPath) in entryPaths.enumerated() {

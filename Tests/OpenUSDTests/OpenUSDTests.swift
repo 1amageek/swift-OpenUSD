@@ -1788,7 +1788,7 @@ struct OpenUSDTests {
         for testCase in cases {
             let package = try openUSDFixture(testCase.fixture)
 
-            let graph = try USDZReader().readLayerGraph(from: package, at: testCase.rootPath)
+            let graph = try USDZReader().readLayerGraph(from: package, rootLayerPath: testCase.rootPath)
 
             #expect(graph.rootPath == testCase.expectedRootPath)
             #expect(graph.paths == testCase.paths)
@@ -1802,7 +1802,7 @@ struct OpenUSDTests {
             ("meshes/triangle.usda", makeUSDAMeshLayer(name: "Triangle")),
         ], alignPayloads: true)
 
-        let scene = try USDZReader().read(from: package, at: "meshes/triangle.usda")
+        let scene = try USDZReader().read(from: package, rootLayerPath: "meshes/triangle.usda")
 
         #expect(scene.meshes.map(\.name) == ["Triangle"])
         #expect(scene.meshes.first?.faceVertexIndices == [0, 1, 2])
