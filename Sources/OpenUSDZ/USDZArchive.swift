@@ -29,6 +29,22 @@ public struct USDZArchive: Sendable, Equatable {
         try data(for: USDZLayerPath.parse(path))
     }
 
+    public func resolveLayerPath(for assetPath: String, referencedFrom sourceLayerPath: String) throws -> String? {
+        try USDZAssetResolver(archive: self)
+            .resolveLayerPath(for: assetPath, referencedFrom: sourceLayerPath)?
+            .stringValue
+    }
+
+    public func data(for assetPath: String, referencedFrom sourceLayerPath: String) throws -> Data {
+        guard let layerPath = try USDZAssetResolver(archive: self)
+            .resolveLayerPath(for: assetPath, referencedFrom: sourceLayerPath) else {
+            throw USDImportError.invalidData(
+                "USDZ package could not resolve asset \(assetPath) from \(sourceLayerPath)."
+            )
+        }
+        return try data(for: layerPath)
+    }
+
     private func data(for layerPath: USDZLayerPath) throws -> Data {
         var archive = self
         for (index, entryPath) in layerPath.entryPaths.enumerated() {

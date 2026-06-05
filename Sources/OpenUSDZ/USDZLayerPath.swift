@@ -3,6 +3,15 @@ import OpenUSD
 struct USDZLayerPath: Sendable, Equatable {
     var entryPaths: [String]
 
+    var stringValue: String {
+        guard let firstEntryPath = entryPaths.first else {
+            return ""
+        }
+        return entryPaths.dropFirst().reduce(firstEntryPath) { partialPath, entryPath in
+            "\(partialPath)[\(entryPath)]"
+        }
+    }
+
     static func parse(_ text: String) throws -> USDZLayerPath {
         var cursor = text.startIndex
         let entryPaths = try parseEntryPaths(in: text, cursor: &cursor)
