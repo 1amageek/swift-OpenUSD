@@ -1810,6 +1810,24 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingBadAccessMetadataFixturesThrowTypedErrors() throws {
+        for fixturePath in [
+            "testSdfParsing.testenv/17_bad_attributeaccess.usda",
+            "testSdfParsing.testenv/18_bad_primaccess.usda",
+            "testSdfParsing.testenv/19_bad_relationshipaccess.usda",
+        ] {
+            let data = try openUSDFixture(fixturePath)
+
+            let message = try usdImportFailureMessage {
+                _ = try USDAReader().readLayer(from: data)
+            }
+
+            #expect(message.contains("access metadata"))
+            #expect(message.contains("foo"))
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingRelationshipNoLoadHintFixtureReadsLayer() throws {
         let data = try openUSDFixture("testSdfParsing.testenv/154_relationship_noLoadHint.usda")
 

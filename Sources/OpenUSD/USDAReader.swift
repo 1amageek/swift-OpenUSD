@@ -145,6 +145,8 @@ public struct USDAReader: USDSceneReader {
             try validateBoolMetadata(named: "hidden", in: directAttributeText)
             try validateBoolMetadata(named: "noLoadHint", in: directAttributeText)
             try validateStringMetadata(named: "kind", in: prim.metadataBody)
+            try validateTokenMetadata(named: "access", allowedValues: ["private", "public"], in: prim.metadataBody)
+            try validateTokenMetadata(named: "access", allowedValues: ["private", "public"], in: directAttributeText)
             try validateTokenMetadata(named: "permission", allowedValues: ["private", "public"], in: prim.metadataBody)
             try validateTokenMetadata(named: "permission", allowedValues: ["private", "public"], in: directAttributeText)
             try validateCompositionListEdits(in: prim.metadataBody)

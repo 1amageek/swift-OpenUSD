@@ -31,6 +31,9 @@ Source paths:
 | `testSdfParsing.testenv/14_bad_value.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/14_bad_value.usda` |
 | `testSdfParsing.testenv/15_bad_list.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/15_bad_list.usda` |
 | `testSdfParsing.testenv/16_bad_list.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/16_bad_list.usda` |
+| `testSdfParsing.testenv/17_bad_attributeaccess.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/17_bad_attributeaccess.usda` |
+| `testSdfParsing.testenv/18_bad_primaccess.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/18_bad_primaccess.usda` |
+| `testSdfParsing.testenv/19_bad_relationshipaccess.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/19_bad_relationshipaccess.usda` |
 | `testSdfParsing.testenv/20_optionalsemicolons.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/20_optionalsemicolons.usda` |
 | `testSdfParsing.testenv/22_bad_newline2.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/22_bad_newline2.usda` |
 | `testSdfParsing.testenv/30_bad_specifier.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/30_bad_specifier.usda` |
