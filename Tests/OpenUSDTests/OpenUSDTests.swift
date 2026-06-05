@@ -1654,6 +1654,37 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingPermissionMetadataFixtureReadsLayer() throws {
+        let data = try openUSDFixture("testSdfParsing.testenv/116_permission_metadata.usda")
+
+        let layer = try USDAReader().readLayer(from: data)
+
+        #expect(layer.prims.map(\.path).sorted() == [
+            "/TestPrim",
+            "/TestPrim/PrivateChild",
+            "/TestPrim/PublicChild",
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingBadPermissionMetadataFixturesThrowTypedErrors() throws {
+        for fixturePath in [
+            "testSdfParsing.testenv/117_bad_permission_metadata.usda",
+            "testSdfParsing.testenv/118_bad_permission_metadata_2.usda",
+            "testSdfParsing.testenv/119_bad_permission_metadata_3.usda",
+        ] {
+            let data = try openUSDFixture(fixturePath)
+
+            let message = try usdImportFailureMessage {
+                _ = try USDAReader().readLayer(from: data)
+            }
+
+            #expect(message.contains("permission metadata"))
+            #expect(message.contains("bogus"))
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingReferencesFixtureReadsSupportedExternalArcs() throws {
         let data = try openUSDFixture("testSdfParsing.testenv/132_references.usda")
 

@@ -39,6 +39,10 @@ Source paths:
 | `testSdfParsing.testenv/93_hidden.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/93_hidden.usda` |
 | `testSdfParsing.testenv/94_bad_hiddenAttr.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/94_bad_hiddenAttr.usda` |
 | `testSdfParsing.testenv/95_bad_hiddenRel.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/95_bad_hiddenRel.usda` |
+| `testSdfParsing.testenv/116_permission_metadata.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/116_permission_metadata.usda` |
+| `testSdfParsing.testenv/117_bad_permission_metadata.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/117_bad_permission_metadata.usda` |
+| `testSdfParsing.testenv/118_bad_permission_metadata_2.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/118_bad_permission_metadata_2.usda` |
+| `testSdfParsing.testenv/119_bad_permission_metadata_3.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/119_bad_permission_metadata_3.usda` |
 | `testSdfParsing.testenv/132_references.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/132_references.usda` |
 | `testSdfParsing.testenv/133_bad_reference.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/133_bad_reference.usda` |
 | `testSdfParsing.testenv/152_payloads.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/152_payloads.usda` |
