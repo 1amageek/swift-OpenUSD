@@ -59,6 +59,7 @@ flowchart LR
 | `pxr/usd/sdf/testenv/testSdfParsing.testenv` | `218_utf8_bad_identifier.usda` | `ported` | `openUSDSDFParsingUTF8BadIdentifierFixtureThrowsTypedError`; invalid UTF-8 prim identifiers are rejected with `USDImportError.invalidData` while valid `217_utf8_identifiers.usda` remains accepted |
 | `pxr/usd/sdf/testenv/testSdfParsing.testenv` | `132_references.usda`, `152_payloads.usda` | `partial` | `openUSDSDFParsingReferencesFixtureReadsSupportedExternalArcs`, `openUSDSDFParsingPayloadsFixtureReadsSupportedExternalArcs`; external asset arcs, offsets, and escaped `@@` asset identifiers are covered; prim-only arcs, list-edit semantics, arc custom data, and writer parity require composition model expansion |
 | `pxr/usd/sdf/testenv/testSdfParsing.testenv` | `133_bad_reference.usda` | `ported` | `openUSDSDFParsingBadReferenceFixtureThrowsTypedError`; empty external asset references are rejected |
+| `pxr/usd/sdf/testenv/testSdfParsing.testenv` | `153_bad_payloads.usda` | `ported` | `openUSDSDFParsingBadPayloadsFixtureThrowsTypedError`; payload `add` and `reorder` list-edit assignments must use bracketed list values |
 | `pxr/usd/usd/testenv/testUsdReadOutOfBounds` | `corrupt.usd` | `ported` | `openUSDReadOutOfBoundsFixtureThrowsTypedError` |
 | `pxr/usd/usd/testenv/testUsdUsdcBugGHSA02.testenv` | `root.usdc` | `ported` | `openUSDUSDCSecurityFixtureThrowsTypedError` |
 | `pxr/usd/usd/testenv/testUsdUsdzBugGHSA01.testenv` | `root.usdz` | `ported` | `openUSDUSDZSecurityFixtureThrowsTypedError` |

@@ -140,9 +140,79 @@ public struct USDAReader: USDSceneReader {
     private func validatePrimAttributeSyntax(in text: String) throws {
         let prims = try parseDirectPrims(in: text)
         for prim in prims {
+            try validateCompositionListEdits(in: prim.metadataBody)
             try validateScalarAssignments(in: directAttributeText(from: prim.body))
             try validatePrimAttributeSyntax(in: prim.body)
         }
+    }
+
+    private func validateCompositionListEdits(in text: String) throws {
+        try validateBracketedListEdits(forField: "references", in: text)
+        try validateBracketedListEdits(forField: "payload", in: text)
+    }
+
+    private func validateBracketedListEdits(forField fieldName: String, in text: String) throws {
+        var cursor = text.startIndex
+        while cursor < text.endIndex {
+            let character = text[cursor]
+            if character == "#" {
+                skipLineComment(in: text, index: &cursor)
+                continue
+            }
+            if character == "\"" || character == "'" {
+                try skipQuotedString(in: text, index: &cursor)
+                continue
+            }
+            guard let qualifier = compositionListEditQualifier(at: cursor, in: text) else {
+                cursor = text.index(after: cursor)
+                continue
+            }
+            var fieldCursor = text.index(cursor, offsetBy: qualifier.count)
+            skipWhitespace(in: text, index: &fieldCursor)
+            guard token(fieldName, matchesAt: fieldCursor, in: text) else {
+                cursor = text.index(after: cursor)
+                continue
+            }
+            var valueCursor = text.index(fieldCursor, offsetBy: fieldName.count)
+            skipWhitespace(in: text, index: &valueCursor)
+            guard valueCursor < text.endIndex, text[valueCursor] == "=" else {
+                cursor = text.index(after: cursor)
+                continue
+            }
+            valueCursor = text.index(after: valueCursor)
+            skipWhitespace(in: text, index: &valueCursor)
+            guard valueCursor < text.endIndex, text[valueCursor] == "[" else {
+                throw USDImportError.invalidData("USDA \(fieldName) \(qualifier) list-edit must use a bracketed list value.")
+            }
+            let closeBracket = try matchingBracket(startingAt: valueCursor, in: text)
+            cursor = text.index(after: closeBracket)
+        }
+    }
+
+    private func compositionListEditQualifier(at index: String.Index, in text: String) -> String? {
+        for qualifier in ["add", "reorder"] {
+            guard token(qualifier, matchesAt: index, in: text) else {
+                continue
+            }
+            return qualifier
+        }
+        return nil
+    }
+
+    private func token(_ token: String, matchesAt index: String.Index, in text: String) -> Bool {
+        guard text[index...].hasPrefix(token),
+              let tokenEnd = text.index(index, offsetBy: token.count, limitedBy: text.endIndex) else {
+            return false
+        }
+        let hasLeadingBoundary: Bool
+        if index == text.startIndex {
+            hasLeadingBoundary = true
+        } else {
+            let previous = text[text.index(before: index)]
+            hasLeadingBoundary = !isIdentifierCharacter(previous)
+        }
+        let hasTrailingBoundary = tokenEnd == text.endIndex || !isIdentifierCharacter(text[tokenEnd])
+        return hasLeadingBoundary && hasTrailingBoundary
     }
 
     private func validateUniqueSiblingPrimPaths(

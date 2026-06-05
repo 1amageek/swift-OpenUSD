@@ -1751,6 +1751,19 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingBadPayloadsFixtureThrowsTypedError() throws {
+        let data = try openUSDFixture("testSdfParsing.testenv/153_bad_payloads.usda")
+
+        let message = try usdImportFailureMessage {
+            _ = try USDAReader().readLayer(from: data)
+        }
+
+        #expect(message.contains("payload"))
+        #expect(message.contains("list-edit"))
+        #expect(message.contains("bracketed list"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFUSDCVersioningDeprecated070FixtureReadsLayer() throws {
         let data = try openUSDFixture("testSdfUsdcVersioning/deprecated_0_7_0.usd")
 
