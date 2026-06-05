@@ -36,6 +36,7 @@ Source paths:
 | `testSdfParsing.testenv/46_weirdStringContent.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/46_weirdStringContent.usda` |
 | `testSdfParsing.testenv/90_bad_dupePrim.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/90_bad_dupePrim.usda` |
 | `testSdfParsing.testenv/132_references.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/132_references.usda` |
+| `testSdfParsing.testenv/133_bad_reference.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/133_bad_reference.usda` |
 | `testSdfParsing.testenv/152_payloads.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/152_payloads.usda` |
 | `testSdfParsing.testenv/203_newlines.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/203_newlines.usda` |
 | `testSdfParsing.testenv/204_really_empty.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/204_really_empty.usda` |

@@ -1683,6 +1683,18 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingBadReferenceFixtureThrowsTypedError() throws {
+        let data = try openUSDFixture("testSdfParsing.testenv/133_bad_reference.usda")
+
+        let message = try usdImportFailureMessage {
+            _ = try USDAReader().readLayer(from: data)
+        }
+
+        #expect(message.contains("asset path"))
+        #expect(message.contains("empty"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingPayloadsFixtureReadsSupportedExternalArcs() throws {
         let data = try openUSDFixture("testSdfParsing.testenv/152_payloads.usda")
 

@@ -946,6 +946,9 @@ public struct USDAReader: USDSceneReader {
                     continue
                 }
                 endIndex = next
+                guard !assetPath.isEmpty else {
+                    throw USDImportError.invalidData("USDA asset path cannot be empty.")
+                }
                 return assetPath
             }
             assetPath.append(text[cursor])
