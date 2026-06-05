@@ -29,12 +29,17 @@ Source paths:
 | `testSdfParsing.testenv/12_bad_value.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/12_bad_value.usda` |
 | `testSdfParsing.testenv/13_bad_value.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/13_bad_value.usda` |
 | `testSdfParsing.testenv/14_bad_value.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/14_bad_value.usda` |
+| `testSdfParsing.testenv/15_bad_list.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/15_bad_list.usda` |
+| `testSdfParsing.testenv/16_bad_list.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/16_bad_list.usda` |
 | `testSdfParsing.testenv/20_optionalsemicolons.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/20_optionalsemicolons.usda` |
 | `testSdfParsing.testenv/22_bad_newline2.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/22_bad_newline2.usda` |
 | `testSdfParsing.testenv/32_relationship_syntax.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/32_relationship_syntax.usda` |
 | `testSdfParsing.testenv/33_bad_relationship_duplicate_target.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/33_bad_relationship_duplicate_target.usda` |
 | `testSdfParsing.testenv/41_noEndingNewline.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/41_noEndingNewline.usda` |
 | `testSdfParsing.testenv/46_weirdStringContent.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/46_weirdStringContent.usda` |
+| `testSdfParsing.testenv/69_bad_list.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/69_bad_list.usda` |
+| `testSdfParsing.testenv/70_bad_list.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/70_bad_list.usda` |
+| `testSdfParsing.testenv/71_empty_shaped_attrs.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/71_empty_shaped_attrs.usda` |
 | `testSdfParsing.testenv/80_bad_hidden.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/80_bad_hidden.usda` |
 | `testSdfParsing.testenv/90_bad_dupePrim.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/90_bad_dupePrim.usda` |
 | `testSdfParsing.testenv/91_bad_valueType.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/91_bad_valueType.usda` |
@@ -45,6 +50,7 @@ Source paths:
 | `testSdfParsing.testenv/97_bad_valueType.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/97_bad_valueType.usda` |
 | `testSdfParsing.testenv/98_bad_valueType.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/98_bad_valueType.usda` |
 | `testSdfParsing.testenv/104_uniformAttributes.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/104_uniformAttributes.usda` |
+| `testSdfParsing.testenv/111_string_arrays.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/111_string_arrays.usda` |
 | `testSdfParsing.testenv/113_displayName_metadata.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/113_displayName_metadata.usda` |
 | `testSdfParsing.testenv/115_symmetricPeer_metadata.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/115_symmetricPeer_metadata.usda` |
 | `testSdfParsing.testenv/116_permission_metadata.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/116_permission_metadata.usda` |
@@ -60,6 +66,7 @@ Source paths:
 | `testSdfParsing.testenv/153_bad_payloads.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/153_bad_payloads.usda` |
 | `testSdfParsing.testenv/154_relationship_noLoadHint.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/154_relationship_noLoadHint.usda` |
 | `testSdfParsing.testenv/155_bad_relationship_noLoadHint.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/155_bad_relationship_noLoadHint.usda` |
+| `testSdfParsing.testenv/179_bad_shaped_attr_dimensions1.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/179_bad_shaped_attr_dimensions1.usda` |
 | `testSdfParsing.testenv/187_displayName_metadata.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/187_displayName_metadata.usda` |
 | `testSdfParsing.testenv/203_newlines.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/203_newlines.usda` |
 | `testSdfParsing.testenv/204_really_empty.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/204_really_empty.usda` |

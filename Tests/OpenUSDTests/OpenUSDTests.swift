@@ -1484,6 +1484,25 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingBadNestedArrayFixturesThrowTypedErrors() throws {
+        for fixturePath in [
+            "testSdfParsing.testenv/15_bad_list.usda",
+            "testSdfParsing.testenv/16_bad_list.usda",
+            "testSdfParsing.testenv/69_bad_list.usda",
+            "testSdfParsing.testenv/70_bad_list.usda",
+            "testSdfParsing.testenv/179_bad_shaped_attr_dimensions1.usda",
+        ] {
+            let data = try openUSDFixture(fixturePath)
+
+            let message = try usdImportFailureMessage {
+                _ = try USDAReader().readLayer(from: data)
+            }
+
+            #expect(message.contains("nested shaped list value"))
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingBadPrimDeclarationNewlineFixtureThrowsTypedError() throws {
         let data = try openUSDFixture("testSdfParsing.testenv/22_bad_newline2.usda")
 
@@ -1618,6 +1637,23 @@ struct OpenUSDTests {
             "/overview_cam/Head",
         ])
         #expect(layer.primTransforms.values.allSatisfy { $0 == .identity })
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingArrayValueSyntaxFixturesReadLayers() throws {
+        let testCases: [(fixturePath: String, primPaths: [String])] = [
+            ("testSdfParsing.testenv/71_empty_shaped_attrs.usda", ["/mysphere"]),
+            ("testSdfParsing.testenv/111_string_arrays.usda", [
+                "/string_array_tests",
+                "/token_array_tests",
+            ]),
+        ]
+
+        for testCase in testCases {
+            let layer = try USDAReader().readLayer(from: openUSDFixture(testCase.fixturePath))
+
+            #expect(layer.prims.map(\.path).sorted() == testCase.primPaths.sorted())
+        }
     }
 
     @Test(.timeLimit(.minutes(1)))

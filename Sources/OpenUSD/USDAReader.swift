@@ -284,8 +284,43 @@ public struct USDAReader: USDSceneReader {
             guard text[cursor] == "[" || (propertyName.hasSuffix(".timeSamples") && text[cursor] == "{") else {
                 throw USDImportError.invalidData("USDA \(typeName) attribute must use a shaped list value.")
             }
+            if text[cursor] == "[" {
+                try validateArrayAttributeValue(
+                    typeName: typeName,
+                    propertyName: propertyName,
+                    startingAt: cursor,
+                    in: text
+                )
+            }
         } else if text[cursor] == "[" {
             throw USDImportError.invalidData("USDA \(typeName) attribute cannot use a shaped list value.")
+        }
+    }
+
+    private func validateArrayAttributeValue(
+        typeName: String,
+        propertyName: String,
+        startingAt openBracket: String.Index,
+        in text: String
+    ) throws {
+        let closeBracket = try matchingBracket(startingAt: openBracket, in: text)
+        var cursor = text.index(after: openBracket)
+        while cursor < closeBracket {
+            let character = text[cursor]
+            if character == "#" {
+                skipLineComment(in: text, index: &cursor)
+                continue
+            }
+            if character == "\"" || character == "'" {
+                try skipQuotedString(in: text, index: &cursor)
+                continue
+            }
+            if character == "[" {
+                throw USDImportError.invalidData(
+                    "USDA \(typeName) attribute \(propertyName) contains a nested shaped list value."
+                )
+            }
+            cursor = text.index(after: cursor)
         }
     }
 
