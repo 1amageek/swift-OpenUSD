@@ -1405,6 +1405,20 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingEndTokenFixtureIgnoresTrailingGarbage() throws {
+        let data = try openUSDFixture("testSdfParsing.testenv/07_end.usda")
+
+        let layer = try USDAReader().readLayer(from: data)
+
+        #expect(layer.defaultPrim == nil)
+        #expect(layer.metersPerUnit == nil)
+        #expect(layer.upAxis == nil)
+        #expect(layer.composition.isEmpty)
+        #expect(layer.primTransforms.keys.sorted() == ["/Root"])
+        #expect(layer.primTransforms.values.allSatisfy { $0 == .identity })
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingOptionalSemicolonsFixtureReadsSublayersAndPrimTransforms() throws {
         let data = try openUSDFixture("testSdfParsing.testenv/20_optionalsemicolons.usda")
 

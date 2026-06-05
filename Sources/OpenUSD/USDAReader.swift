@@ -26,6 +26,7 @@ public struct USDAReader: USDSceneReader {
     }
 
     public func read(from text: String, options: USDReadingOptions) throws -> USDScene {
+        let text = try readerVisibleText(from: text)
         try validateSignature(in: text)
         if let timeCode = options.timeCode, !timeCode.isFinite {
             throw USDImportError.invalidData("USDA requested timeCode must be finite.")
@@ -44,6 +45,7 @@ public struct USDAReader: USDSceneReader {
     }
 
     public func readLayer(from text: String) throws -> USDALayer {
+        let text = try readerVisibleText(from: text)
         try validateSignature(in: text)
         let metadataBody = try layerMetadataBody(in: text)
         let defaultPrim = try metadataBody.flatMap { try parseOptionalString(named: "defaultPrim", in: $0) }
@@ -77,6 +79,57 @@ public struct USDAReader: USDSceneReader {
     private func validateSignature(in text: String) throws {
         guard text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("#usda") else {
             throw USDImportError.invalidData("USDA data is missing the #usda signature.")
+        }
+    }
+
+    private func readerVisibleText(from text: String) throws -> String {
+        guard let endTokenIndex = try endTokenIndex(in: text) else {
+            return text
+        }
+        return String(text[..<endTokenIndex])
+    }
+
+    private func endTokenIndex(in text: String) throws -> String.Index? {
+        let endToken = "__END__"
+        var index = text.startIndex
+        while index < text.endIndex {
+            let character = text[index]
+            if character == "#" {
+                skipLineComment(in: text, index: &index)
+                continue
+            }
+            if character == "\"" || character == "'" {
+                try skipQuotedString(in: text, index: &index)
+                continue
+            }
+            if text[index...].hasPrefix(endToken),
+               hasEndTokenLeadingBoundary(at: index, in: text),
+               let afterEndToken = text.index(index, offsetBy: endToken.count, limitedBy: text.endIndex),
+               hasEndTokenTrailingBoundary(at: afterEndToken, in: text) {
+                return index
+            }
+            index = text.index(after: index)
+        }
+        return nil
+    }
+
+    private func hasEndTokenLeadingBoundary(at index: String.Index, in text: String) -> Bool {
+        guard index > text.startIndex else {
+            return true
+        }
+        return !isIdentifierCharacter(text[text.index(before: index)])
+    }
+
+    private func hasEndTokenTrailingBoundary(at index: String.Index, in text: String) -> Bool {
+        guard index < text.endIndex else {
+            return true
+        }
+        return !isIdentifierCharacter(text[index])
+    }
+
+    private func isIdentifierCharacter(_ character: Character) -> Bool {
+        String(character).unicodeScalars.allSatisfy { scalar in
+            scalar.value == 0x5f || scalar.properties.isXIDContinue
         }
     }
 
