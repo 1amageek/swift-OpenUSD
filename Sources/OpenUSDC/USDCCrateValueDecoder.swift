@@ -65,6 +65,8 @@ struct USDCCrateValueDecoder {
             return .string(try readString(valueRep))
         case .assetPath:
             return .assetPath(try readAssetPath(valueRep))
+        case .dictionary:
+            return .dictionary(try readDictionaryValue(valueRep))
         case .pathVector:
             return .pathVector(try readPathVectorValue(valueRep))
         case .tokenListOperation:
@@ -325,6 +327,8 @@ struct USDCCrateValueDecoder {
             return .string(try readString(valueRep))
         case .assetPath:
             return .assetPath(try readAssetPath(valueRep))
+        case .dictionary:
+            return .dictionary(try readDictionaryValue(valueRep))
         case .pathVector:
             return .pathVector(try readPathVectorValue(valueRep))
         case .tokenListOperation:
@@ -596,8 +600,8 @@ struct USDCCrateValueDecoder {
         let assetPath = try readStringIndex(cursor: &cursor, label: "USDC reference asset path")
         let primPath = try readPathIndex(cursor: &cursor, label: "USDC reference prim path")
         let layerOffset = try readLayerOffset(cursor: &cursor, label: "USDC reference layer offset")
-        try readEmptyDictionary(cursor: &cursor, label: "USDC reference custom data")
-        return USDCReference(assetPath: assetPath, primPath: primPath, layerOffset: layerOffset)
+        let customData = try readDictionary(cursor: &cursor, label: "USDC reference custom data")
+        return USDCReference(assetPath: assetPath, primPath: primPath, layerOffset: layerOffset, customData: customData)
     }
 
     private func readPayload(cursor: inout Int) throws -> USDCPayload {
@@ -637,12 +641,47 @@ struct USDCCrateValueDecoder {
         return USDLayerOffset(offset: offset, scale: scale)
     }
 
-    private func readEmptyDictionary(cursor: inout Int, label: String) throws {
+    private func readDictionaryValue(_ valueRep: USDCCrateValueRep) throws -> [String: USDCLayerFieldValue] {
+        guard valueRep.type == .dictionary, !valueRep.isArray else {
+            throw USDImportError.invalidData("USDC dictionary value is malformed.")
+        }
+        guard !valueRep.isInlined, !valueRep.isCompressed else {
+            throw USDImportError.invalidData("USDC dictionary value has unsupported representation bits.")
+        }
+        guard valueRep.payload != 0 else {
+            return [:]
+        }
+        var cursor = try payloadOffset(valueRep, label: "dictionary")
+        return try readDictionary(cursor: &cursor, label: "USDC dictionary")
+    }
+
+    private func readDictionary(cursor: inout Int, label: String) throws -> [String: USDCLayerFieldValue] {
         let count = try checkedInt(try crate.readFileUInt64(at: cursor), label: "\(label) dictionary count")
         cursor += MemoryLayout<UInt64>.size
-        guard count == 0 else {
-            throw USDImportError.unsupportedFeature("\(label) dictionaries with entries are not materialized yet.")
+        var dictionary: [String: USDCLayerFieldValue] = [:]
+        dictionary.reserveCapacity(count)
+        for _ in 0..<count {
+            let key = try readStringIndex(cursor: &cursor, label: "\(label) key")
+            let value = try readDictionaryEntryValue(cursor: &cursor, label: "\(label) value")
+            guard dictionary.updateValue(value, forKey: key) == nil else {
+                throw USDImportError.invalidData("\(label) contains duplicate key '\(key)'.")
+            }
         }
+        return dictionary
+    }
+
+    private func readDictionaryEntryValue(cursor: inout Int, label: String) throws -> USDCLayerFieldValue {
+        let valueRepCursor = try recursivePayloadEnd(start: cursor, label: "\(label) recursive payload")
+        let nextCursorResult = valueRepCursor.addingReportingOverflow(MemoryLayout<UInt64>.size)
+        guard !nextCursorResult.overflow else {
+            throw USDImportError.invalidData("\(label) value representation exceeds platform range.")
+        }
+        let valueRep = USDCCrateValueRep(rawValue: try crate.readFileUInt64(at: valueRepCursor))
+        cursor = nextCursorResult.partialValue
+        guard let value = try readLayerFieldValue(valueRep) else {
+            throw USDImportError.unsupportedFeature("\(label) type \(String(describing: valueRep.type)) is not materialized yet.")
+        }
+        return value
     }
 
     private func readIndexedStringListOperation(

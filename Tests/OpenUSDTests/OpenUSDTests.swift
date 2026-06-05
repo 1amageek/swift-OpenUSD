@@ -1428,7 +1428,15 @@ struct OpenUSDTests {
                 USDCReference(
                     assetPath: "assets/ref.usda",
                     primPath: "/Scope.target",
-                    layerOffset: USDLayerOffset(offset: 1.5, scale: 2)
+                    layerOffset: USDLayerOffset(offset: 1.5, scale: 2),
+                    customData: [
+                        "displayName": .string("friendlyRef"),
+                        "referencePurpose": .string("render"),
+                    ]
+                ),
+                USDCReference(
+                    assetPath: "assets/second.usda",
+                    primPath: "/Scope.target"
                 ),
             ]
         )))
@@ -1451,6 +1459,11 @@ struct OpenUSDTests {
                 sitePrimPath: "/Scope",
                 targetPrimPath: "/Scope.target",
                 layerOffset: USDLayerOffset(offset: 1.5, scale: 2)
+            ),
+            USDCompositionArc(
+                assetPath: "assets/second.usda",
+                sitePrimPath: "/Scope",
+                targetPrimPath: "/Scope.target"
             ),
         ])
         #expect(layer.composition.payloads == [
@@ -2702,6 +2715,11 @@ private func makeUSDCLayerCompositionArcFixture() -> Data {
         "assets/ref.usda",
         "assets/payload.usdc",
         "assets/single.usda",
+        "referencePurpose",
+        "render",
+        "displayName",
+        "friendlyRef",
+        "assets/second.usda",
     ]
     var valueData = Data()
     let referenceListOperationOffset = appendUSDCReferenceListOperation(
@@ -2709,7 +2727,24 @@ private func makeUSDCLayerCompositionArcFixture() -> Data {
             USDCEncodedReference(
                 assetPathStringIndex: 0,
                 primPathIndex: 2,
-                layerOffset: USDLayerOffset(offset: 1.5, scale: 2)
+                layerOffset: USDLayerOffset(offset: 1.5, scale: 2),
+                customData: [
+                    USDCEncodedDictionaryEntry(
+                        keyStringIndex: 3,
+                        valueRep: USDCCrateValueRep(type: .string, isInlined: true, isArray: false, payload: 4)
+                    ),
+                    USDCEncodedDictionaryEntry(
+                        keyStringIndex: 5,
+                        valueRep: USDCCrateValueRep(type: .string, isInlined: false, isArray: false, payload: 0),
+                        nestedPayload: littleEndianData(UInt32(6)),
+                        usesNestedPayloadOffset: true
+                    ),
+                ]
+            ),
+            USDCEncodedReference(
+                assetPathStringIndex: 7,
+                primPathIndex: 2,
+                layerOffset: .identity
             ),
         ],
         to: &valueData
@@ -2757,7 +2792,7 @@ private func makeUSDCLayerCompositionArcFixture() -> Data {
 
     return makeUSDCFixture(version: version, valueData: valueData, sections: [
         ("TOKENS", makeUSDCTokenSection(version: version, tokenData: nullSeparatedTokenData(tokens))),
-        ("STRINGS", makeUSDCStringsSection([7, 8, 9])),
+        ("STRINGS", makeUSDCStringsSection([7, 8, 9, 10, 11, 12, 13, 14])),
         ("FIELDS", makeUSDCFieldsSection(version: version, fields: fields)),
         ("FIELDSETS", makeUSDCFieldSetsSection(version: version, indexes: [
             UInt32.max,
@@ -3138,12 +3173,20 @@ private struct USDCEncodedReference {
     var assetPathStringIndex: UInt32
     var primPathIndex: UInt32
     var layerOffset: USDLayerOffset
+    var customData: [USDCEncodedDictionaryEntry] = []
 }
 
 private struct USDCEncodedPayload {
     var assetPathStringIndex: UInt32
     var primPathIndex: UInt32
     var layerOffset: USDLayerOffset
+}
+
+private struct USDCEncodedDictionaryEntry {
+    var keyStringIndex: UInt32
+    var valueRep: USDCCrateValueRep
+    var nestedPayload: Data = Data()
+    var usesNestedPayloadOffset = false
 }
 
 private func appendUSDCReferenceListOperation(
@@ -3168,8 +3211,29 @@ private func appendUSDCReferenceListOperation(
         output.appendLittleEndian(reference.primPathIndex)
         output.appendLittleEndian(reference.layerOffset.offset.bitPattern)
         output.appendLittleEndian(reference.layerOffset.scale.bitPattern)
-        output.appendLittleEndian(UInt64(0))
+        appendUSDCDictionary(reference.customData, to: &output)
     }
+}
+
+private func appendUSDCDictionary(_ entries: [USDCEncodedDictionaryEntry], to data: inout Data) {
+    data.appendLittleEndian(UInt64(entries.count))
+    for entry in entries {
+        data.appendLittleEndian(entry.keyStringIndex)
+        let nestedPayloadOffset = UInt64(USDCCrateFile.bootstrapByteCount + data.count + MemoryLayout<Int64>.size)
+        var valueRep = entry.valueRep
+        if entry.usesNestedPayloadOffset {
+            valueRep.rawValue = (valueRep.rawValue & ~USDCCrateValueRep.payloadMask) | (nestedPayloadOffset & USDCCrateValueRep.payloadMask)
+        }
+        data.appendLittleEndian(Int64(MemoryLayout<Int64>.size + entry.nestedPayload.count))
+        data.append(entry.nestedPayload)
+        data.appendLittleEndian(valueRep.rawValue)
+    }
+}
+
+private func littleEndianData<T: FixedWidthInteger>(_ value: T) -> Data {
+    var data = Data()
+    data.appendLittleEndian(value)
+    return data
 }
 
 private func appendUSDCPayloadListOperation(

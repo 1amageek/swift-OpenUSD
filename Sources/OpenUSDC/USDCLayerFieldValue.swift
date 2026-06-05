@@ -6,6 +6,7 @@ public enum USDCLayerFieldValue: Sendable, Equatable {
     case tokenVector([String])
     case string(String)
     case assetPath(String)
+    case dictionary([String: USDCLayerFieldValue])
     case pathVector([String])
     case tokenListOperation(USDCListOperation<String>)
     case stringListOperation(USDCListOperation<String>)
