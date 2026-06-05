@@ -25,4 +25,34 @@ public struct USDCLayer: Sendable, Equatable {
     public func spec(at path: String) -> USDCLayerSpec? {
         specs.first { $0.path == path }
     }
+
+    public var composition: USDLayerComposition {
+        var references: [USDCompositionArc] = []
+        var payloads: [USDCompositionArc] = []
+        for spec in specs {
+            for field in spec.fields.values {
+                switch field {
+                case .referenceListOperation(let operation):
+                    references.append(contentsOf: operation.positiveItems.map {
+                        USDCompositionArc(assetPath: $0.assetPath, primPath: $0.primPath)
+                    })
+                case .payloadListOperation(let operation):
+                    payloads.append(contentsOf: operation.positiveItems.map {
+                        USDCompositionArc(assetPath: $0.assetPath, primPath: $0.primPath)
+                    })
+                case .payload(let payload):
+                    payloads.append(USDCompositionArc(assetPath: payload.assetPath, primPath: payload.primPath))
+                default:
+                    break
+                }
+            }
+        }
+        return USDLayerComposition(references: references, payloads: payloads)
+    }
+}
+
+private extension USDCListOperation {
+    var positiveItems: [Item] {
+        explicitItems + addedItems + prependedItems + appendedItems
+    }
 }

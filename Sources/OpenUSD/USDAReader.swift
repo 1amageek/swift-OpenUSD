@@ -10,10 +10,15 @@ public struct USDAReader: USDSceneReader {
         return try read(text)
     }
 
-    public func read(_ text: String) throws -> USDScene {
-        guard text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("#usda") else {
-            throw USDImportError.invalidData("USDA data is missing the #usda signature.")
+    public func readLayer(from data: Data) throws -> USDALayer {
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw USDImportError.invalidData("USDA data is not UTF-8.")
         }
+        return try readLayer(text)
+    }
+
+    public func read(_ text: String) throws -> USDScene {
+        try validateSignature(in: text)
         let metersPerUnit = try parseRequiredDouble(named: "metersPerUnit", in: text)
         guard metersPerUnit.isFinite, metersPerUnit > 0 else {
             throw USDImportError.invalidData("USDA metersPerUnit must be a positive finite value.")
@@ -25,6 +30,85 @@ public struct USDAReader: USDSceneReader {
             throw USDImportError.invalidData("USDA scene contains no Mesh prims.")
         }
         return USDScene(defaultPrim: defaultPrim, metersPerUnit: metersPerUnit, upAxis: upAxis, meshes: meshes)
+    }
+
+    public func readLayer(_ text: String) throws -> USDALayer {
+        try validateSignature(in: text)
+        let metadataBody = try layerMetadataBody(in: text)
+        let defaultPrim = try metadataBody.flatMap { try parseOptionalString(named: "defaultPrim", in: $0) }
+        let metersPerUnit = try metadataBody.flatMap { try parseOptionalDouble(named: "metersPerUnit", in: $0) }
+        if let metersPerUnit, (!metersPerUnit.isFinite || metersPerUnit <= 0) {
+            throw USDImportError.invalidData("USDA metersPerUnit must be a positive finite value.")
+        }
+        let upAxisToken = try metadataBody.flatMap { try parseOptionalString(named: "upAxis", in: $0) }
+        let upAxis: USDUpAxis?
+        if let upAxisToken {
+            guard let parsed = USDUpAxis(rawValue: upAxisToken) else {
+                throw USDImportError.invalidData("Unsupported USDA upAxis \(upAxisToken).")
+            }
+            upAxis = parsed
+        } else {
+            upAxis = nil
+        }
+        return USDALayer(
+            defaultPrim: defaultPrim,
+            metersPerUnit: metersPerUnit,
+            upAxis: upAxis,
+            composition: try parseLayerComposition(in: text, metadataBody: metadataBody)
+        )
+    }
+
+    public func readComposition(from data: Data) throws -> USDLayerComposition {
+        try readLayer(from: data).composition
+    }
+
+    private func validateSignature(in text: String) throws {
+        guard text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("#usda") else {
+            throw USDImportError.invalidData("USDA data is missing the #usda signature.")
+        }
+    }
+
+    private func layerMetadataBody(in text: String) throws -> String? {
+        guard let signatureRange = text.range(of: "#usda") else {
+            return nil
+        }
+        guard let lineEnd = text[signatureRange.upperBound...].firstIndex(of: "\n") else {
+            return nil
+        }
+        var cursor = text.index(after: lineEnd)
+        while cursor < text.endIndex {
+            skipWhitespace(in: text, index: &cursor)
+            if cursor < text.endIndex, text[cursor] == "#" {
+                skipLineComment(in: text, index: &cursor)
+                continue
+            }
+            break
+        }
+
+        guard cursor < text.endIndex, text[cursor] == "(" else {
+            return nil
+        }
+        let metadataEnd = try matchingParenthesis(startingAt: cursor, in: text)
+        return String(text[text.index(after: cursor)..<metadataEnd])
+    }
+
+    private func parseLayerComposition(in text: String, metadataBody: String?) throws -> USDLayerComposition {
+        var composition = USDLayerComposition()
+        if let metadataBody {
+            composition.subLayerAssetPaths = try parseAssetPaths(forField: "subLayers", in: metadataBody)
+        }
+        let prims = try parseDirectPrims(in: text)
+        try appendCompositionArcs(from: prims, to: &composition)
+        return composition
+    }
+
+    private func appendCompositionArcs(from prims: [USDAPrim], to composition: inout USDLayerComposition) throws {
+        for prim in prims {
+            composition.references.append(contentsOf: try parseCompositionArcs(forField: "references", in: prim.metadataBody))
+            composition.payloads.append(contentsOf: try parseCompositionArcs(forField: "payload", in: prim.metadataBody))
+            let childPrims = try parseDirectPrims(in: prim.body)
+            try appendCompositionArcs(from: childPrims, to: &composition)
+        }
     }
 
     private func parseMeshes(in text: String) throws -> [USDMesh] {
@@ -194,6 +278,16 @@ public struct USDAReader: USDSceneReader {
             name = quoted.value
             cursor = quoted.endIndex
         }
+        skipWhitespace(in: text, index: &cursor)
+        let metadataBody: String
+        if cursor < text.endIndex, text[cursor] == "(" {
+            let metadataEnd = try matchingParenthesis(startingAt: cursor, in: text)
+            metadataBody = String(text[text.index(after: cursor)..<metadataEnd])
+            cursor = text.index(after: metadataEnd)
+        } else {
+            metadataBody = ""
+        }
+
         guard let openBrace = text[cursor...].firstIndex(of: "{") else {
             throw USDImportError.invalidData("USDA prim is missing an opening brace.")
         }
@@ -202,6 +296,7 @@ public struct USDAReader: USDSceneReader {
         return USDAPrim(
             typeName: typeName,
             name: name,
+            metadataBody: metadataBody,
             body: body,
             fullRange: defIndex..<text.index(after: closeBrace)
         )
@@ -370,6 +465,17 @@ public struct USDAReader: USDSceneReader {
         return try firstMatch(pattern: pattern, in: text)
     }
 
+    private func parseOptionalDouble(named name: String, in text: String) throws -> Double? {
+        let pattern = "\\b\(NSRegularExpression.escapedPattern(for: name))\\s*=\\s*([-+0-9.eE]+)"
+        guard let match = try firstMatch(pattern: pattern, in: text) else {
+            return nil
+        }
+        guard let value = Double(match) else {
+            throw USDImportError.invalidData("USDA \(name) is not a valid number.")
+        }
+        return value
+    }
+
     private func parseOptionalTokenArray(named name: String, in text: String) throws -> [String]? {
         guard let body = try optionalBracketArrayBody(named: name, in: text) else {
             return nil
@@ -382,6 +488,59 @@ public struct USDAReader: USDSceneReader {
             }
             return String(body[tokenRange])
         }
+    }
+
+    private func parseCompositionArcs(forField name: String, in text: String) throws -> [USDCompositionArc] {
+        try parseAssetReferences(forField: name, in: text).map { reference in
+            USDCompositionArc(assetPath: reference.assetPath, primPath: reference.primPath)
+        }
+    }
+
+    private func parseAssetPaths(forField name: String, in text: String) throws -> [String] {
+        try parseAssetReferences(forField: name, in: text).map(\.assetPath)
+    }
+
+    private func parseAssetReferences(
+        forField name: String,
+        in text: String
+    ) throws -> [(assetPath: String, primPath: String?)] {
+        guard let body = try compositionFieldBody(named: name, in: text) else {
+            return []
+        }
+        let expression = try NSRegularExpression(pattern: "@([^@]*)@(?:<([^>]*)>)?")
+        let range = NSRange(body.startIndex..<body.endIndex, in: body)
+        return expression.matches(in: body, range: range).compactMap { match in
+            guard let assetPathRange = Range(match.range(at: 1), in: body) else {
+                return nil
+            }
+            let primPathRange = Range(match.range(at: 2), in: body)
+            return (
+                assetPath: String(body[assetPathRange]),
+                primPath: primPathRange.map { String(body[$0]) }
+            )
+        }
+    }
+
+    private func compositionFieldBody(named name: String, in text: String) throws -> String? {
+        guard let nameRange = attributeNameRange(named: name, in: text),
+              let equalSign = text[nameRange.upperBound...].firstIndex(of: "=") else {
+            return nil
+        }
+
+        var cursor = text.index(after: equalSign)
+        skipWhitespace(in: text, index: &cursor)
+        guard cursor < text.endIndex else {
+            return ""
+        }
+        if text[cursor] == "[" {
+            return try bracketArrayBody(after: cursor, named: name, in: text)
+        }
+
+        var end = cursor
+        while end < text.endIndex, text[end] != "\n", text[end] != "\r" {
+            end = text.index(after: end)
+        }
+        return String(text[cursor..<end])
     }
 
     private func parseOptionalTextureCoordinates(in text: String) throws -> USDTextureCoordinatePrimvar? {
@@ -782,6 +941,7 @@ public struct USDAReader: USDSceneReader {
 private struct USDAPrim {
     var typeName: String?
     var name: String?
+    var metadataBody: String
     var body: String
     var fullRange: Range<String.Index>
 }

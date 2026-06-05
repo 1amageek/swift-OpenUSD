@@ -1287,6 +1287,50 @@ struct OpenUSDTests {
             assetPath: "assets/single.usda",
             primPath: "/Scope"
         )))
+        #expect(layer.composition.references == [
+            USDCompositionArc(assetPath: "assets/ref.usda", primPath: "/Scope.target"),
+        ])
+        #expect(layer.composition.payloads == [
+            USDCompositionArc(assetPath: "assets/payload.usdc", primPath: "/PayloadTarget"),
+            USDCompositionArc(assetPath: "assets/single.usda", primPath: "/Scope"),
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaReaderPreservesLayerCompositionArcs() throws {
+        let data = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Scene"
+            metersPerUnit = 1
+            upAxis = "Z"
+            subLayers = [
+                @./layers/base.usda@
+            ]
+        )
+
+        def "Scene" (
+            references = [
+                @./refs/model.usda@</Model>
+            ]
+            payload = @./payloads/heavy.usdc@</Payload>
+        )
+        {
+        }
+        """.utf8)
+
+        let layer = try USDAReader().readLayer(from: data)
+
+        #expect(layer.defaultPrim == "Scene")
+        #expect(layer.metersPerUnit == 1)
+        #expect(layer.upAxis == .z)
+        #expect(layer.composition.subLayerAssetPaths == ["./layers/base.usda"])
+        #expect(layer.composition.references == [
+            USDCompositionArc(assetPath: "./refs/model.usda", primPath: "/Model"),
+        ])
+        #expect(layer.composition.payloads == [
+            USDCompositionArc(assetPath: "./payloads/heavy.usdc", primPath: "/Payload"),
+        ])
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -1464,6 +1508,73 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func usdzReaderTraversesUSDASubLayers() throws {
+        let root = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Scene"
+            metersPerUnit = 1
+            upAxis = "Z"
+            subLayers = [
+                @./mesh.usda@
+            ]
+        )
+        """.utf8)
+        let package = makeUSDZFixture(entries: [
+            ("root.usda", root),
+            ("mesh.usda", makeUSDAMeshLayer(name: "Triangle")),
+        ], alignPayloads: true)
+
+        let scene = try USDZReader().read(from: package)
+
+        #expect(scene.defaultPrim == "Scene")
+        #expect(scene.upAxis == .z)
+        #expect(scene.meshes.map(\.name) == ["Triangle"])
+        #expect(scene.meshes.first?.faceVertexIndices == [0, 1, 2])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdzReaderTraversesUSDAReferences() throws {
+        let root = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Scene"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def "Scene" (
+            references = @./refs/mesh.usda@</Triangle>
+        )
+        {
+        }
+        """.utf8)
+        let package = makeUSDZFixture(entries: [
+            ("root.usda", root),
+            ("refs/mesh.usda", makeUSDAMeshLayer(name: "Triangle")),
+        ], alignPayloads: true)
+
+        let scene = try USDZReader().read(from: package)
+
+        #expect(scene.defaultPrim == "Scene")
+        #expect(scene.meshes.map(\.name) == ["Triangle"])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdzReaderTraversesUSDCReferences() throws {
+        let package = makeUSDZFixture(entries: [
+            ("root.usdc", makeUSDCReferenceLayerFixture(assetPath: "assets/ref.usda")),
+            ("assets/ref.usda", makeUSDAMeshLayer(name: "Triangle")),
+        ], alignPayloads: true)
+
+        let scene = try USDZReader().read(from: package)
+
+        #expect(scene.upAxis == .z)
+        #expect(scene.meshes.map(\.name) == ["Triangle"])
+        #expect(scene.meshes.first?.points.count == 3)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func usdzReaderRejectsUnalignedPayload() throws {
         let usda = Data("""
         #usda 1.0
@@ -1533,6 +1644,25 @@ private func expectPointsApproximatelyEqual(
         #expect(abs(actual[index].y - expected[index].y) <= tolerance)
         #expect(abs(actual[index].z - expected[index].z) <= tolerance)
     }
+}
+
+private func makeUSDAMeshLayer(name: String) -> Data {
+    Data("""
+    #usda 1.0
+    (
+        defaultPrim = "\(name)"
+        metersPerUnit = 1
+        upAxis = "Z"
+    )
+
+    def Mesh "\(name)"
+    {
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        uniform token subdivisionScheme = "none"
+    }
+    """.utf8)
 }
 
 private func makeUSDCLayerTokenVectorFixture() -> Data {
@@ -1793,6 +1923,58 @@ private func makeUSDCLayerCompositionArcFixture() -> Data {
             pathIndexes: [0, 1, 2, 3],
             elementTokenIndexes: [0, 1, -2, 6],
             jumps: [-1, 2, -2, -2]
+        )),
+        ("SPECS", makeUSDCSpecsSection(version: version, specs: specs)),
+    ])
+}
+
+private func makeUSDCReferenceLayerFixture(assetPath: String) -> Data {
+    let version = USDCCrateVersion(major: 0, minor: 8, patch: 0)
+    let tokens = [
+        "specifier",
+        "Scope",
+        "references",
+        assetPath,
+    ]
+    var valueData = Data()
+    let referenceListOperationOffset = appendUSDCReferenceListOperation(
+        addedItems: [
+            USDCEncodedReference(
+                assetPathStringIndex: 0,
+                primPathIndex: 1,
+                layerOffset: .identity
+            ),
+        ],
+        to: &valueData
+    )
+    let fields = [
+        USDCCrateField(
+            tokenIndex: 0,
+            valueRep: USDCCrateValueRep(type: .specifier, isInlined: true, isArray: false, payload: 0)
+        ),
+        USDCCrateField(
+            tokenIndex: 2,
+            valueRep: USDCCrateValueRep(type: .referenceListOperation, isInlined: false, isArray: false, payload: referenceListOperationOffset)
+        ),
+    ]
+    let specs = [
+        USDCCrateSpec(pathIndex: 0, fieldSetIndex: 0, specType: .pseudoRoot),
+        USDCCrateSpec(pathIndex: 1, fieldSetIndex: 1, specType: .prim),
+    ]
+
+    return makeUSDCFixture(version: version, valueData: valueData, sections: [
+        ("TOKENS", makeUSDCTokenSection(version: version, tokenData: nullSeparatedTokenData(tokens))),
+        ("STRINGS", makeUSDCStringsSection([3])),
+        ("FIELDS", makeUSDCFieldsSection(version: version, fields: fields)),
+        ("FIELDSETS", makeUSDCFieldSetsSection(version: version, indexes: [
+            UInt32.max,
+            0, 1, UInt32.max,
+        ])),
+        ("PATHS", makeUSDCCompressedPathsSection(
+            pathCount: 2,
+            pathIndexes: [0, 1],
+            elementTokenIndexes: [0, 1],
+            jumps: [-1, -2]
         )),
         ("SPECS", makeUSDCSpecsSection(version: version, specs: specs)),
     ])
