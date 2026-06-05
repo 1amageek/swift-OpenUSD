@@ -291,6 +291,9 @@ public struct USDAReader: USDSceneReader {
         guard cursor < text.endIndex else {
             return
         }
+        if typeName == "opaque", !propertyName.hasSuffix(".connect") {
+            throw USDImportError.invalidData("USDA opaque attribute \(propertyName) cannot author a default value.")
+        }
         if text[cursor...].hasPrefix("None") {
             if qualifiers.contains(where: isListEditQualifier) {
                 throw USDImportError.invalidData("USDA \(propertyName) list-edit cannot use None.")

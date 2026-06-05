@@ -1914,6 +1914,71 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingAnyTypePrimFixtureReadsLayer() throws {
+        let layer = try USDAReader().readLayer(from: openUSDFixture("testSdfParsing.testenv/184_def_AnyType.usda"))
+
+        let expectedPaths = [
+            "/DefWithAnyType",
+            "/DefWithEmptyType",
+            "/OverWithAnyType",
+            "/OverWithEmptyType",
+            "/ClassWithAnyType",
+            "/ClassWithEmptyType",
+        ]
+        #expect(layer.prims.map(\.path) == expectedPaths)
+
+        let defWithAnyType = try #require(layer.spec(at: "/DefWithAnyType"))
+        #expect(defWithAnyType.specifier == .def)
+        #expect(defWithAnyType.typeName == "__AnyType__")
+        let defWithEmptyType = try #require(layer.spec(at: "/DefWithEmptyType"))
+        #expect(defWithEmptyType.specifier == .def)
+        #expect(defWithEmptyType.typeName == nil)
+        let overWithAnyType = try #require(layer.spec(at: "/OverWithAnyType"))
+        #expect(overWithAnyType.specifier == .over)
+        #expect(overWithAnyType.typeName == "__AnyType__")
+        let classWithEmptyType = try #require(layer.spec(at: "/ClassWithEmptyType"))
+        #expect(classWithEmptyType.specifier == .class)
+        #expect(classWithEmptyType.typeName == nil)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingOpaqueAttributesFixtureReadsLayer() throws {
+        let layer = try USDAReader().readLayer(from: openUSDFixture("testSdfParsing.testenv/210_opaque_attributes.usda"))
+
+        #expect(layer.prims.map(\.path) == ["/MyScope"])
+        let myScope = try #require(layer.spec(at: "/MyScope"))
+        #expect(myScope.specifier == .def)
+        #expect(myScope.typeName == "Scope")
+        #expect(myScope.fieldNames.contains("properties"))
+
+        let opaqueAttr = try #require(layer.spec(at: "/MyScope.OpaqueAttr"))
+        #expect(opaqueAttr.specType == .attribute)
+        #expect(opaqueAttr.typeName == "opaque")
+        #expect(opaqueAttr.fieldNames.contains("custom"))
+        #expect(opaqueAttr.fieldNames.contains("connectionPaths"))
+        #expect(!opaqueAttr.fieldNames.contains("default"))
+        let connection = try #require(layer.spec(at: "/MyScope.OpaqueAttr[.OtherAttr]"))
+        #expect(connection.specType == .connection)
+
+        let otherAttr = try #require(layer.spec(at: "/MyScope.OtherAttr"))
+        #expect(otherAttr.specType == .attribute)
+        #expect(otherAttr.typeName == "group")
+        #expect(otherAttr.fieldNames.contains("custom"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingAuthoredOpaqueAttributeFixtureThrowsTypedError() throws {
+        let message = try usdImportFailureMessage {
+            _ = try USDAReader().readLayer(
+                from: openUSDFixture("testSdfParsing.testenv/211_bad_authored_opaque_attributes.usda")
+            )
+        }
+
+        #expect(message.contains("opaque attribute"))
+        #expect(message.contains("default value"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingUTF8IdentifiersFixtureReadsDefaultPrimAndTransforms() throws {
         let data = try openUSDFixture("testSdfParsing.testenv/217_utf8_identifiers.usda")
 

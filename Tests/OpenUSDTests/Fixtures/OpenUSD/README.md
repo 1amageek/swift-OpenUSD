@@ -85,10 +85,13 @@ Source paths:
 | `testSdfParsing.testenv/176_empty_lists.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/176_empty_lists.usda` |
 | `testSdfParsing.testenv/177_bad_empty_lists.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/177_bad_empty_lists.usda` |
 | `testSdfParsing.testenv/179_bad_shaped_attr_dimensions1.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/179_bad_shaped_attr_dimensions1.usda` |
+| `testSdfParsing.testenv/184_def_AnyType.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/184_def_AnyType.usda` |
 | `testSdfParsing.testenv/185_namespaced_properties.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/185_namespaced_properties.usda` |
 | `testSdfParsing.testenv/187_displayName_metadata.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/187_displayName_metadata.usda` |
 | `testSdfParsing.testenv/203_newlines.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/203_newlines.usda` |
 | `testSdfParsing.testenv/204_really_empty.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/204_really_empty.usda` |
+| `testSdfParsing.testenv/210_opaque_attributes.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/210_opaque_attributes.usda` |
+| `testSdfParsing.testenv/211_bad_authored_opaque_attributes.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/211_bad_authored_opaque_attributes.usda` |
 | `testSdfParsing.testenv/217_utf8_identifiers.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/217_utf8_identifiers.usda` |
 | `testSdfParsing.testenv/218_utf8_bad_identifier.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/218_utf8_bad_identifier.usda` |
 | `testSdfParsing.testenv/219_utf8_bad_type_name.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/219_utf8_bad_type_name.usda` |
