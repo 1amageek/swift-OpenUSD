@@ -143,6 +143,7 @@ public struct USDAReader: USDSceneReader {
             let directAttributeText = try directAttributeText(from: prim.body)
             try validateBoolMetadata(named: "hidden", in: prim.metadataBody)
             try validateBoolMetadata(named: "hidden", in: directAttributeText)
+            try validateStringMetadata(named: "kind", in: prim.metadataBody)
             try validateTokenMetadata(named: "permission", allowedValues: ["private", "public"], in: prim.metadataBody)
             try validateTokenMetadata(named: "permission", allowedValues: ["private", "public"], in: directAttributeText)
             try validateCompositionListEdits(in: prim.metadataBody)
@@ -186,6 +187,51 @@ public struct USDAReader: USDSceneReader {
             let value = String(text[valueStart..<valueCursor])
             guard value == "true" || value == "false" else {
                 throw USDImportError.invalidData("USDA \(name) metadata contains invalid bool value \(value).")
+            }
+            cursor = valueCursor
+        }
+    }
+
+    private func validateStringMetadata(named name: String, in text: String) throws {
+        var cursor = text.startIndex
+        while cursor < text.endIndex {
+            let character = text[cursor]
+            if character == "#" {
+                skipLineComment(in: text, index: &cursor)
+                continue
+            }
+            if character == "\"" || character == "'" {
+                try skipQuotedString(in: text, index: &cursor)
+                continue
+            }
+            guard token(name, matchesAt: cursor, in: text) else {
+                cursor = text.index(after: cursor)
+                continue
+            }
+            var valueCursor = text.index(cursor, offsetBy: name.count)
+            skipWhitespace(in: text, index: &valueCursor)
+            guard valueCursor < text.endIndex, text[valueCursor] == "=" else {
+                cursor = text.index(after: cursor)
+                continue
+            }
+            valueCursor = text.index(after: valueCursor)
+            skipWhitespace(in: text, index: &valueCursor)
+            if valueCursor < text.endIndex, text[valueCursor] == "\"" || text[valueCursor] == "'" {
+                try skipQuotedString(in: text, index: &valueCursor)
+                cursor = valueCursor
+                continue
+            }
+            let valueStart = valueCursor
+            while valueCursor < text.endIndex {
+                let character = text[valueCursor]
+                if character.isWhitespace || character == ";" || character == "," || character == ")" {
+                    break
+                }
+                valueCursor = text.index(after: valueCursor)
+            }
+            let value = String(text[valueStart..<valueCursor])
+            guard value == "None" else {
+                throw USDImportError.invalidData("USDA \(name) metadata contains invalid string value \(value).")
             }
             cursor = valueCursor
         }

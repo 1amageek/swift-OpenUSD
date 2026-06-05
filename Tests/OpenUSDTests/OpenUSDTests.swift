@@ -1685,6 +1685,27 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingKindMetadataFixtureReadsLayer() throws {
+        let data = try openUSDFixture("testSdfParsing.testenv/149_kind_metadata.usda")
+
+        let layer = try USDAReader().readLayer(from: data)
+
+        #expect(layer.prims.map(\.path) == ["/TestPrim"])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingBadKindMetadataFixtureThrowsTypedError() throws {
+        let data = try openUSDFixture("testSdfParsing.testenv/150_bad_kind_metadata_1.usda")
+
+        let message = try usdImportFailureMessage {
+            _ = try USDAReader().readLayer(from: data)
+        }
+
+        #expect(message.contains("kind metadata"))
+        #expect(message.contains("model"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingReferencesFixtureReadsSupportedExternalArcs() throws {
         let data = try openUSDFixture("testSdfParsing.testenv/132_references.usda")
 
