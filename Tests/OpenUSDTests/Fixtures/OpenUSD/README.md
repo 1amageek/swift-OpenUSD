@@ -21,6 +21,7 @@ Source paths:
 | `testSdfUsdzResolver/` | `pxr/usd/sdf/testenv/testSdfUsdzResolver/` |
 | `testSdfParsing.testenv/01_empty.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/01_empty.usda` |
 | `testSdfParsing.testenv/02_simple.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/02_simple.usda` |
+| `testSdfParsing.testenv/03_bad_file.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/03_bad_file.usda` |
 | `testSdfParsing.testenv/07_end.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/07_end.usda` |
 | `testSdfParsing.testenv/20_optionalsemicolons.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/20_optionalsemicolons.usda` |
 | `testSdfParsing.testenv/41_noEndingNewline.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/41_noEndingNewline.usda` |

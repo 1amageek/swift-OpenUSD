@@ -28,6 +28,7 @@ public struct USDAReader: USDSceneReader {
     public func read(from text: String, options: USDReadingOptions) throws -> USDScene {
         let text = try readerVisibleText(from: text)
         try validateSignature(in: text)
+        try validateTopLevelSyntax(in: text)
         if let timeCode = options.timeCode, !timeCode.isFinite {
             throw USDImportError.invalidData("USDA requested timeCode must be finite.")
         }
@@ -47,6 +48,7 @@ public struct USDAReader: USDSceneReader {
     public func readLayer(from text: String) throws -> USDALayer {
         let text = try readerVisibleText(from: text)
         try validateSignature(in: text)
+        try validateTopLevelSyntax(in: text)
         let metadataBody = try layerMetadataBody(in: text)
         let defaultPrim = try metadataBody.flatMap { try parseOptionalString(named: "defaultPrim", in: $0) }
         let metersPerUnit = try metadataBody.flatMap { try parseOptionalDouble(named: "metersPerUnit", in: $0) }
@@ -80,6 +82,53 @@ public struct USDAReader: USDSceneReader {
     private func validateSignature(in text: String) throws {
         guard text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("#usda") else {
             throw USDImportError.invalidData("USDA data is missing the #usda signature.")
+        }
+    }
+
+    private func validateTopLevelSyntax(in text: String) throws {
+        var cursor = topLevelSyntaxStart(in: text)
+        var hasReadMetadata = false
+        while true {
+            skipWhitespaceAndLineComments(in: text, index: &cursor)
+            guard cursor < text.endIndex else {
+                return
+            }
+            if text[cursor] == ";" {
+                cursor = text.index(after: cursor)
+                continue
+            }
+            if !hasReadMetadata, text[cursor] == "(" {
+                let metadataEnd = try matchingParenthesis(startingAt: cursor, in: text)
+                cursor = text.index(after: metadataEnd)
+                hasReadMetadata = true
+                continue
+            }
+            if primDeclarationKeyword(at: cursor, in: text) != nil {
+                let prim = try parsePrim(at: cursor, in: text)
+                cursor = prim.fullRange.upperBound
+                continue
+            }
+            throw USDImportError.invalidData("USDA contains unexpected top-level syntax.")
+        }
+    }
+
+    private func topLevelSyntaxStart(in text: String) -> String.Index {
+        guard let signatureRange = text.range(of: "#usda") else {
+            return text.startIndex
+        }
+        guard let lineEnd = text[signatureRange.upperBound...].firstIndex(of: "\n") else {
+            return text.endIndex
+        }
+        return text.index(after: lineEnd)
+    }
+
+    private func skipWhitespaceAndLineComments(in text: String, index: inout String.Index) {
+        while index < text.endIndex {
+            skipWhitespace(in: text, index: &index)
+            guard index < text.endIndex, text[index] == "#" else {
+                return
+            }
+            skipLineComment(in: text, index: &index)
         }
     }
 
