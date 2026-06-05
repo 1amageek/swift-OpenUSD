@@ -30,7 +30,10 @@ public struct USDCLayer: Sendable, Equatable {
         var references: [USDCompositionArc] = []
         var payloads: [USDCompositionArc] = []
         for spec in specs {
-            for field in spec.fields.values {
+            for fieldName in spec.fieldNames {
+                guard let field = spec.fields[fieldName] else {
+                    continue
+                }
                 switch field {
                 case .referenceListOperation(let operation):
                     references.append(contentsOf: operation.positiveItems.map {
