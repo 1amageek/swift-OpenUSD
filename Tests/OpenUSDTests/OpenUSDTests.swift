@@ -1170,7 +1170,7 @@ struct OpenUSDTests {
     func generatedUSDATimeSampledMeshFixtureUsesRequestedSnapshot() throws {
         let fixture = try generatedFixture("animated_mesh.usda")
 
-        let scene = try USDAReader().read(from: fixture, options: USDSceneReadingOptions(timeCode: 2))
+        let scene = try USDAReader().read(from: fixture, options: USDReadingOptions(timeCode: 2))
 
         let mesh = try #require(scene.meshes.first)
         #expect(mesh.points == [
@@ -1184,7 +1184,7 @@ struct OpenUSDTests {
     func generatedUSDATimeSampledMeshFixtureInterpolatesRequestedSnapshot() throws {
         let fixture = try generatedFixture("animated_mesh.usda")
 
-        let scene = try USDAReader().read(from: fixture, options: USDSceneReadingOptions(timeCode: 1.5))
+        let scene = try USDAReader().read(from: fixture, options: USDReadingOptions(timeCode: 1.5))
 
         let mesh = try #require(scene.meshes.first)
         #expect(mesh.points == [
@@ -1200,7 +1200,7 @@ struct OpenUSDTests {
 
         let scene = try USDAReader().read(
             from: fixture,
-            options: USDSceneReadingOptions(timeCode: 1.5, timeSampleInterpolation: .held)
+            options: USDReadingOptions(timeCode: 1.5, timeSampleInterpolation: .held)
         )
 
         let mesh = try #require(scene.meshes.first)
@@ -1215,7 +1215,7 @@ struct OpenUSDTests {
     func generatedUSDCTimeSampledMeshFixtureUsesRequestedSnapshot() throws {
         let fixture = try generatedFixture("animated_mesh.usdc")
 
-        let scene = try USDCReader().read(from: fixture, options: USDSceneReadingOptions(timeCode: 2))
+        let scene = try USDCReader().read(from: fixture, options: USDReadingOptions(timeCode: 2))
 
         let mesh = try #require(scene.meshes.first)
         #expect(mesh.points == [
@@ -1229,7 +1229,7 @@ struct OpenUSDTests {
     func generatedUSDCTimeSampledMeshFixtureInterpolatesRequestedSnapshot() throws {
         let fixture = try generatedFixture("animated_mesh.usdc")
 
-        let scene = try USDCReader().read(from: fixture, options: USDSceneReadingOptions(timeCode: 1.5))
+        let scene = try USDCReader().read(from: fixture, options: USDReadingOptions(timeCode: 1.5))
 
         let mesh = try #require(scene.meshes.first)
         #expect(mesh.points == [
@@ -1367,6 +1367,21 @@ struct OpenUSDTests {
         #expect(scope.specType == .prim)
         #expect(scope.fields["assetPath"] == .assetPath("assets/model.usda"))
         #expect(scope.fields["pathVector"] == .pathVector(["/", "/Scope"]))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdcLayerReaderPreservesNumericFieldValues() throws {
+        let fixture = makeUSDCLayerNumericFieldFixture()
+
+        let layer = try USDCReader().readLayer(from: fixture)
+
+        #expect(layer.specs.map(\.path) == ["/", "/Scope"])
+        let scope = try #require(layer.spec(at: "/Scope"))
+        #expect(scope.specType == .prim)
+        #expect(scope.fields["intValue"] == .int(-42))
+        #expect(scope.fields["vec2fValue"] == .point2(USDPoint2D(x: 1.5, y: -2.25)))
+        #expect(scope.fields["vec2dValue"] == .point2(USDPoint2D(x: 3.25, y: 4.5)))
+        #expect(scope.fields["doubleArray"] == .doubleArray([1.25, 2.5]))
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -1869,7 +1884,7 @@ struct OpenUSDTests {
             ("refs/animated.usda", animatedLayer),
         ], alignPayloads: true)
 
-        let scene = try USDZReader().read(from: package, options: USDSceneReadingOptions(timeCode: 14))
+        let scene = try USDZReader().read(from: package, options: USDReadingOptions(timeCode: 14))
         let mesh = try #require(scene.meshes.first)
 
         #expect(mesh.name == "Scene")
@@ -1921,7 +1936,7 @@ struct OpenUSDTests {
             ("refs/animated.usda", animatedLayer),
         ], alignPayloads: true)
 
-        let scene = try USDZReader().read(from: package, options: USDSceneReadingOptions(timeCode: 13))
+        let scene = try USDZReader().read(from: package, options: USDReadingOptions(timeCode: 13))
         let mesh = try #require(scene.meshes.first)
 
         #expect(mesh.name == "Scene")
@@ -2529,6 +2544,70 @@ private func makeUSDCLayerAssetPathAndPathVectorFixture() -> Data {
     ])
 }
 
+private func makeUSDCLayerNumericFieldFixture() -> Data {
+    let version = USDCCrateVersion(major: 0, minor: 8, patch: 0)
+    let tokens = [
+        "specifier",
+        "Scope",
+        "intValue",
+        "vec2fValue",
+        "vec2dValue",
+        "doubleArray",
+    ]
+    var valueData = Data()
+    let vec2fOffset = appendUSDCVec2fScalar(USDPoint2D(x: 1.5, y: -2.25), to: &valueData)
+    let vec2dOffset = appendUSDCVec2dScalar(USDPoint2D(x: 3.25, y: 4.5), to: &valueData)
+    let doubleArrayOffset = appendUSDCDoubleArray([1.25, 2.5], to: &valueData)
+    let fields = [
+        USDCCrateField(
+            tokenIndex: 0,
+            valueRep: USDCCrateValueRep(type: .specifier, isInlined: true, isArray: false, payload: 0)
+        ),
+        USDCCrateField(
+            tokenIndex: 2,
+            valueRep: USDCCrateValueRep(
+                type: .int,
+                isInlined: true,
+                isArray: false,
+                payload: UInt64(UInt32(bitPattern: Int32(-42)))
+            )
+        ),
+        USDCCrateField(
+            tokenIndex: 3,
+            valueRep: USDCCrateValueRep(type: .vec2f, isInlined: false, isArray: false, payload: vec2fOffset)
+        ),
+        USDCCrateField(
+            tokenIndex: 4,
+            valueRep: USDCCrateValueRep(type: .vec2d, isInlined: false, isArray: false, payload: vec2dOffset)
+        ),
+        USDCCrateField(
+            tokenIndex: 5,
+            valueRep: USDCCrateValueRep(type: .double, isInlined: false, isArray: true, payload: doubleArrayOffset)
+        ),
+    ]
+    let specs = [
+        USDCCrateSpec(pathIndex: 0, fieldSetIndex: 0, specType: .pseudoRoot),
+        USDCCrateSpec(pathIndex: 1, fieldSetIndex: 1, specType: .prim),
+    ]
+
+    return makeUSDCFixture(version: version, valueData: valueData, sections: [
+        ("TOKENS", makeUSDCTokenSection(version: version, tokenData: nullSeparatedTokenData(tokens))),
+        ("STRINGS", makeUSDCStringsSection([])),
+        ("FIELDS", makeUSDCFieldsSection(version: version, fields: fields)),
+        ("FIELDSETS", makeUSDCFieldSetsSection(version: version, indexes: [
+            UInt32.max,
+            0, 1, 2, 3, 4, UInt32.max,
+        ])),
+        ("PATHS", makeUSDCCompressedPathsSection(
+            pathCount: 2,
+            pathIndexes: [0, 1],
+            elementTokenIndexes: [0, 1],
+            jumps: [-1, -2]
+        )),
+        ("SPECS", makeUSDCSpecsSection(version: version, specs: specs)),
+    ])
+}
+
 private func makeUSDCLayerListOperationFixture() -> Data {
     let version = USDCCrateVersion(major: 0, minor: 8, patch: 0)
     let tokens = [
@@ -2907,6 +2986,20 @@ private func appendUSDCIntArray(_ values: [Int32], to data: inout Data) -> UInt6
     return offset
 }
 
+private func appendUSDCVec2fScalar(_ point: USDPoint2D, to data: inout Data) -> UInt64 {
+    let offset = alignUSDCValueData(&data)
+    data.appendLittleEndianFloat32(Float32(point.x))
+    data.appendLittleEndianFloat32(Float32(point.y))
+    return offset
+}
+
+private func appendUSDCVec2dScalar(_ point: USDPoint2D, to data: inout Data) -> UInt64 {
+    let offset = alignUSDCValueData(&data)
+    data.appendLittleEndian(point.x.bitPattern)
+    data.appendLittleEndian(point.y.bitPattern)
+    return offset
+}
+
 private func appendUSDCVec3fArray(_ points: [USDPoint3D], to data: inout Data) -> UInt64 {
     let offset = alignUSDCValueData(&data)
     data.appendLittleEndian(UInt64(points.count))
@@ -2938,6 +3031,15 @@ private func appendUSDCVec3dScalar(_ vector: USDPoint3D, to data: inout Data) ->
     data.appendLittleEndian(vector.x.bitPattern)
     data.appendLittleEndian(vector.y.bitPattern)
     data.appendLittleEndian(vector.z.bitPattern)
+    return offset
+}
+
+private func appendUSDCDoubleArray(_ values: [Double], to data: inout Data) -> UInt64 {
+    let offset = alignUSDCValueData(&data)
+    data.appendLittleEndian(UInt64(values.count))
+    for value in values {
+        data.appendLittleEndian(value.bitPattern)
+    }
     return offset
 }
 

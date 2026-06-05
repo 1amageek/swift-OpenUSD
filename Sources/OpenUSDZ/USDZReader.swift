@@ -15,7 +15,7 @@ public struct USDZReader: USDSceneReader {
         try read(from: data, options: .default)
     }
 
-    public func read(from data: Data, options: USDSceneReadingOptions) throws -> USDScene {
+    public func read(from data: Data, options: USDReadingOptions) throws -> USDScene {
         let archive = try readArchive(from: data)
         let defaultLayerPath = try defaultLayerPath(in: archive)
         return try readResolvedScene(defaultLayerPath: defaultLayerPath, in: archive, options: options)
@@ -25,7 +25,7 @@ public struct USDZReader: USDSceneReader {
         try read(from: data, rootLayerPath: rootLayerPath, options: .default)
     }
 
-    public func read(from data: Data, rootLayerPath: String, options: USDSceneReadingOptions) throws -> USDScene {
+    public func read(from data: Data, rootLayerPath: String, options: USDReadingOptions) throws -> USDScene {
         let archive = try readArchive(from: data)
         let resolvedRootLayerPath = try resolveRootLayerPath(rootLayerPath, in: archive)
         return try readResolvedScene(defaultLayerPath: resolvedRootLayerPath, in: archive, options: options)
@@ -142,7 +142,7 @@ public struct USDZReader: USDSceneReader {
     private func readResolvedScene(
         defaultLayerPath: String,
         in archive: USDZArchive,
-        options: USDSceneReadingOptions
+        options: USDReadingOptions
     ) throws -> USDScene {
         let resolvedLayerInstances = try readResolvedLayerInstances(
             defaultLayerPath: defaultLayerPath,
@@ -168,7 +168,7 @@ public struct USDZReader: USDSceneReader {
     private func readResolvedLayerInstances(
         defaultLayerPath: String,
         in archive: USDZArchive,
-        options: USDSceneReadingOptions
+        options: USDReadingOptions
     ) throws -> [USDZResolvedLayerInstance] {
         var visitedLayerInstances: Set<USDZLayerInstanceKey> = []
         var pendingLayerInstances = [
@@ -446,7 +446,7 @@ public struct USDZReader: USDSceneReader {
     private func readLayer(
         at layerPath: String,
         in archive: USDZArchive,
-        options: USDSceneReadingOptions = .default
+        options: USDReadingOptions = .default
     ) throws -> USDZResolvedLayer {
         let entryPath = try resolvedEntryPath(for: layerPath)
         let data = try archive.data(for: layerPath)
@@ -465,7 +465,7 @@ public struct USDZReader: USDSceneReader {
         }
     }
 
-    private func readUSDA(_ data: Data, layerPath: String, options: USDSceneReadingOptions) throws -> USDZResolvedLayer {
+    private func readUSDA(_ data: Data, layerPath: String, options: USDReadingOptions) throws -> USDZResolvedLayer {
         let layer = try textReader.readLayer(from: data)
         let scene: USDScene?
         if dataContainsMeshDefinition(data) {
@@ -484,7 +484,7 @@ public struct USDZReader: USDSceneReader {
         )
     }
 
-    private func readUSDC(_ data: Data, layerPath: String, options: USDSceneReadingOptions) throws -> USDZResolvedLayer {
+    private func readUSDC(_ data: Data, layerPath: String, options: USDReadingOptions) throws -> USDZResolvedLayer {
         let reader = USDCReader()
         let layer = try reader.readLayer(from: data)
         let scene = layer.prims.contains { $0.typeName == "Mesh" }
@@ -509,13 +509,13 @@ public struct USDZReader: USDSceneReader {
     }
 
     private func layerOptions(
-        from options: USDSceneReadingOptions,
+        from options: USDReadingOptions,
         applying layerOffset: USDLayerOffset
-    ) throws -> USDSceneReadingOptions {
+    ) throws -> USDReadingOptions {
         guard let timeCode = options.timeCode else {
             return options
         }
-        return USDSceneReadingOptions(timeCode: try layerOffset.layerTime(forStageTime: timeCode))
+        return USDReadingOptions(timeCode: try layerOffset.layerTime(forStageTime: timeCode))
     }
 
     private func resolvedEntryPath(for layerPath: String) throws -> String {

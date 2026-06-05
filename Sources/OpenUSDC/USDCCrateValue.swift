@@ -13,7 +13,9 @@ enum USDCCrateValue: Sendable, Equatable {
     case referenceListOperation(USDCListOperation<USDCReference>)
     case payloadListOperation(USDCListOperation<USDCPayload>)
     case payload(USDCPayload)
+    case int(Int)
     case double(Double)
+    case point2(USDPoint2D)
     case vector3(USDCVector3D)
     case quaternion(USDCQuaternion)
     case matrix4x4(USDCMatrix4x4)
@@ -38,6 +40,13 @@ enum USDCCrateValue: Sendable, Equatable {
         return nil
     }
 
+    var intValue: Int? {
+        if case let .int(value) = self {
+            return value
+        }
+        return nil
+    }
+
     var tokenArrayValue: [String]? {
         if case let .tokenArray(value) = self {
             return value
@@ -54,6 +63,13 @@ enum USDCCrateValue: Sendable, Equatable {
 
     var vector3Value: USDCVector3D? {
         if case let .vector3(value) = self {
+            return value
+        }
+        return nil
+    }
+
+    var point2Value: USDPoint2D? {
+        if case let .point2(value) = self {
             return value
         }
         return nil

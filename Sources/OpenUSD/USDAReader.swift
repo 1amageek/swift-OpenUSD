@@ -7,7 +7,7 @@ public struct USDAReader: USDSceneReader {
         try read(from: data, options: .default)
     }
 
-    public func read(from data: Data, options: USDSceneReadingOptions) throws -> USDScene {
+    public func read(from data: Data, options: USDReadingOptions) throws -> USDScene {
         guard let text = String(data: data, encoding: .utf8) else {
             throw USDImportError.invalidData("USDA data is not UTF-8.")
         }
@@ -25,7 +25,7 @@ public struct USDAReader: USDSceneReader {
         try read(from: text, options: .default)
     }
 
-    public func read(from text: String, options: USDSceneReadingOptions) throws -> USDScene {
+    public func read(from text: String, options: USDReadingOptions) throws -> USDScene {
         try validateSignature(in: text)
         if let timeCode = options.timeCode, !timeCode.isFinite {
             throw USDImportError.invalidData("USDA requested timeCode must be finite.")
@@ -49,7 +49,7 @@ public struct USDAReader: USDSceneReader {
     }
 
     @available(*, deprecated, renamed: "read(from:options:)")
-    public func read(_ text: String, options: USDSceneReadingOptions) throws -> USDScene {
+    public func read(_ text: String, options: USDReadingOptions) throws -> USDScene {
         try read(from: text, options: options)
     }
 
@@ -151,7 +151,7 @@ public struct USDAReader: USDSceneReader {
         }
     }
 
-    private func parseMeshes(in text: String, options: USDSceneReadingOptions) throws -> [USDMesh] {
+    private func parseMeshes(in text: String, options: USDReadingOptions) throws -> [USDMesh] {
         try parseMeshes(in: text, options: options, inheritedTransform: .identity, parentPrimPath: "")
     }
 
@@ -186,7 +186,7 @@ public struct USDAReader: USDSceneReader {
 
     private func parseMeshes(
         in text: String,
-        options: USDSceneReadingOptions,
+        options: USDReadingOptions,
         inheritedTransform: USDTransformMatrix4x4,
         parentPrimPath: String
     ) throws -> [USDMesh] {
@@ -222,7 +222,7 @@ public struct USDAReader: USDSceneReader {
         prim: USDAPrim,
         primPath: String,
         directBody: String,
-        options: USDSceneReadingOptions,
+        options: USDReadingOptions,
         transform: USDTransformMatrix4x4
     ) throws -> USDMesh {
         let points = try parsePointArray(named: "points", in: directBody, options: options)
@@ -724,7 +724,7 @@ public struct USDAReader: USDSceneReader {
     private func parsePointArray(
         named name: String,
         in text: String,
-        options: USDSceneReadingOptions
+        options: USDReadingOptions
     ) throws -> [USDPoint3D] {
         if let timeSamplesBody = try optionalTimeSamplesBody(named: name, in: text),
            let sampledPoints = try parsePointTimeSamples(named: name, in: timeSamplesBody, options: options) {
@@ -882,7 +882,7 @@ public struct USDAReader: USDSceneReader {
     private func parsePointTimeSamples(
         named name: String,
         in body: String,
-        options: USDSceneReadingOptions
+        options: USDReadingOptions
     ) throws -> [USDPoint3D]? {
         let entries = try parseTimeSampleEntries(in: body)
         guard !entries.isEmpty else {

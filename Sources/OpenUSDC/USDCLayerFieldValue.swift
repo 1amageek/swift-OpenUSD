@@ -1,3 +1,5 @@
+import OpenUSD
+
 public enum USDCLayerFieldValue: Sendable, Equatable {
     case token(String)
     case tokenArray([String])
@@ -11,7 +13,11 @@ public enum USDCLayerFieldValue: Sendable, Equatable {
     case referenceListOperation(USDCListOperation<USDCReference>)
     case payloadListOperation(USDCListOperation<USDCPayload>)
     case payload(USDCPayload)
+    case int(Int)
     case double(Double)
+    case doubleArray([Double])
     case intArray([Int])
+    case point2(USDPoint2D)
+    case point2Array([USDPoint2D])
     case specifier(USDCPrimSpecifier)
 }

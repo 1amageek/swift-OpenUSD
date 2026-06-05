@@ -3,9 +3,9 @@ import Foundation
 
 struct USDCSceneMaterializer {
     private let crate: USDCCrateFile
-    private let options: USDSceneReadingOptions
+    private let options: USDReadingOptions
 
-    init(crate: USDCCrateFile, options: USDSceneReadingOptions = .default) {
+    init(crate: USDCCrateFile, options: USDReadingOptions = .default) {
         self.crate = crate
         self.options = options
     }

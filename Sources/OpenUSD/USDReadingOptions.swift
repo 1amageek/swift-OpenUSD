@@ -1,4 +1,4 @@
-public struct USDSceneReadingOptions: Sendable, Equatable, Hashable {
+public struct USDReadingOptions: Sendable, Equatable, Hashable {
     public var timeCode: Double?
     public var timeSampleInterpolation: USDTimeSampleInterpolation
 
@@ -10,5 +10,8 @@ public struct USDSceneReadingOptions: Sendable, Equatable, Hashable {
         self.timeSampleInterpolation = timeSampleInterpolation
     }
 
-    public static let `default` = USDSceneReadingOptions()
+    public static let `default` = USDReadingOptions()
 }
+
+@available(*, deprecated, renamed: "USDReadingOptions")
+public typealias USDSceneReadingOptions = USDReadingOptions

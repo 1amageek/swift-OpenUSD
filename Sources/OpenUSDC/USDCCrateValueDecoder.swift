@@ -79,16 +79,31 @@ struct USDCCrateValueDecoder {
             return .payloadListOperation(try readPayloadListOperation(valueRep))
         case .payload:
             return .payload(try readPayloadValue(valueRep))
+        case .float:
+            if valueRep.isArray {
+                return .doubleArray(try readFloatArrayValue(valueRep))
+            }
+            return .double(Double(try readFloatScalar(valueRep)))
         case .double:
-            guard !valueRep.isArray else {
-                return nil
+            if valueRep.isArray {
+                return .doubleArray(try readDoubleArrayValue(valueRep))
             }
             return .double(try readDoubleScalar(valueRep))
         case .int:
-            guard valueRep.isArray else {
-                return nil
+            if valueRep.isArray {
+                return .intArray(try readIntArrayValue(valueRep))
             }
-            return .intArray(try readIntArrayValue(valueRep))
+            return .int(try readIntScalar(valueRep))
+        case .vec2d:
+            if valueRep.isArray {
+                return .point2Array(try readVec2dArrayValue(valueRep))
+            }
+            return .point2(try readVec2dScalar(valueRep))
+        case .vec2f:
+            if valueRep.isArray {
+                return .point2Array(try readVec2fArrayValue(valueRep))
+            }
+            return .point2(try readVec2fScalar(valueRep))
         case .specifier:
             guard valueRep.isInlined, !valueRep.isArray else {
                 throw USDImportError.invalidData("USDC specifier field is malformed.")
@@ -335,10 +350,10 @@ struct USDCCrateValueDecoder {
             }
             return .double(try readDoubleScalar(valueRep))
         case .int:
-            guard valueRep.isArray else {
-                throw USDImportError.unsupportedFeature("USDC scalar int values are not materialized yet.")
+            if valueRep.isArray {
+                return .intArray(try readIntArrayValue(valueRep))
             }
-            return .intArray(try readIntArrayValue(valueRep))
+            return .int(try readIntScalar(valueRep))
         case .quatd:
             guard !valueRep.isArray else {
                 throw USDImportError.unsupportedFeature("USDC quatd arrays are not materialized yet.")
@@ -362,15 +377,15 @@ struct USDCCrateValueDecoder {
             }
             return .vector3(try readVec3fScalar(valueRep))
         case .vec2d:
-            guard valueRep.isArray else {
-                throw USDImportError.unsupportedFeature("USDC scalar vec2d values are not materialized yet.")
+            if valueRep.isArray {
+                return .point2Array(try readVec2dArrayValue(valueRep))
             }
-            return .point2Array(try readVec2dArrayValue(valueRep))
+            return .point2(try readVec2dScalar(valueRep))
         case .vec2f:
-            guard valueRep.isArray else {
-                throw USDImportError.unsupportedFeature("USDC scalar vec2f values are not materialized yet.")
+            if valueRep.isArray {
+                return .point2Array(try readVec2fArrayValue(valueRep))
             }
-            return .point2Array(try readVec2fArrayValue(valueRep))
+            return .point2(try readVec2fScalar(valueRep))
         case .matrix4d:
             guard !valueRep.isArray else {
                 throw USDImportError.unsupportedFeature("USDC matrix4d arrays are not materialized yet.")
@@ -739,6 +754,21 @@ struct USDCCrateValueDecoder {
         return Double(bitPattern: bits)
     }
 
+    private func readIntScalar(_ valueRep: USDCCrateValueRep) throws -> Int {
+        guard !valueRep.isArray else {
+            throw USDImportError.invalidData("USDC int value is marked as an array.")
+        }
+        if valueRep.isInlined {
+            let bits = UInt32(valueRep.payload & UInt64(UInt32.max))
+            return Int(Int32(bitPattern: bits))
+        }
+        let bytes = try crate.readFileBytes(
+            at: try payloadOffset(valueRep, label: "int"),
+            byteCount: MemoryLayout<UInt32>.size
+        )
+        return Int(littleEndianInt32(bytes[0..<4]))
+    }
+
     private func readVec3fScalar(_ valueRep: USDCCrateValueRep) throws -> USDCVector3D {
         guard !valueRep.isArray else {
             throw USDImportError.invalidData("USDC vec3f value is marked as an array.")
@@ -761,6 +791,28 @@ struct USDCCrateValueDecoder {
         var cursor = try payloadOffset(valueRep, label: "vec3d")
         let vector = try readVector3Float64(cursor: &cursor, label: "USDC vec3d")
         return vector
+    }
+
+    private func readVec2fScalar(_ valueRep: USDCCrateValueRep) throws -> USDPoint2D {
+        guard !valueRep.isArray else {
+            throw USDImportError.invalidData("USDC vec2f value is marked as an array.")
+        }
+        if valueRep.isInlined {
+            return try inlinedVector2(valueRep, scalarName: "vec2f")
+        }
+        var cursor = try payloadOffset(valueRep, label: "vec2f")
+        return try readVector2Float32(cursor: &cursor, label: "USDC vec2f")
+    }
+
+    private func readVec2dScalar(_ valueRep: USDCCrateValueRep) throws -> USDPoint2D {
+        guard !valueRep.isArray else {
+            throw USDImportError.invalidData("USDC vec2d value is marked as an array.")
+        }
+        if valueRep.isInlined {
+            return try inlinedVector2(valueRep, scalarName: "vec2d")
+        }
+        var cursor = try payloadOffset(valueRep, label: "vec2d")
+        return try readVector2Float64(cursor: &cursor, label: "USDC vec2d")
     }
 
     private func readQuatfScalar(_ valueRep: USDCCrateValueRep) throws -> USDCQuaternion {
@@ -1107,11 +1159,41 @@ struct USDCCrateValueDecoder {
         return vector
     }
 
+    private func inlinedVector2(_ valueRep: USDCCrateValueRep, scalarName: String) throws -> USDPoint2D {
+        let bytes = inlinedInt8Bytes(valueRep, count: 2)
+        let point = USDPoint2D(x: Double(bytes[0]), y: Double(bytes[1]))
+        guard point.x.isFinite, point.y.isFinite else {
+            throw USDImportError.invalidData("USDC \(scalarName) contains a non-finite component.")
+        }
+        return point
+    }
+
     private func inlinedInt8Bytes(_ valueRep: USDCCrateValueRep, count: Int) -> [Int8] {
         (0..<count).map { index in
             let byte = UInt8((valueRep.payload >> UInt64(index * 8)) & 0xff)
             return Int8(bitPattern: byte)
         }
+    }
+
+    private func readVector2Float32(cursor: inout Int, label: String) throws -> USDPoint2D {
+        let byteCount = 2 * MemoryLayout<Float32>.size
+        let bytes = try crate.readFileBytes(at: cursor, byteCount: byteCount)
+        cursor += byteCount
+        let x = Double(littleEndianFloat32(bytes[0..<4]))
+        let y = Double(littleEndianFloat32(bytes[4..<8]))
+        guard x.isFinite, y.isFinite else {
+            throw USDImportError.invalidData("\(label) contains a non-finite component.")
+        }
+        return USDPoint2D(x: x, y: y)
+    }
+
+    private func readVector2Float64(cursor: inout Int, label: String) throws -> USDPoint2D {
+        let x = try readFloat64(cursor: &cursor, label: "\(label) x")
+        let y = try readFloat64(cursor: &cursor, label: "\(label) y")
+        guard x.isFinite, y.isFinite else {
+            throw USDImportError.invalidData("\(label) contains a non-finite component.")
+        }
+        return USDPoint2D(x: x, y: y)
     }
 
     private func readVector3Float32(cursor: inout Int, label: String) throws -> USDCVector3D {
