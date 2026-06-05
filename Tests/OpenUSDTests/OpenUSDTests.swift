@@ -1364,6 +1364,17 @@ struct OpenUSDTests {
         #expect(layer.metersPerUnit == nil)
         #expect(layer.upAxis == nil)
         #expect(layer.composition.isEmpty)
+        #expect(layer.specs.map(\.path) == ["/", "/AirConditioner", "/Scope"])
+        #expect(layer.spec(at: "/")?.specType == .pseudoRoot)
+        let airConditioner = try #require(layer.spec(at: "/AirConditioner"))
+        #expect(airConditioner.specType == .prim)
+        #expect(airConditioner.specifier == .def)
+        #expect(airConditioner.typeName == nil)
+        let scope = try #require(layer.spec(at: "/Scope"))
+        #expect(scope.specType == .prim)
+        #expect(scope.specifier == .def)
+        #expect(scope.typeName == "Scope")
+        #expect(scope.fieldNames.contains("typeName"))
         #expect(layer.primTransforms.keys.sorted() == ["/AirConditioner", "/Scope"])
         #expect(layer.primTransforms.values.allSatisfy { $0 == .identity })
     }
@@ -1386,7 +1397,7 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func openUSDSDFParsingSimpleFixtureReadsDefAndOverPrimTransforms() throws {
+    func openUSDSDFParsingSimpleFixtureReadsDefAndOverPrimSpecsAndTransforms() throws {
         let data = try openUSDFixture("testSdfParsing.testenv/02_simple.usda")
 
         let layer = try USDAReader().readLayer(from: data)
@@ -1395,6 +1406,26 @@ struct OpenUSDTests {
         #expect(layer.metersPerUnit == nil)
         #expect(layer.upAxis == nil)
         #expect(layer.composition.isEmpty)
+        #expect(layer.specs.map(\.path) == [
+            "/",
+            "/overview_cam",
+            "/overview_cam/Head",
+            "/TestOver",
+            "/TestOverWithoutTypename",
+        ])
+        #expect(layer.spec(at: "/")?.specType == .pseudoRoot)
+        let overviewCamera = try #require(layer.spec(at: "/overview_cam"))
+        #expect(overviewCamera.specifier == .def)
+        #expect(overviewCamera.typeName == "Camera")
+        let head = try #require(layer.spec(at: "/overview_cam/Head"))
+        #expect(head.specifier == .def)
+        #expect(head.typeName == "Scope")
+        let testOver = try #require(layer.spec(at: "/TestOver"))
+        #expect(testOver.specifier == .over)
+        #expect(testOver.typeName == "MfScope")
+        let typelessOver = try #require(layer.spec(at: "/TestOverWithoutTypename"))
+        #expect(typelessOver.specifier == .over)
+        #expect(typelessOver.typeName == nil)
         #expect(layer.primTransforms.keys.sorted() == [
             "/TestOver",
             "/TestOverWithoutTypename",

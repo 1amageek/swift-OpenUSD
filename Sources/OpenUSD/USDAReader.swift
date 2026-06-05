@@ -68,6 +68,7 @@ public struct USDAReader: USDSceneReader {
             metersPerUnit: metersPerUnit,
             upAxis: upAxis,
             composition: try parseLayerComposition(in: text, metadataBody: metadataBody),
+            specs: try parseLayerSpecs(in: text),
             primTransforms: try parsePrimTransforms(in: text)
         )
     }
@@ -191,6 +192,40 @@ public struct USDAReader: USDSceneReader {
 
     private func parseMeshes(in text: String, options: USDReadingOptions) throws -> [USDMesh] {
         try parseMeshes(in: text, options: options, inheritedTransform: .identity, parentPrimPath: "")
+    }
+
+    private func parseLayerSpecs(in text: String) throws -> [USDLayerSpec] {
+        var specs = [
+            USDLayerSpec(path: "/", specType: .pseudoRoot)
+        ]
+        specs.append(contentsOf: try parseLayerSpecs(
+            from: parseDirectPrims(in: text),
+            parentPrimPath: ""
+        ))
+        return specs
+    }
+
+    private func parseLayerSpecs(from prims: [USDAPrim], parentPrimPath: String) throws -> [USDLayerSpec] {
+        var specs: [USDLayerSpec] = []
+        for prim in prims {
+            let path = primPath(for: prim, parentPrimPath: parentPrimPath)
+            var fieldNames = ["specifier"]
+            if prim.typeName != nil {
+                fieldNames.append("typeName")
+            }
+            specs.append(USDLayerSpec(
+                path: path,
+                specType: .prim,
+                specifier: prim.specifier,
+                typeName: prim.typeName,
+                fieldNames: fieldNames
+            ))
+            specs.append(contentsOf: try parseLayerSpecs(
+                from: parseDirectPrims(in: prim.body),
+                parentPrimPath: path
+            ))
+        }
+        return specs
     }
 
     private func parsePrimTransforms(in text: String) throws -> [String: USDTransformMatrix4x4] {
@@ -378,6 +413,7 @@ public struct USDAReader: USDSceneReader {
         guard let keyword = primDeclarationKeyword(at: declarationIndex, in: text) else {
             throw USDImportError.invalidData("USDA prim declaration has an unsupported specifier.")
         }
+        let specifier = try primSpecifier(for: keyword)
         var cursor = text.index(declarationIndex, offsetBy: keyword.count)
         skipWhitespace(in: text, index: &cursor)
         var typeName: String?
@@ -426,12 +462,26 @@ public struct USDAReader: USDSceneReader {
         let closeBrace = try matchingBrace(startingAt: openBrace, in: text)
         let body = String(text[text.index(after: openBrace)..<closeBrace])
         return USDAPrim(
+            specifier: specifier,
             typeName: typeName,
             name: name,
             metadataBody: metadataBody,
             body: body,
             fullRange: declarationIndex..<text.index(after: closeBrace)
         )
+    }
+
+    private func primSpecifier(for keyword: String) throws -> USDPrimSpecifier {
+        switch keyword {
+        case "def":
+            return .def
+        case "over":
+            return .over
+        case "class":
+            return .class
+        default:
+            throw USDImportError.invalidData("USDA prim declaration has an unsupported specifier.")
+        }
     }
 
     private func parseQuotedString(
@@ -1318,6 +1368,7 @@ public struct USDAReader: USDSceneReader {
 }
 
 private struct USDAPrim {
+    var specifier: USDPrimSpecifier
     var typeName: String?
     var name: String?
     var metadataBody: String
