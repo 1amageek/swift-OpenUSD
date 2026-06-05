@@ -1455,6 +1455,20 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingWeirdStringContentFixtureSkipsQuotedDelimiters() throws {
+        let data = try openUSDFixture("testSdfParsing.testenv/46_weirdStringContent.usda")
+
+        let layer = try USDAReader().readLayer(from: data)
+
+        #expect(layer.defaultPrim == nil)
+        #expect(layer.metersPerUnit == nil)
+        #expect(layer.upAxis == nil)
+        #expect(layer.composition.isEmpty)
+        #expect(layer.primTransforms.keys.sorted() == ["/foo"])
+        #expect(layer.primTransforms.values.allSatisfy { $0 == .identity })
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingUTF8IdentifiersFixtureReadsDefaultPrimAndTransforms() throws {
         let data = try openUSDFixture("testSdfParsing.testenv/217_utf8_identifiers.usda")
 

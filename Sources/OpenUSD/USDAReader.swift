@@ -284,7 +284,7 @@ public struct USDAReader: USDSceneReader {
     private func parseDirectPrims(in text: String) throws -> [USDAPrim] {
         var prims: [USDAPrim] = []
         var searchIndex = text.startIndex
-        while let declarationIndex = nextDirectPrimDeclaration(in: text, from: searchIndex) {
+        while let declarationIndex = try nextDirectPrimDeclaration(in: text, from: searchIndex) {
             let prim = try parsePrim(at: declarationIndex, in: text)
             prims.append(prim)
             searchIndex = prim.fullRange.upperBound
@@ -295,7 +295,7 @@ public struct USDAReader: USDSceneReader {
     private func directAttributeText(from text: String) throws -> String {
         var output = ""
         var searchIndex = text.startIndex
-        while let declarationIndex = nextDirectPrimDeclaration(in: text, from: searchIndex) {
+        while let declarationIndex = try nextDirectPrimDeclaration(in: text, from: searchIndex) {
             output += String(text[searchIndex..<declarationIndex])
             let prim = try parsePrim(at: declarationIndex, in: text)
             searchIndex = prim.fullRange.upperBound
@@ -304,33 +304,32 @@ public struct USDAReader: USDSceneReader {
         return output
     }
 
-    private func nextDirectPrimDeclaration(in text: String, from startIndex: String.Index) -> String.Index? {
+    private func nextDirectPrimDeclaration(in text: String, from startIndex: String.Index) throws -> String.Index? {
         var index = startIndex
         var bracketDepth = 0
         var parenthesisDepth = 0
-        var isInsideString = false
         while index < text.endIndex {
             let character = text[index]
-            if !isInsideString, character == "#" {
+            if character == "#" {
                 skipLineComment(in: text, index: &index)
                 continue
             }
-            if character == "\"" {
-                isInsideString.toggle()
-            } else if !isInsideString {
-                if character == "[" {
-                    bracketDepth += 1
-                } else if character == "]" {
-                    bracketDepth = max(0, bracketDepth - 1)
-                } else if character == "(" {
-                    parenthesisDepth += 1
-                } else if character == ")" {
-                    parenthesisDepth = max(0, parenthesisDepth - 1)
-                } else if bracketDepth == 0,
-                          parenthesisDepth == 0,
-                          primDeclarationKeyword(at: index, in: text) != nil {
-                    return index
-                }
+            if character == "\"" || character == "'" {
+                try skipQuotedString(in: text, index: &index)
+                continue
+            }
+            if character == "[" {
+                bracketDepth += 1
+            } else if character == "]" {
+                bracketDepth = max(0, bracketDepth - 1)
+            } else if character == "(" {
+                parenthesisDepth += 1
+            } else if character == ")" {
+                parenthesisDepth = max(0, parenthesisDepth - 1)
+            } else if bracketDepth == 0,
+                      parenthesisDepth == 0,
+                      primDeclarationKeyword(at: index, in: text) != nil {
+                return index
             }
             index = text.index(after: index)
         }
@@ -1201,14 +1200,15 @@ public struct USDAReader: USDSceneReader {
     ) throws -> String.Index {
         var depth = 0
         var index = openIndex
-        var isInsideString = false
         while index < text.endIndex {
             let character = text[index]
-            if character == "\"" {
-                isInsideString.toggle()
-            } else if !isInsideString, character == open {
+            if character == "\"" || character == "'" {
+                try skipQuotedString(in: text, index: &index)
+                continue
+            }
+            if character == open {
                 depth += 1
-            } else if !isInsideString, character == close {
+            } else if character == close {
                 depth -= 1
                 if depth == 0 {
                     return index
@@ -1217,6 +1217,37 @@ public struct USDAReader: USDSceneReader {
             index = text.index(after: index)
         }
         throw USDImportError.invalidData("USDA delimiter is unterminated.")
+    }
+
+    private func skipQuotedString(in text: String, index: inout String.Index) throws {
+        let quote = text[index]
+        let delimiterLength = repeatedQuoteCount(at: index, quote: quote, in: text) >= 3 ? 3 : 1
+        index = text.index(index, offsetBy: delimiterLength)
+        while index < text.endIndex {
+            if text[index] == "\\" {
+                index = text.index(after: index)
+                if index < text.endIndex {
+                    index = text.index(after: index)
+                }
+                continue
+            }
+            if repeatedQuoteCount(at: index, quote: quote, in: text) >= delimiterLength {
+                index = text.index(index, offsetBy: delimiterLength)
+                return
+            }
+            index = text.index(after: index)
+        }
+        throw USDImportError.invalidData("USDA string is unterminated.")
+    }
+
+    private func repeatedQuoteCount(at index: String.Index, quote: Character, in text: String) -> Int {
+        var cursor = index
+        var count = 0
+        while cursor < text.endIndex, text[cursor] == quote {
+            count += 1
+            cursor = text.index(after: cursor)
+        }
+        return count
     }
 
     private func firstMatch(pattern: String, in text: String) throws -> String? {

@@ -23,6 +23,7 @@ Source paths:
 | `testSdfParsing.testenv/02_simple.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/02_simple.usda` |
 | `testSdfParsing.testenv/20_optionalsemicolons.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/20_optionalsemicolons.usda` |
 | `testSdfParsing.testenv/41_noEndingNewline.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/41_noEndingNewline.usda` |
+| `testSdfParsing.testenv/46_weirdStringContent.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/46_weirdStringContent.usda` |
 | `testSdfParsing.testenv/132_references.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/132_references.usda` |
 | `testSdfParsing.testenv/152_payloads.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/152_payloads.usda` |
 | `testSdfParsing.testenv/203_newlines.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/203_newlines.usda` |
