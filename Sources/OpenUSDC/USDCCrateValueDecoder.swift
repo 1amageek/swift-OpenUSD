@@ -54,6 +54,31 @@ struct USDCCrateValueDecoder {
             throw USDImportError.invalidData("USDC value has an unknown value type.")
         }
         switch type {
+        case .bool:
+            if valueRep.isArray {
+                return .boolArray(try readBoolArrayValue(valueRep))
+            }
+            return .bool(try readBoolScalar(valueRep))
+        case .uChar:
+            if valueRep.isArray {
+                return .intArray(try readUInt8ArrayValue(valueRep))
+            }
+            return .int(try readUInt8Scalar(valueRep))
+        case .uInt:
+            if valueRep.isArray {
+                return .intArray(try readUInt32ArrayValue(valueRep))
+            }
+            return .int(try readUInt32Scalar(valueRep))
+        case .int64:
+            if valueRep.isArray {
+                return .intArray(try readInt64ArrayValue(valueRep))
+            }
+            return .int(try readInt64Scalar(valueRep))
+        case .uInt64:
+            if valueRep.isArray {
+                return .intArray(try readUInt64ArrayValue(valueRep))
+            }
+            return .int(try readUInt64Scalar(valueRep))
         case .token:
             if valueRep.isArray {
                 return .tokenArray(try readTokenArrayValue(valueRep))
@@ -316,6 +341,31 @@ struct USDCCrateValueDecoder {
             throw USDImportError.invalidData("USDC value has an unknown value type.")
         }
         switch type {
+        case .bool:
+            if valueRep.isArray {
+                return .boolArray(try readBoolArrayValue(valueRep))
+            }
+            return .bool(try readBoolScalar(valueRep))
+        case .uChar:
+            if valueRep.isArray {
+                return .intArray(try readUInt8ArrayValue(valueRep))
+            }
+            return .int(try readUInt8Scalar(valueRep))
+        case .uInt:
+            if valueRep.isArray {
+                return .intArray(try readUInt32ArrayValue(valueRep))
+            }
+            return .int(try readUInt32Scalar(valueRep))
+        case .int64:
+            if valueRep.isArray {
+                return .intArray(try readInt64ArrayValue(valueRep))
+            }
+            return .int(try readInt64Scalar(valueRep))
+        case .uInt64:
+            if valueRep.isArray {
+                return .intArray(try readUInt64ArrayValue(valueRep))
+            }
+            return .int(try readUInt64Scalar(valueRep))
         case .token:
             if valueRep.isArray {
                 return .tokenArray(try readTokenArrayValue(valueRep))
@@ -448,6 +498,69 @@ struct USDCCrateValueDecoder {
             throw USDImportError.invalidData("USDC \(sectionName) value index exceeds platform range.")
         }
         return index
+    }
+
+    private func readBoolScalar(_ valueRep: USDCCrateValueRep) throws -> Bool {
+        guard !valueRep.isArray else {
+            throw USDImportError.invalidData("USDC bool value is marked as an array.")
+        }
+        if valueRep.isInlined {
+            return valueRep.payload & 1 != 0
+        }
+        let bytes = try crate.readFileBytes(
+            at: try payloadOffset(valueRep, label: "bool"),
+            byteCount: MemoryLayout<UInt8>.size
+        )
+        return bytes[0] != 0
+    }
+
+    private func readUInt8Scalar(_ valueRep: USDCCrateValueRep) throws -> Int {
+        guard !valueRep.isArray else {
+            throw USDImportError.invalidData("USDC uchar value is marked as an array.")
+        }
+        if valueRep.isInlined {
+            return Int(valueRep.payload & UInt64(UInt8.max))
+        }
+        let bytes = try crate.readFileBytes(
+            at: try payloadOffset(valueRep, label: "uchar"),
+            byteCount: MemoryLayout<UInt8>.size
+        )
+        return Int(bytes[0])
+    }
+
+    private func readUInt32Scalar(_ valueRep: USDCCrateValueRep) throws -> Int {
+        guard !valueRep.isArray else {
+            throw USDImportError.invalidData("USDC uint value is marked as an array.")
+        }
+        let value: UInt32
+        if valueRep.isInlined {
+            value = UInt32(valueRep.payload & UInt64(UInt32.max))
+        } else {
+            value = try crate.readFileUInt32(at: try payloadOffset(valueRep, label: "uint"))
+        }
+        return try intValue(UInt64(value), label: "USDC uint value")
+    }
+
+    private func readInt64Scalar(_ valueRep: USDCCrateValueRep) throws -> Int {
+        guard !valueRep.isArray else {
+            throw USDImportError.invalidData("USDC int64 value is marked as an array.")
+        }
+        guard !valueRep.isInlined else {
+            throw USDImportError.invalidData("USDC int64 value is unexpectedly inlined.")
+        }
+        let rawValue = try crate.readFileUInt64(at: try payloadOffset(valueRep, label: "int64"))
+        return try intValue(Int64(bitPattern: rawValue), label: "USDC int64 value")
+    }
+
+    private func readUInt64Scalar(_ valueRep: USDCCrateValueRep) throws -> Int {
+        guard !valueRep.isArray else {
+            throw USDImportError.invalidData("USDC uint64 value is marked as an array.")
+        }
+        guard !valueRep.isInlined else {
+            throw USDImportError.invalidData("USDC uint64 value is unexpectedly inlined.")
+        }
+        let value = try crate.readFileUInt64(at: try payloadOffset(valueRep, label: "uint64"))
+        return try intValue(value, label: "USDC uint64 value")
     }
 
     private func readTokenArrayValue(_ valueRep: USDCCrateValueRep) throws -> [String] {
@@ -931,40 +1044,121 @@ struct USDCCrateValueDecoder {
         return Int(endResult.partialValue)
     }
 
-    private func readIntArrayValue(_ valueRep: USDCCrateValueRep) throws -> [Int] {
+    private func readBoolArrayValue(_ valueRep: USDCCrateValueRep) throws -> [Bool] {
         guard valueRep.isArray else {
-            throw USDImportError.invalidData("USDC int array value is missing the array bit.")
+            throw USDImportError.invalidData("USDC bool array value is missing the array bit.")
         }
         guard valueRep.payload != 0 else {
             return []
         }
-        var cursor = try arrayPayloadCursor(valueRep, label: "int array")
-        let count = try readArrayCount(cursor: &cursor, label: "USDC int array count")
-        guard count <= Int.max / MemoryLayout<Int32>.size else {
-            throw USDImportError.invalidData("USDC int array byte count exceeds platform range.")
+        var cursor = try arrayPayloadCursor(valueRep, label: "bool array")
+        let count = try readArrayCount(cursor: &cursor, label: "USDC bool array count")
+        let bytes = try arrayBytes(
+            valueRep,
+            cursor: &cursor,
+            byteCount: count,
+            label: "bool array"
+        )
+        return bytes.map { $0 != 0 }
+    }
+
+    private func readUInt8ArrayValue(_ valueRep: USDCCrateValueRep) throws -> [Int] {
+        guard valueRep.isArray else {
+            throw USDImportError.invalidData("USDC uchar array value is missing the array bit.")
         }
+        guard valueRep.payload != 0 else {
+            return []
+        }
+        var cursor = try arrayPayloadCursor(valueRep, label: "uchar array")
+        let count = try readArrayCount(cursor: &cursor, label: "USDC uchar array count")
+        let bytes = try arrayBytes(
+            valueRep,
+            cursor: &cursor,
+            byteCount: count,
+            label: "uchar array"
+        )
+        return bytes.map(Int.init)
+    }
+
+    private func readIntArrayValue(_ valueRep: USDCCrateValueRep) throws -> [Int] {
+        try readUInt32ArrayPayload(valueRep, label: "int array").map {
+            Int(Int32(bitPattern: $0))
+        }
+    }
+
+    private func readUInt32ArrayValue(_ valueRep: USDCCrateValueRep) throws -> [Int] {
+        try readUInt32ArrayPayload(valueRep, label: "uint array").map {
+            try intValue(UInt64($0), label: "USDC uint array value")
+        }
+    }
+
+    private func readInt64ArrayValue(_ valueRep: USDCCrateValueRep) throws -> [Int] {
+        try readUInt64ArrayPayload(valueRep, label: "int64 array").map {
+            try intValue(Int64(bitPattern: $0), label: "USDC int64 array value")
+        }
+    }
+
+    private func readUInt64ArrayValue(_ valueRep: USDCCrateValueRep) throws -> [Int] {
+        try readUInt64ArrayPayload(valueRep, label: "uint64 array").map {
+            try intValue($0, label: "USDC uint64 array value")
+        }
+    }
+
+    private func readUInt32ArrayPayload(_ valueRep: USDCCrateValueRep, label: String) throws -> [UInt32] {
+        guard valueRep.isArray else {
+            throw USDImportError.invalidData("USDC \(label) value is missing the array bit.")
+        }
+        guard valueRep.payload != 0 else {
+            return []
+        }
+        var cursor = try arrayPayloadCursor(valueRep, label: label)
+        let count = try readArrayCount(cursor: &cursor, label: "USDC \(label) count")
         if valueRep.isCompressed {
             guard crate.version >= USDCCrateVersion(major: 0, minor: 5, patch: 0) else {
-                throw USDImportError.invalidData("USDC int array is marked compressed before compression support.")
+                throw USDImportError.invalidData("USDC \(label) is marked compressed before compression support.")
             }
             let compressedByteCount = try checkedInt(
-                UInt64(try crate.readFileUInt64(at: cursor)),
-                label: "USDC compressed int array byte count"
+                try crate.readFileUInt64(at: cursor),
+                label: "USDC compressed \(label) byte count"
             )
             cursor += MemoryLayout<UInt64>.size
             let compressedBytes = try crate.readFileBytes(at: cursor, byteCount: compressedByteCount)
-            return try USDCIntegerCompression.decompressUInt32(compressedBytes, count: count).map {
-                Int(Int32(bitPattern: $0))
-            }
+            return try USDCIntegerCompression.decompressUInt32(compressedBytes, count: count)
         }
-        let byteCount = count * MemoryLayout<Int32>.size
+        let byteCount = try checkedMultiplication(count, MemoryLayout<UInt32>.size, label: "USDC \(label) byte count")
         let bytes = try crate.readFileBytes(at: cursor, byteCount: byteCount)
-        var values: [Int] = []
+        var values: [UInt32] = []
         values.reserveCapacity(count)
         var byteCursor = 0
         for _ in 0..<count {
-            values.append(Int(littleEndianInt32(bytes[byteCursor..<(byteCursor + 4)])))
-            byteCursor += MemoryLayout<Int32>.size
+            values.append(littleEndianUInt32(bytes[byteCursor..<(byteCursor + 4)]))
+            byteCursor += MemoryLayout<UInt32>.size
+        }
+        return values
+    }
+
+    private func readUInt64ArrayPayload(_ valueRep: USDCCrateValueRep, label: String) throws -> [UInt64] {
+        guard valueRep.isArray else {
+            throw USDImportError.invalidData("USDC \(label) value is missing the array bit.")
+        }
+        guard valueRep.payload != 0 else {
+            return []
+        }
+        var cursor = try arrayPayloadCursor(valueRep, label: label)
+        let count = try readArrayCount(cursor: &cursor, label: "USDC \(label) count")
+        let byteCount = try checkedMultiplication(count, MemoryLayout<UInt64>.size, label: "USDC \(label) byte count")
+        let bytes = try arrayBytes(
+            valueRep,
+            cursor: &cursor,
+            byteCount: byteCount,
+            label: label
+        )
+        var values: [UInt64] = []
+        values.reserveCapacity(count)
+        var byteCursor = 0
+        for _ in 0..<count {
+            values.append(littleEndianUInt64(bytes[byteCursor..<(byteCursor + 8)]))
+            byteCursor += MemoryLayout<UInt64>.size
         }
         return values
     }
@@ -1330,6 +1524,20 @@ struct USDCCrateValueDecoder {
             throw USDImportError.invalidData("\(label) exceeds platform range.")
         }
         return Int(value)
+    }
+
+    private func intValue(_ value: Int64, label: String) throws -> Int {
+        guard let int = Int(exactly: value) else {
+            throw USDImportError.invalidData("\(label) exceeds platform range.")
+        }
+        return int
+    }
+
+    private func intValue(_ value: UInt64, label: String) throws -> Int {
+        guard let int = Int(exactly: value) else {
+            throw USDImportError.invalidData("\(label) exceeds platform range.")
+        }
+        return int
     }
 
     private func checkedMultiplication(_ lhs: Int, _ rhs: Int, label: String) throws -> Int {

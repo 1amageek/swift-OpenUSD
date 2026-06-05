@@ -1379,9 +1379,19 @@ struct OpenUSDTests {
         let scope = try #require(layer.spec(at: "/Scope"))
         #expect(scope.specType == .prim)
         #expect(scope.fields["intValue"] == .int(-42))
+        #expect(scope.fields["boolValue"] == .bool(true))
+        #expect(scope.fields["ucharValue"] == .int(255))
+        #expect(scope.fields["uintValue"] == .int(42))
+        #expect(scope.fields["int64Value"] == .int(-84))
+        #expect(scope.fields["uint64Value"] == .int(84))
         #expect(scope.fields["vec2fValue"] == .point2(USDPoint2D(x: 1.5, y: -2.25)))
         #expect(scope.fields["vec2dValue"] == .point2(USDPoint2D(x: 3.25, y: 4.5)))
         #expect(scope.fields["doubleArray"] == .doubleArray([1.25, 2.5]))
+        #expect(scope.fields["boolArray"] == .boolArray([true, false, true]))
+        #expect(scope.fields["ucharArray"] == .intArray([1, 255]))
+        #expect(scope.fields["uintArray"] == .intArray([42, 84]))
+        #expect(scope.fields["int64Array"] == .intArray([-84, 168]))
+        #expect(scope.fields["uint64Array"] == .intArray([84, 168]))
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -2566,11 +2576,28 @@ private func makeUSDCLayerNumericFieldFixture() -> Data {
         "vec2fValue",
         "vec2dValue",
         "doubleArray",
+        "boolValue",
+        "ucharValue",
+        "uintValue",
+        "int64Value",
+        "uint64Value",
+        "boolArray",
+        "ucharArray",
+        "uintArray",
+        "int64Array",
+        "uint64Array",
     ]
     var valueData = Data()
     let vec2fOffset = appendUSDCVec2fScalar(USDPoint2D(x: 1.5, y: -2.25), to: &valueData)
     let vec2dOffset = appendUSDCVec2dScalar(USDPoint2D(x: 3.25, y: 4.5), to: &valueData)
     let doubleArrayOffset = appendUSDCDoubleArray([1.25, 2.5], to: &valueData)
+    let int64Offset = appendUSDCInt64Scalar(-84, to: &valueData)
+    let uint64Offset = appendUSDCUInt64Scalar(84, to: &valueData)
+    let boolArrayOffset = appendUSDCBoolArray([true, false, true], to: &valueData)
+    let ucharArrayOffset = appendUSDCUInt8Array([1, 255], to: &valueData)
+    let uintArrayOffset = appendUSDCUInt32Array([42, 84], to: &valueData)
+    let int64ArrayOffset = appendUSDCInt64Array([-84, 168], to: &valueData)
+    let uint64ArrayOffset = appendUSDCUInt64Array([84, 168], to: &valueData)
     let fields = [
         USDCCrateField(
             tokenIndex: 0,
@@ -2597,6 +2624,46 @@ private func makeUSDCLayerNumericFieldFixture() -> Data {
             tokenIndex: 5,
             valueRep: USDCCrateValueRep(type: .double, isInlined: false, isArray: true, payload: doubleArrayOffset)
         ),
+        USDCCrateField(
+            tokenIndex: 6,
+            valueRep: USDCCrateValueRep(type: .bool, isInlined: true, isArray: false, payload: 1)
+        ),
+        USDCCrateField(
+            tokenIndex: 7,
+            valueRep: USDCCrateValueRep(type: .uChar, isInlined: true, isArray: false, payload: 255)
+        ),
+        USDCCrateField(
+            tokenIndex: 8,
+            valueRep: USDCCrateValueRep(type: .uInt, isInlined: true, isArray: false, payload: 42)
+        ),
+        USDCCrateField(
+            tokenIndex: 9,
+            valueRep: USDCCrateValueRep(type: .int64, isInlined: false, isArray: false, payload: int64Offset)
+        ),
+        USDCCrateField(
+            tokenIndex: 10,
+            valueRep: USDCCrateValueRep(type: .uInt64, isInlined: false, isArray: false, payload: uint64Offset)
+        ),
+        USDCCrateField(
+            tokenIndex: 11,
+            valueRep: USDCCrateValueRep(type: .bool, isInlined: false, isArray: true, payload: boolArrayOffset)
+        ),
+        USDCCrateField(
+            tokenIndex: 12,
+            valueRep: USDCCrateValueRep(type: .uChar, isInlined: false, isArray: true, payload: ucharArrayOffset)
+        ),
+        USDCCrateField(
+            tokenIndex: 13,
+            valueRep: USDCCrateValueRep(type: .uInt, isInlined: false, isArray: true, payload: uintArrayOffset)
+        ),
+        USDCCrateField(
+            tokenIndex: 14,
+            valueRep: USDCCrateValueRep(type: .int64, isInlined: false, isArray: true, payload: int64ArrayOffset)
+        ),
+        USDCCrateField(
+            tokenIndex: 15,
+            valueRep: USDCCrateValueRep(type: .uInt64, isInlined: false, isArray: true, payload: uint64ArrayOffset)
+        ),
     ]
     let specs = [
         USDCCrateSpec(pathIndex: 0, fieldSetIndex: 0, specType: .pseudoRoot),
@@ -2609,7 +2676,8 @@ private func makeUSDCLayerNumericFieldFixture() -> Data {
         ("FIELDS", makeUSDCFieldsSection(version: version, fields: fields)),
         ("FIELDSETS", makeUSDCFieldSetsSection(version: version, indexes: [
             UInt32.max,
-            0, 1, 2, 3, 4, UInt32.max,
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+            10, 11, 12, 13, 14, UInt32.max,
         ])),
         ("PATHS", makeUSDCCompressedPathsSection(
             pathCount: 2,
@@ -3013,6 +3081,61 @@ private func makeUSDCMeshSceneFixture(
 }
 
 private func appendUSDCIntArray(_ values: [Int32], to data: inout Data) -> UInt64 {
+    let offset = alignUSDCValueData(&data)
+    data.appendLittleEndian(UInt64(values.count))
+    for value in values {
+        data.appendLittleEndian(value)
+    }
+    return offset
+}
+
+private func appendUSDCInt64Scalar(_ value: Int64, to data: inout Data) -> UInt64 {
+    let offset = alignUSDCValueData(&data)
+    data.appendLittleEndian(value)
+    return offset
+}
+
+private func appendUSDCUInt64Scalar(_ value: UInt64, to data: inout Data) -> UInt64 {
+    let offset = alignUSDCValueData(&data)
+    data.appendLittleEndian(value)
+    return offset
+}
+
+private func appendUSDCBoolArray(_ values: [Bool], to data: inout Data) -> UInt64 {
+    let offset = alignUSDCValueData(&data)
+    data.appendLittleEndian(UInt64(values.count))
+    for value in values {
+        data.append(value ? UInt8(1) : UInt8(0))
+    }
+    return offset
+}
+
+private func appendUSDCUInt8Array(_ values: [UInt8], to data: inout Data) -> UInt64 {
+    let offset = alignUSDCValueData(&data)
+    data.appendLittleEndian(UInt64(values.count))
+    data.append(contentsOf: values)
+    return offset
+}
+
+private func appendUSDCUInt32Array(_ values: [UInt32], to data: inout Data) -> UInt64 {
+    let offset = alignUSDCValueData(&data)
+    data.appendLittleEndian(UInt64(values.count))
+    for value in values {
+        data.appendLittleEndian(value)
+    }
+    return offset
+}
+
+private func appendUSDCInt64Array(_ values: [Int64], to data: inout Data) -> UInt64 {
+    let offset = alignUSDCValueData(&data)
+    data.appendLittleEndian(UInt64(values.count))
+    for value in values {
+        data.appendLittleEndian(value)
+    }
+    return offset
+}
+
+private func appendUSDCUInt64Array(_ values: [UInt64], to data: inout Data) -> UInt64 {
     let offset = alignUSDCValueData(&data)
     data.appendLittleEndian(UInt64(values.count))
     for value in values {

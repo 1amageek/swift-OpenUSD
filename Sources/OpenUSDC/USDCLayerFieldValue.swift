@@ -1,6 +1,8 @@
 import OpenUSD
 
 public enum USDCLayerFieldValue: Sendable, Equatable {
+    case bool(Bool)
+    case boolArray([Bool])
     case token(String)
     case tokenArray([String])
     case tokenVector([String])
