@@ -43,6 +43,9 @@ flowchart LR
 |---|---|---|---|
 | `pxr/usd/usd/testenv/testUsdFileFormats` | `ascii.usd` | `partial` | `openUSDFileFormatAsciiFixtureReadsLayerSpecs`; full spec parity is blocked by the current `USDALayer` surface |
 | `pxr/usd/usd/testenv/testUsdFileFormats` | `crate.usd` | `ported` | `openUSDFileFormatCrateFixtureReadsStructuralTables`, `openUSDFileFormatCrateFixtureKeepsLazyReadsStableAfterSourceDataMutation`, `openUSDFileFormatCrateFixtureReadsLayerSpecs` |
+| `pxr/usd/usd/testenv/testUsdReadOutOfBounds` | `corrupt.usd` | `ported` | `openUSDReadOutOfBoundsFixtureThrowsTypedError` |
+| `pxr/usd/usd/testenv/testUsdUsdcBugGHSA02.testenv` | `root.usdc` | `ported` | `openUSDUSDCSecurityFixtureThrowsTypedError` |
+| `pxr/usd/usd/testenv/testUsdUsdzBugGHSA01.testenv` | `root.usdz` | `ported` | `openUSDUSDZSecurityFixtureThrowsTypedError` |
 | `pxr/usd/usd/testenv/testUsdUsdzFileFormat` | `single_usd.usdz`, `single_usda.usdz`, `single_usdc.usdz` | `ported` | Archive default layer tests and contained layer graph tests |
 | `pxr/usd/usd/testenv/testUsdUsdzFileFormat` | `anchored_refs*.usdz` | `ported` | `usdzReaderReadsAnchoredReferenceGraphsFromOpenUSDFixtures` and layer path tests |
 | `pxr/usd/usd/testenv/testUsdUsdzFileFormat` | `search_refs*.usdz` | `ported` | `usdzReaderReadsSearchReferenceGraphsFromOpenUSDFixtures` and layer path tests |
@@ -55,9 +58,9 @@ flowchart LR
 |---:|---|---|---|
 | 1 | `testUsdFileFormats` Python assertions | `partial` | Port remaining load/identifier assertions that map to reader APIs. |
 | 2 | `testUsdUsdzFileFormat` Python assertions | `partial` | Add tests for every currently copied package path and layer path edge. |
-| 3 | `testUsdReadOutOfBounds` | `pending` | Copy corrupt assets and assert typed bounds-checking errors. |
-| 4 | `testUsdUsdcBugGHSA02` | `pending` | Copy security regression fixtures and assert typed read failures. |
-| 5 | `testUsdUsdzBugGHSA01` | `pending` | Copy security regression fixtures and assert typed archive failures. |
+| 3 | `testUsdReadOutOfBounds` | `ported` | Keep checking that corrupt assets produce typed bounds-checking errors. |
+| 4 | `testUsdUsdcBugGHSA02` | `ported` | Keep checking that corrupt USDC security fixtures produce typed read failures. |
+| 5 | `testUsdUsdzBugGHSA01` | `ported` | Keep checking that corrupt USDZ security fixtures produce typed archive or crate failures. |
 | 6 | `pxr/usd/sdf/testenv` file and value parsing subset | `pending` | Port USDA value parsing tests that map to `USDAReader` and `USDLayer`. |
 | 7 | Stage composition, Sdf editing, schema, plugin, imaging tests | `blocked` | Define public APIs first, then port relevant upstream suites. |
 

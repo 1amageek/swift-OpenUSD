@@ -1369,6 +1369,45 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDReadOutOfBoundsFixtureThrowsTypedError() throws {
+        let data = try openUSDFixture("testUsdReadOutOfBounds/corrupt.usd")
+
+        let message = try usdImportFailureMessage {
+            _ = try USDCReader().readLayer(from: data)
+        }
+
+        #expect(message.contains("outside") || message.contains("truncated") || message.contains("overlap"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func openUSDUSDCSecurityFixtureThrowsTypedError() throws {
+        let data = try openUSDFixture("testUsdUsdcBugGHSA02.testenv/root.usdc")
+
+        let message = try usdImportFailureMessage {
+            _ = try USDCReader().readLayer(from: data)
+        }
+
+        #expect(
+            message.contains("decompress")
+            || message.contains("repeated")
+            || message.contains("outside")
+            || message.contains("PATHS")
+            || message.contains("invalid")
+        )
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func openUSDUSDZSecurityFixtureThrowsTypedError() throws {
+        let data = try openUSDFixture("testUsdUsdzBugGHSA01.testenv/root.usdz")
+
+        let message = try usdImportFailureMessage {
+            _ = try USDZReader().readLayerGraph(from: data)
+        }
+
+        #expect(message.contains("spec type") || message.contains("CRC") || message.contains("outside"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func usdcLayerReaderPreservesTokenVectorFieldValues() throws {
         let fixture = makeUSDCLayerTokenVectorFixture()
 
@@ -3726,6 +3765,19 @@ private func generatedFixture(_ relativePath: String) throws -> Data {
     try fixtureData(root: "Generated", relativePath: relativePath)
 }
 
+private func usdImportFailureMessage(_ body: () throws -> Void) throws -> String {
+    do {
+        try body()
+    } catch let error as USDImportError {
+        return error.testMessage
+    } catch {
+        Issue.record("Expected USDImportError, got \(error).")
+        return ""
+    }
+    Issue.record("Expected USDImportError.")
+    return ""
+}
+
 private func makeOpenUSDUSDSiblingPackage(root: String) throws -> Data {
     try makeUSDZFixture(entries: [
         (root, openUSDFixture("testUsdUsdzFileFormat/\(root)")),
@@ -3766,6 +3818,18 @@ private func defaultFieldValueRep(in crate: USDCCrateFile, atPath path: String) 
         }
     }
     throw USDImportError.invalidData("USDC fixture is missing a default field for path \(path).")
+}
+
+private extension USDImportError {
+    var testMessage: String {
+        switch self {
+        case .invalidData(let message),
+             .missingRequiredField(let message),
+             .unsupportedFeature(let message),
+             .notImplemented(let message):
+            return message
+        }
+    }
 }
 
 private func fixtureData(root: String, relativePath: String) throws -> Data {
