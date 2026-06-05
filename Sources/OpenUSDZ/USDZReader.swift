@@ -134,7 +134,7 @@ public struct USDZReader: USDSceneReader {
     private func readResolvedScene(defaultLayerPath: String, in archive: USDZArchive) throws -> USDScene {
         let resolvedLayerInstances = try readResolvedLayerInstances(defaultLayerPath: defaultLayerPath, in: archive)
         let meshes = resolvedLayerInstances.flatMap { layerInstance in
-            filteredMeshes(in: layerInstance.layer.scene, matching: layerInstance.targetPrimPath)
+            materializedMeshes(in: layerInstance)
         }
         guard !meshes.isEmpty else {
             throw USDImportError.invalidData("USDZ scene contains no Mesh prims.")
@@ -155,7 +155,11 @@ public struct USDZReader: USDSceneReader {
     ) throws -> [USDZResolvedLayerInstance] {
         var visitedLayerInstances: Set<USDZLayerInstanceKey> = []
         var pendingLayerInstances = [
-            USDZPendingLayerInstance(layerPath: defaultLayerPath, targetPrimPath: nil as String?)
+            USDZPendingLayerInstance(
+                layerPath: defaultLayerPath,
+                sitePrimPath: nil as String?,
+                targetPrimPath: nil as String?
+            )
         ]
         var resolvedLayerInstances: [USDZResolvedLayerInstance] = []
 
@@ -163,6 +167,7 @@ public struct USDZReader: USDSceneReader {
             pendingLayerInstances.removeFirst()
             let instanceKey = USDZLayerInstanceKey(
                 layerPath: pendingLayerInstance.layerPath,
+                sitePrimPath: pendingLayerInstance.sitePrimPath,
                 targetPrimPath: pendingLayerInstance.targetPrimPath
             )
             guard visitedLayerInstances.insert(instanceKey).inserted else {
@@ -170,9 +175,15 @@ public struct USDZReader: USDSceneReader {
             }
 
             let layer = try readLayer(at: pendingLayerInstance.layerPath, in: archive)
+            let effectiveTargetPrimPath = effectiveTargetPrimPath(
+                targetPrimPath: pendingLayerInstance.targetPrimPath,
+                sitePrimPath: pendingLayerInstance.sitePrimPath,
+                layer: layer
+            )
             resolvedLayerInstances.append(USDZResolvedLayerInstance(
                 layer: layer,
-                targetPrimPath: pendingLayerInstance.targetPrimPath
+                sitePrimPath: pendingLayerInstance.sitePrimPath,
+                targetPrimPath: effectiveTargetPrimPath
             ))
             for assetPath in layer.composition.subLayerAssetPaths {
                 guard let resolvedLayerPath = try archive.resolveLayerPath(
@@ -185,10 +196,18 @@ public struct USDZReader: USDSceneReader {
                 }
                 pendingLayerInstances.append(USDZPendingLayerInstance(
                     layerPath: resolvedLayerPath,
-                    targetPrimPath: pendingLayerInstance.targetPrimPath
+                    sitePrimPath: pendingLayerInstance.sitePrimPath,
+                    targetPrimPath: effectiveTargetPrimPath
                 ))
             }
             for arc in layer.composition.references + layer.composition.payloads {
+                guard let composedSitePrimPath = composedSitePrimPath(
+                    for: arc.sitePrimPath,
+                    sourceSitePrimPath: pendingLayerInstance.sitePrimPath,
+                    sourceTargetPrimPath: effectiveTargetPrimPath
+                ) else {
+                    continue
+                }
                 guard let resolvedLayerPath = try archive.resolveLayerPath(
                     for: arc.assetPath,
                     referencedFrom: pendingLayerInstance.layerPath
@@ -199,11 +218,28 @@ public struct USDZReader: USDSceneReader {
                 }
                 pendingLayerInstances.append(USDZPendingLayerInstance(
                     layerPath: resolvedLayerPath,
-                    targetPrimPath: arc.primPath
+                    sitePrimPath: composedSitePrimPath,
+                    targetPrimPath: arc.targetPrimPath
                 ))
             }
         }
         return resolvedLayerInstances
+    }
+
+    private func materializedMeshes(in layerInstance: USDZResolvedLayerInstance) -> [USDMesh] {
+        let targetPrimPath = effectiveTargetPrimPath(
+            targetPrimPath: layerInstance.targetPrimPath,
+            sitePrimPath: layerInstance.sitePrimPath,
+            layer: layerInstance.layer
+        )
+        let meshes = filteredMeshes(in: layerInstance.layer.scene, matching: targetPrimPath)
+        guard let sitePrimPath = layerInstance.sitePrimPath,
+              let targetPrimPath else {
+            return meshes
+        }
+        return meshes.map { mesh in
+            rewriting(mesh, sourceTargetPrimPath: targetPrimPath, sitePrimPath: sitePrimPath)
+        }
     }
 
     private func filteredMeshes(in scene: USDScene?, matching targetPrimPath: String?) -> [USDMesh] {
@@ -220,6 +256,86 @@ public struct USDZReader: USDSceneReader {
             }
             return primPath == targetPrimPath || primPath.hasPrefix(descendantPrefix)
         }
+    }
+
+    private func rewriting(
+        _ mesh: USDMesh,
+        sourceTargetPrimPath: String,
+        sitePrimPath: String
+    ) -> USDMesh {
+        guard let primPath = mesh.primPath,
+              let rewrittenPrimPath = rewrittenPrimPath(
+                  primPath,
+                  replacing: sourceTargetPrimPath,
+                  with: sitePrimPath
+              ) else {
+            return mesh
+        }
+        var rewrittenMesh = mesh
+        rewrittenMesh.primPath = rewrittenPrimPath
+        rewrittenMesh.name = lastPrimName(in: rewrittenPrimPath) ?? rewrittenMesh.name
+        return rewrittenMesh
+    }
+
+    private func composedSitePrimPath(
+        for arcSitePrimPath: String?,
+        sourceSitePrimPath: String?,
+        sourceTargetPrimPath: String?
+    ) -> String? {
+        guard let arcSitePrimPath else {
+            return sourceSitePrimPath
+        }
+        guard let sourceSitePrimPath,
+              let sourceTargetPrimPath else {
+            return arcSitePrimPath
+        }
+        return rewrittenPrimPath(
+            arcSitePrimPath,
+            replacing: sourceTargetPrimPath,
+            with: sourceSitePrimPath
+        )
+    }
+
+    private func effectiveTargetPrimPath(
+        targetPrimPath: String?,
+        sitePrimPath: String?,
+        layer: USDZResolvedLayer
+    ) -> String? {
+        if let targetPrimPath {
+            return targetPrimPath
+        }
+        guard sitePrimPath != nil,
+              let defaultPrim = layer.defaultPrim ?? layer.scene?.defaultPrim else {
+            return nil
+        }
+        return absolutePrimPath(defaultPrim)
+    }
+
+    private func rewrittenPrimPath(
+        _ primPath: String,
+        replacing sourcePrimPath: String,
+        with destinationPrimPath: String
+    ) -> String? {
+        if primPath == sourcePrimPath {
+            return destinationPrimPath
+        }
+        if sourcePrimPath == "/" {
+            return "\(destinationPrimPath)\(primPath)"
+        }
+        let descendantPrefix = "\(sourcePrimPath)/"
+        guard primPath.hasPrefix(descendantPrefix) else {
+            return nil
+        }
+        let suffixStart = primPath.index(primPath.startIndex, offsetBy: sourcePrimPath.count)
+        return "\(destinationPrimPath)\(primPath[suffixStart...])"
+    }
+
+    private func absolutePrimPath(_ primName: String) -> String {
+        primName.hasPrefix("/") ? primName : "/\(primName)"
+    }
+
+    private func lastPrimName(in primPath: String) -> String? {
+        primPath.split(separator: "/").last.map(String.init)
     }
 
     private func readResolvedLayers(defaultLayerPath: String, in archive: USDZArchive) throws -> [USDZResolvedLayer] {
@@ -333,16 +449,19 @@ private struct USDZResolvedLayer: Sendable {
 
 private struct USDZResolvedLayerInstance: Sendable {
     var layer: USDZResolvedLayer
+    var sitePrimPath: String?
     var targetPrimPath: String?
 }
 
 private struct USDZPendingLayerInstance: Sendable {
     var layerPath: String
+    var sitePrimPath: String?
     var targetPrimPath: String?
 }
 
 private struct USDZLayerInstanceKey: Sendable, Hashable {
     var layerPath: String
+    var sitePrimPath: String?
     var targetPrimPath: String?
 }
 

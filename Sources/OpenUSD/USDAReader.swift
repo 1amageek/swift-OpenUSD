@@ -98,16 +98,29 @@ public struct USDAReader: USDSceneReader {
             composition.subLayerAssetPaths = try parseAssetPaths(forField: "subLayers", in: metadataBody)
         }
         let prims = try parseDirectPrims(in: text)
-        try appendCompositionArcs(from: prims, to: &composition)
+        try appendCompositionArcs(from: prims, parentPrimPath: "", to: &composition)
         return composition
     }
 
-    private func appendCompositionArcs(from prims: [USDAPrim], to composition: inout USDLayerComposition) throws {
+    private func appendCompositionArcs(
+        from prims: [USDAPrim],
+        parentPrimPath: String,
+        to composition: inout USDLayerComposition
+    ) throws {
         for prim in prims {
-            composition.references.append(contentsOf: try parseCompositionArcs(forField: "references", in: prim.metadataBody))
-            composition.payloads.append(contentsOf: try parseCompositionArcs(forField: "payload", in: prim.metadataBody))
+            let sitePrimPath = primPath(for: prim, parentPrimPath: parentPrimPath)
+            composition.references.append(contentsOf: try parseCompositionArcs(
+                forField: "references",
+                in: prim.metadataBody,
+                sitePrimPath: sitePrimPath
+            ))
+            composition.payloads.append(contentsOf: try parseCompositionArcs(
+                forField: "payload",
+                in: prim.metadataBody,
+                sitePrimPath: sitePrimPath
+            ))
             let childPrims = try parseDirectPrims(in: prim.body)
-            try appendCompositionArcs(from: childPrims, to: &composition)
+            try appendCompositionArcs(from: childPrims, parentPrimPath: sitePrimPath, to: &composition)
         }
     }
 
@@ -506,9 +519,17 @@ public struct USDAReader: USDSceneReader {
         }
     }
 
-    private func parseCompositionArcs(forField name: String, in text: String) throws -> [USDCompositionArc] {
+    private func parseCompositionArcs(
+        forField name: String,
+        in text: String,
+        sitePrimPath: String
+    ) throws -> [USDCompositionArc] {
         try parseAssetReferences(forField: name, in: text).map { reference in
-            USDCompositionArc(assetPath: reference.assetPath, primPath: reference.primPath)
+            USDCompositionArc(
+                assetPath: reference.assetPath,
+                sitePrimPath: sitePrimPath,
+                targetPrimPath: reference.primPath
+            )
         }
     }
 

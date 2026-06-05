@@ -1317,11 +1317,23 @@ struct OpenUSDTests {
             primPath: "/Scope"
         )))
         #expect(layer.composition.references == [
-            USDCompositionArc(assetPath: "assets/ref.usda", primPath: "/Scope.target"),
+            USDCompositionArc(
+                assetPath: "assets/ref.usda",
+                sitePrimPath: "/Scope",
+                targetPrimPath: "/Scope.target"
+            ),
         ])
         #expect(layer.composition.payloads == [
-            USDCompositionArc(assetPath: "assets/payload.usdc", primPath: "/PayloadTarget"),
-            USDCompositionArc(assetPath: "assets/single.usda", primPath: "/Scope"),
+            USDCompositionArc(
+                assetPath: "assets/payload.usdc",
+                sitePrimPath: "/Scope",
+                targetPrimPath: "/PayloadTarget"
+            ),
+            USDCompositionArc(
+                assetPath: "assets/single.usda",
+                sitePrimPath: "/Scope",
+                targetPrimPath: "/Scope"
+            ),
         ])
     }
 
@@ -1355,10 +1367,18 @@ struct OpenUSDTests {
         #expect(layer.upAxis == .z)
         #expect(layer.composition.subLayerAssetPaths == ["./layers/base.usda"])
         #expect(layer.composition.references == [
-            USDCompositionArc(assetPath: "./refs/model.usda", primPath: "/Model"),
+            USDCompositionArc(
+                assetPath: "./refs/model.usda",
+                sitePrimPath: "/Scene",
+                targetPrimPath: "/Model"
+            ),
         ])
         #expect(layer.composition.payloads == [
-            USDCompositionArc(assetPath: "./payloads/heavy.usdc", primPath: "/Payload"),
+            USDCompositionArc(
+                assetPath: "./payloads/heavy.usdc",
+                sitePrimPath: "/Scene",
+                targetPrimPath: "/Payload"
+            ),
         ])
     }
 
@@ -1586,7 +1606,8 @@ struct OpenUSDTests {
         let scene = try USDZReader().read(from: package)
 
         #expect(scene.defaultPrim == "Scene")
-        #expect(scene.meshes.map(\.name) == ["Triangle"])
+        #expect(scene.meshes.map(\.name) == ["Scene"])
+        #expect(scene.meshes.map(\.primPath) == ["/Scene"])
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -1636,8 +1657,8 @@ struct OpenUSDTests {
 
         let scene = try USDZReader().read(from: package)
 
-        #expect(scene.meshes.map(\.name) == ["Keep"])
-        #expect(scene.meshes.map(\.primPath) == ["/Keep"])
+        #expect(scene.meshes.map(\.name) == ["Scene"])
+        #expect(scene.meshes.map(\.primPath) == ["/Scene"])
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -1650,10 +1671,13 @@ struct OpenUSDTests {
             upAxis = "Z"
         )
 
-        def "Scene" (
-            references = @./refs/model.usda@</Model>
-        )
+        def "Scene"
         {
+            def "Instance" (
+                references = @./refs/model.usda@</Model>
+            )
+            {
+            }
         }
         """.utf8)
         let referencedLayer = Data("""
@@ -1691,7 +1715,7 @@ struct OpenUSDTests {
         let scene = try USDZReader().read(from: package)
 
         #expect(scene.meshes.map(\.name) == ["Child"])
-        #expect(scene.meshes.map(\.primPath) == ["/Model/Child"])
+        #expect(scene.meshes.map(\.primPath) == ["/Scene/Instance/Child"])
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -1745,7 +1769,7 @@ struct OpenUSDTests {
         let scene = try USDZReader().read(from: package)
 
         #expect(scene.meshes.map(\.name) == ["PayloadChild"])
-        #expect(scene.meshes.map(\.primPath) == ["/Model/PayloadChild"])
+        #expect(scene.meshes.map(\.primPath) == ["/Scene/PayloadChild"])
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -1758,7 +1782,8 @@ struct OpenUSDTests {
         let scene = try USDZReader().read(from: package)
 
         #expect(scene.upAxis == .z)
-        #expect(scene.meshes.map(\.name) == ["Triangle"])
+        #expect(scene.meshes.map(\.name) == ["Scope"])
+        #expect(scene.meshes.map(\.primPath) == ["/Scope"])
         #expect(scene.meshes.first?.points.count == 3)
     }
 
@@ -1796,9 +1821,21 @@ struct OpenUSDTests {
             "single_usdc.usdz[test.usdc]",
         ])
         #expect(graph.layers.first?.composition.references == [
-            USDCompositionArc(assetPath: "./single_usd.usdz", primPath: "/Root_USD"),
-            USDCompositionArc(assetPath: "./single_usda.usdz", primPath: "/Root_USDA"),
-            USDCompositionArc(assetPath: "./single_usdc.usdz", primPath: "/Root_USDC"),
+            USDCompositionArc(
+                assetPath: "./single_usd.usdz",
+                sitePrimPath: "/Refs",
+                targetPrimPath: "/Root_USD"
+            ),
+            USDCompositionArc(
+                assetPath: "./single_usda.usdz",
+                sitePrimPath: "/Refs",
+                targetPrimPath: "/Root_USDA"
+            ),
+            USDCompositionArc(
+                assetPath: "./single_usdc.usdz",
+                sitePrimPath: "/Refs",
+                targetPrimPath: "/Root_USDC"
+            ),
         ])
     }
 

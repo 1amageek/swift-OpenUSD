@@ -37,14 +37,26 @@ public struct USDCLayer: Sendable, Equatable {
                 switch field {
                 case .referenceListOperation(let operation):
                     references.append(contentsOf: operation.positiveItems.map {
-                        USDCompositionArc(assetPath: $0.assetPath, primPath: $0.primPath)
+                        USDCompositionArc(
+                            assetPath: $0.assetPath,
+                            sitePrimPath: spec.path,
+                            targetPrimPath: $0.primPath
+                        )
                     })
                 case .payloadListOperation(let operation):
                     payloads.append(contentsOf: operation.positiveItems.map {
-                        USDCompositionArc(assetPath: $0.assetPath, primPath: $0.primPath)
+                        USDCompositionArc(
+                            assetPath: $0.assetPath,
+                            sitePrimPath: spec.path,
+                            targetPrimPath: $0.primPath
+                        )
                     })
                 case .payload(let payload):
-                    payloads.append(USDCompositionArc(assetPath: payload.assetPath, primPath: payload.primPath))
+                    payloads.append(USDCompositionArc(
+                        assetPath: payload.assetPath,
+                        sitePrimPath: spec.path,
+                        targetPrimPath: payload.primPath
+                    ))
                 default:
                     break
                 }

@@ -1,9 +1,30 @@
 public struct USDCompositionArc: Sendable, Equatable {
     public var assetPath: String
-    public var primPath: String?
+    public var sitePrimPath: String?
+    public var targetPrimPath: String?
 
-    public init(assetPath: String, primPath: String? = nil) {
+    public init(
+        assetPath: String,
+        sitePrimPath: String? = nil,
+        targetPrimPath: String? = nil
+    ) {
         self.assetPath = assetPath
-        self.primPath = primPath
+        self.sitePrimPath = sitePrimPath
+        self.targetPrimPath = targetPrimPath
+    }
+
+    @available(*, deprecated, renamed: "init(assetPath:sitePrimPath:targetPrimPath:)")
+    public init(assetPath: String, primPath: String?) {
+        self.init(assetPath: assetPath, targetPrimPath: primPath)
+    }
+
+    @available(*, deprecated, renamed: "targetPrimPath")
+    public var primPath: String? {
+        get {
+            targetPrimPath
+        }
+        set {
+            targetPrimPath = newValue
+        }
     }
 }
