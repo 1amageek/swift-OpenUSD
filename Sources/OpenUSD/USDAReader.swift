@@ -147,13 +147,13 @@ public struct USDAReader: USDSceneReader {
             try validateTokenMetadata(named: "permission", allowedValues: ["private", "public"], in: prim.metadataBody)
             try validateTokenMetadata(named: "permission", allowedValues: ["private", "public"], in: directAttributeText)
             try validateCompositionListEdits(in: prim.metadataBody)
-            try validatePropertyTypeNames(in: directAttributeText)
+            try validatePropertyDeclarations(in: directAttributeText)
             try validateScalarAssignments(in: directAttributeText)
             try validatePrimAttributeSyntax(in: prim.body)
         }
     }
 
-    private func validatePropertyTypeNames(in text: String) throws {
+    private func validatePropertyDeclarations(in text: String) throws {
         var cursor = text.startIndex
         var isStatementStart = true
         var parenthesisDepth = 0
@@ -195,14 +195,14 @@ public struct USDAReader: USDSceneReader {
                     cursor = text.index(after: cursor)
                     continue
                 }
-                try validatePropertyDeclarationTypeName(startingAt: cursor, in: text)
+                try validatePropertyDeclaration(startingAt: cursor, in: text)
                 isStatementStart = false
             }
             cursor = text.index(after: cursor)
         }
     }
 
-    private func validatePropertyDeclarationTypeName(startingAt index: String.Index, in text: String) throws {
+    private func validatePropertyDeclaration(startingAt index: String.Index, in text: String) throws {
         var cursor = index
         if let qualifier = propertyDeclarationQualifier(at: cursor, in: text) {
             cursor = text.index(cursor, offsetBy: qualifier.count)
@@ -222,12 +222,65 @@ public struct USDAReader: USDSceneReader {
         guard tokenStart < cursor else {
             return
         }
-        var typeName = String(text[tokenStart..<cursor])
-        if let arraySuffix = typeName.firstIndex(of: "[") {
-            typeName = String(typeName[..<arraySuffix])
+        let authoredTypeName = String(text[tokenStart..<cursor])
+        let isArrayType = authoredTypeName.contains("[]")
+        let baseTypeName: String
+        if let arraySuffix = authoredTypeName.firstIndex(of: "[") {
+            baseTypeName = String(authoredTypeName[..<arraySuffix])
+        } else {
+            baseTypeName = authoredTypeName
         }
-        guard isValidUSDIdentifier(typeName) else {
-            throw USDImportError.invalidData("USDA property type name \(typeName) is not a valid identifier.")
+        guard isValidUSDIdentifier(baseTypeName) else {
+            throw USDImportError.invalidData("USDA property type name \(baseTypeName) is not a valid identifier.")
+        }
+        try validatePropertyValueShape(
+            typeName: authoredTypeName,
+            isArrayType: isArrayType,
+            afterTypeName: cursor,
+            in: text
+        )
+    }
+
+    private func validatePropertyValueShape(
+        typeName: String,
+        isArrayType: Bool,
+        afterTypeName cursor: String.Index,
+        in text: String
+    ) throws {
+        var cursor = cursor
+        skipWhitespace(in: text, index: &cursor)
+        let propertyNameStart = cursor
+        while cursor < text.endIndex {
+            let character = text[cursor]
+            if character.isWhitespace || character == "=" || character == "(" || character == ";" || character == "{" {
+                break
+            }
+            cursor = text.index(after: cursor)
+        }
+        let propertyName = String(text[propertyNameStart..<cursor])
+        skipWhitespace(in: text, index: &cursor)
+        if cursor < text.endIndex, text[cursor] == "(" {
+            let closeParenthesis = try matchingParenthesis(startingAt: cursor, in: text)
+            cursor = text.index(after: closeParenthesis)
+            skipWhitespace(in: text, index: &cursor)
+        }
+        guard cursor < text.endIndex, text[cursor] == "=" else {
+            return
+        }
+        cursor = text.index(after: cursor)
+        skipWhitespace(in: text, index: &cursor)
+        guard cursor < text.endIndex else {
+            return
+        }
+        if text[cursor...].hasPrefix("None") {
+            return
+        }
+        if isArrayType {
+            guard text[cursor] == "[" || (propertyName.hasSuffix(".timeSamples") && text[cursor] == "{") else {
+                throw USDImportError.invalidData("USDA \(typeName) attribute must use a shaped list value.")
+            }
+        } else if text[cursor] == "[" {
+            throw USDImportError.invalidData("USDA \(typeName) attribute cannot use a shaped list value.")
         }
     }
 

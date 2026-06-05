@@ -36,9 +36,13 @@ Source paths:
 | `testSdfParsing.testenv/46_weirdStringContent.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/46_weirdStringContent.usda` |
 | `testSdfParsing.testenv/80_bad_hidden.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/80_bad_hidden.usda` |
 | `testSdfParsing.testenv/90_bad_dupePrim.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/90_bad_dupePrim.usda` |
+| `testSdfParsing.testenv/91_bad_valueType.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/91_bad_valueType.usda` |
 | `testSdfParsing.testenv/93_hidden.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/93_hidden.usda` |
 | `testSdfParsing.testenv/94_bad_hiddenAttr.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/94_bad_hiddenAttr.usda` |
 | `testSdfParsing.testenv/95_bad_hiddenRel.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/95_bad_hiddenRel.usda` |
+| `testSdfParsing.testenv/96_bad_valueType.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/96_bad_valueType.usda` |
+| `testSdfParsing.testenv/97_bad_valueType.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/97_bad_valueType.usda` |
+| `testSdfParsing.testenv/98_bad_valueType.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/98_bad_valueType.usda` |
 | `testSdfParsing.testenv/116_permission_metadata.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/116_permission_metadata.usda` |
 | `testSdfParsing.testenv/117_bad_permission_metadata.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/117_bad_permission_metadata.usda` |
 | `testSdfParsing.testenv/118_bad_permission_metadata_2.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/118_bad_permission_metadata_2.usda` |

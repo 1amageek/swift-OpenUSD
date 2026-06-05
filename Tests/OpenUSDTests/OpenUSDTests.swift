@@ -1513,6 +1513,24 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingBadValueTypeFixturesThrowTypedErrors() throws {
+        for fixturePath in [
+            "testSdfParsing.testenv/91_bad_valueType.usda",
+            "testSdfParsing.testenv/96_bad_valueType.usda",
+            "testSdfParsing.testenv/97_bad_valueType.usda",
+            "testSdfParsing.testenv/98_bad_valueType.usda",
+        ] {
+            let data = try openUSDFixture(fixturePath)
+
+            let message = try usdImportFailureMessage {
+                _ = try USDAReader().readLayer(from: data)
+            }
+
+            #expect(message.contains("shaped list value"))
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingEndTokenFixtureIgnoresTrailingGarbage() throws {
         let data = try openUSDFixture("testSdfParsing.testenv/07_end.usda")
 
