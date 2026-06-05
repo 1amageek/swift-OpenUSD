@@ -62,6 +62,12 @@ struct USDCCrateValueDecoder {
             return .assetPath(try readAssetPath(valueRep))
         case .pathVector:
             return .pathVector(try readPathVectorValue(valueRep))
+        case .tokenListOp:
+            return .tokenListOp(try readTokenListOp(valueRep))
+        case .stringListOp:
+            return .stringListOp(try readStringListOp(valueRep))
+        case .pathListOp:
+            return .pathListOp(try readPathListOp(valueRep))
         case .double:
             guard !valueRep.isArray else {
                 return nil
@@ -191,6 +197,12 @@ struct USDCCrateValueDecoder {
             return .assetPath(try readAssetPath(valueRep))
         case .pathVector:
             return .pathVector(try readPathVectorValue(valueRep))
+        case .tokenListOp:
+            return .tokenListOp(try readTokenListOp(valueRep))
+        case .stringListOp:
+            return .stringListOp(try readStringListOp(valueRep))
+        case .pathListOp:
+            return .pathListOp(try readPathListOp(valueRep))
         case .float:
             if valueRep.isArray {
                 return .doubleArray(try readFloatArrayValue(valueRep))
@@ -385,6 +397,118 @@ struct USDCCrateValueDecoder {
             values.append(paths[pathIndex])
         }
         return values
+    }
+
+    private func readTokenListOp(_ valueRep: USDCCrateValueRep) throws -> USDCListOp<String> {
+        try readIndexedStringListOp(
+            valueRep,
+            expectedType: .tokenListOp,
+            label: "token listOp",
+            values: tokens,
+            missingValueMessage: "USDC token listOp references a token outside TOKENS."
+        )
+    }
+
+    private func readStringListOp(_ valueRep: USDCCrateValueRep) throws -> USDCListOp<String> {
+        try readIndexedStringListOp(
+            valueRep,
+            expectedType: .stringListOp,
+            label: "string listOp",
+            values: strings,
+            missingValueMessage: "USDC string listOp references a string outside STRINGS."
+        )
+    }
+
+    private func readPathListOp(_ valueRep: USDCCrateValueRep) throws -> USDCListOp<String> {
+        let paths = try crate.readPaths()
+        return try readIndexedStringListOp(
+            valueRep,
+            expectedType: .pathListOp,
+            label: "path listOp",
+            values: paths,
+            missingValueMessage: "USDC path listOp references a path outside PATHS."
+        )
+    }
+
+    private func readIndexedStringListOp(
+        _ valueRep: USDCCrateValueRep,
+        expectedType: USDCCrateValueType,
+        label: String,
+        values: [String],
+        missingValueMessage: String
+    ) throws -> USDCListOp<String> {
+        try readListOp(valueRep, expectedType: expectedType, label: label) { cursor in
+            let index = try checkedInt(
+                UInt64(try crate.readFileUInt32(at: cursor)),
+                label: "USDC \(label) item index"
+            )
+            cursor += MemoryLayout<UInt32>.size
+            guard index < values.count else {
+                throw USDImportError.invalidData(missingValueMessage)
+            }
+            return values[index]
+        }
+    }
+
+    private func readListOp<Item: Sendable & Equatable>(
+        _ valueRep: USDCCrateValueRep,
+        expectedType: USDCCrateValueType,
+        label: String,
+        readItem: (inout Int) throws -> Item
+    ) throws -> USDCListOp<Item> {
+        guard valueRep.type == expectedType, !valueRep.isArray else {
+            throw USDImportError.invalidData("USDC \(label) value is malformed.")
+        }
+        guard !valueRep.isInlined, !valueRep.isCompressed else {
+            throw USDImportError.invalidData("USDC \(label) value has unsupported representation bits.")
+        }
+        guard valueRep.payload != 0 else {
+            throw USDImportError.invalidData("USDC \(label) payload offset is missing.")
+        }
+        var cursor = try payloadOffset(valueRep, label: label)
+        let header = try crate.readFileBytes(at: cursor, byteCount: 1)[0]
+        cursor += 1
+        guard header & ~USDCListOpHeader.allKnownBits == 0 else {
+            throw USDImportError.invalidData("USDC \(label) header contains unknown bits.")
+        }
+
+        var listOp = USDCListOp<Item>(
+            isExplicit: header & USDCListOpHeader.isExplicitBit != 0
+        )
+        if header & USDCListOpHeader.hasExplicitItemsBit != 0 {
+            listOp.explicitItems = try readListOpItems(cursor: &cursor, label: label, readItem: readItem)
+        }
+        if header & USDCListOpHeader.hasAddedItemsBit != 0 {
+            listOp.addedItems = try readListOpItems(cursor: &cursor, label: label, readItem: readItem)
+        }
+        if header & USDCListOpHeader.hasPrependedItemsBit != 0 {
+            listOp.prependedItems = try readListOpItems(cursor: &cursor, label: label, readItem: readItem)
+        }
+        if header & USDCListOpHeader.hasAppendedItemsBit != 0 {
+            listOp.appendedItems = try readListOpItems(cursor: &cursor, label: label, readItem: readItem)
+        }
+        if header & USDCListOpHeader.hasDeletedItemsBit != 0 {
+            listOp.deletedItems = try readListOpItems(cursor: &cursor, label: label, readItem: readItem)
+        }
+        if header & USDCListOpHeader.hasOrderedItemsBit != 0 {
+            listOp.orderedItems = try readListOpItems(cursor: &cursor, label: label, readItem: readItem)
+        }
+        return listOp
+    }
+
+    private func readListOpItems<Item>(
+        cursor: inout Int,
+        label: String,
+        readItem: (inout Int) throws -> Item
+    ) throws -> [Item] {
+        let count = try checkedInt(try crate.readFileUInt64(at: cursor), label: "USDC \(label) item count")
+        cursor += MemoryLayout<UInt64>.size
+        var items: [Item] = []
+        items.reserveCapacity(count)
+        for _ in 0..<count {
+            items.append(try readItem(&cursor))
+        }
+        return items
     }
 
     private func readFloatScalar(_ valueRep: USDCCrateValueRep) throws -> Float32 {
@@ -906,4 +1030,22 @@ struct USDCCrateValueDecoder {
             result | (UInt32(element.element) << UInt32(element.offset * 8))
         }
     }
+}
+
+private enum USDCListOpHeader {
+    static let isExplicitBit: UInt8 = 1 << 0
+    static let hasExplicitItemsBit: UInt8 = 1 << 1
+    static let hasAddedItemsBit: UInt8 = 1 << 2
+    static let hasDeletedItemsBit: UInt8 = 1 << 3
+    static let hasOrderedItemsBit: UInt8 = 1 << 4
+    static let hasPrependedItemsBit: UInt8 = 1 << 5
+    static let hasAppendedItemsBit: UInt8 = 1 << 6
+    static let allKnownBits: UInt8 =
+        isExplicitBit
+        | hasExplicitItemsBit
+        | hasAddedItemsBit
+        | hasDeletedItemsBit
+        | hasOrderedItemsBit
+        | hasPrependedItemsBit
+        | hasAppendedItemsBit
 }

@@ -1227,6 +1227,36 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func usdcLayerReaderPreservesListOpFieldValues() throws {
+        let fixture = makeUSDCLayerListOpFixture()
+
+        let layer = try USDCReader().readLayer(from: fixture)
+
+        #expect(layer.specs.map(\.path) == ["/", "/Scope"])
+        let scope = try #require(layer.spec(at: "/Scope"))
+        #expect(scope.specType == .prim)
+        #expect(scope.fields["tokenListOp"] == .tokenListOp(USDCListOp(
+            isExplicit: true,
+            explicitItems: ["tokenExplicit"],
+            addedItems: ["tokenAdded"],
+            prependedItems: ["tokenPrepended"],
+            appendedItems: ["tokenAppended"],
+            deletedItems: ["tokenDeleted"],
+            orderedItems: ["tokenOrdered"]
+        )))
+        #expect(scope.fields["stringListOp"] == .stringListOp(USDCListOp(
+            isExplicit: true,
+            addedItems: ["stringAdded"]
+        )))
+        #expect(scope.fields["pathListOp"] == .pathListOp(USDCListOp(
+            prependedItems: ["/"],
+            appendedItems: ["/Scope.target"],
+            deletedItems: ["/Scope"],
+            orderedItems: ["/Scope.target"]
+        )))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSingleUSDCFixtureReadsCompressedStructuralTables() throws {
         let data = try openUSDFixture("testUsdUsdzFileFormat/single/test.usdc")
 
@@ -1570,6 +1600,87 @@ private func makeUSDCLayerAssetPathAndPathVectorFixture() -> Data {
     ])
 }
 
+private func makeUSDCLayerListOpFixture() -> Data {
+    let version = USDCCrateVersion(major: 0, minor: 8, patch: 0)
+    let tokens = [
+        "specifier",
+        "Scope",
+        "target",
+        "tokenListOp",
+        "stringListOp",
+        "pathListOp",
+        "tokenExplicit",
+        "tokenAdded",
+        "tokenPrepended",
+        "tokenAppended",
+        "tokenDeleted",
+        "tokenOrdered",
+        "stringAdded",
+    ]
+    var valueData = Data()
+    let tokenListOpOffset = appendUSDCIndexedListOp(
+        isExplicit: true,
+        explicitItems: [6],
+        addedItems: [7],
+        prependedItems: [8],
+        appendedItems: [9],
+        deletedItems: [10],
+        orderedItems: [11],
+        to: &valueData
+    )
+    let stringListOpOffset = appendUSDCIndexedListOp(
+        isExplicit: true,
+        addedItems: [0],
+        to: &valueData
+    )
+    let pathListOpOffset = appendUSDCIndexedListOp(
+        prependedItems: [0],
+        appendedItems: [2],
+        deletedItems: [1],
+        orderedItems: [2],
+        to: &valueData
+    )
+    let fields = [
+        USDCCrateField(
+            tokenIndex: 0,
+            valueRep: USDCCrateValueRep(type: .specifier, isInlined: true, isArray: false, payload: 0)
+        ),
+        USDCCrateField(
+            tokenIndex: 3,
+            valueRep: USDCCrateValueRep(type: .tokenListOp, isInlined: false, isArray: false, payload: tokenListOpOffset)
+        ),
+        USDCCrateField(
+            tokenIndex: 4,
+            valueRep: USDCCrateValueRep(type: .stringListOp, isInlined: false, isArray: false, payload: stringListOpOffset)
+        ),
+        USDCCrateField(
+            tokenIndex: 5,
+            valueRep: USDCCrateValueRep(type: .pathListOp, isInlined: false, isArray: false, payload: pathListOpOffset)
+        ),
+    ]
+    let specs = [
+        USDCCrateSpec(pathIndex: 0, fieldSetIndex: 0, specType: .pseudoRoot),
+        USDCCrateSpec(pathIndex: 1, fieldSetIndex: 1, specType: .prim),
+    ]
+
+    return makeUSDCFixture(version: version, valueData: valueData, sections: [
+        ("TOKENS", makeUSDCTokenSection(version: version, tokenData: nullSeparatedTokenData(tokens))),
+        ("STRINGS", makeUSDCStringsSection([12])),
+        ("FIELDS", makeUSDCFieldsSection(version: version, fields: fields)),
+        ("FIELDSETS", makeUSDCFieldSetsSection(version: version, indexes: [
+            UInt32.max,
+            0, 1, 2, 3, UInt32.max,
+        ])),
+        ("PATHS", makeUSDCCompressedPathsSection(
+            pathCount: 3,
+            pathIndexes: [0, 1, 2],
+            elementTokenIndexes: [0, 1, -2],
+            jumps: [-1, -1, -2]
+        )),
+        ("SPECS", makeUSDCSpecsSection(version: version, specs: specs)),
+    ])
+}
+
 private func makeUSDCMeshSceneFixture(
     compressedPoints: Bool = false,
     compressedXformOpOrder: Bool = false
@@ -1803,6 +1914,56 @@ private func appendUSDCPathVector(_ pathIndexes: [UInt32], to data: inout Data) 
         data.appendLittleEndian(pathIndex)
     }
     return offset
+}
+
+private func appendUSDCIndexedListOp(
+    isExplicit: Bool = false,
+    explicitItems: [UInt32] = [],
+    addedItems: [UInt32] = [],
+    prependedItems: [UInt32] = [],
+    appendedItems: [UInt32] = [],
+    deletedItems: [UInt32] = [],
+    orderedItems: [UInt32] = [],
+    to data: inout Data
+) -> UInt64 {
+    let offset = alignUSDCValueData(&data)
+    var header: UInt8 = isExplicit ? 1 << 0 : 0
+    if !explicitItems.isEmpty {
+        header |= 1 << 1
+    }
+    if !addedItems.isEmpty {
+        header |= 1 << 2
+    }
+    if !deletedItems.isEmpty {
+        header |= 1 << 3
+    }
+    if !orderedItems.isEmpty {
+        header |= 1 << 4
+    }
+    if !prependedItems.isEmpty {
+        header |= 1 << 5
+    }
+    if !appendedItems.isEmpty {
+        header |= 1 << 6
+    }
+    data.append(header)
+    appendUSDCListOpItems(explicitItems, to: &data)
+    appendUSDCListOpItems(addedItems, to: &data)
+    appendUSDCListOpItems(prependedItems, to: &data)
+    appendUSDCListOpItems(appendedItems, to: &data)
+    appendUSDCListOpItems(deletedItems, to: &data)
+    appendUSDCListOpItems(orderedItems, to: &data)
+    return offset
+}
+
+private func appendUSDCListOpItems(_ items: [UInt32], to data: inout Data) {
+    guard !items.isEmpty else {
+        return
+    }
+    data.appendLittleEndian(UInt64(items.count))
+    for item in items {
+        data.appendLittleEndian(item)
+    }
 }
 
 private func alignUSDCValueData(_ data: inout Data) -> UInt64 {
