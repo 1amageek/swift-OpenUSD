@@ -1369,6 +1369,127 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingEmptyFixturesReadLayers() throws {
+        for fixturePath in [
+            "testSdfParsing.testenv/01_empty.usda",
+            "testSdfParsing.testenv/204_really_empty.usda",
+        ] {
+            let layer = try USDAReader().readLayer(from: openUSDFixture(fixturePath))
+
+            #expect(layer.defaultPrim == nil)
+            #expect(layer.metersPerUnit == nil)
+            #expect(layer.upAxis == nil)
+            #expect(layer.composition.isEmpty)
+            #expect(layer.primTransforms.isEmpty)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingOptionalSemicolonsFixtureReadsSublayersAndPrimTransforms() throws {
+        let data = try openUSDFixture("testSdfParsing.testenv/20_optionalsemicolons.usda")
+
+        let layer = try USDAReader().readLayer(from: data)
+
+        #expect(layer.defaultPrim == nil)
+        #expect(layer.metersPerUnit == nil)
+        #expect(layer.upAxis == nil)
+        #expect(layer.composition.sublayerAssetPaths == [
+            "foo1",
+            "foo2",
+            "foo3",
+            "foo4",
+            "foo5",
+            "foo6",
+            "foo7",
+            "foo8",
+        ])
+        #expect(layer.composition.references.isEmpty)
+        #expect(layer.composition.payloads.isEmpty)
+        #expect(layer.primTransforms.keys.sorted() == [
+            "/Test1",
+            "/Test1/Arm",
+            "/Test1/Body",
+            "/Test1/Head",
+            "/Test1/Leg",
+            "/Test1/Leg/Thigh",
+            "/Test1/Whatever",
+        ])
+        #expect(layer.primTransforms.values.allSatisfy { $0 == .identity })
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingReferencesFixtureReadsSupportedExternalArcs() throws {
+        let data = try openUSDFixture("testSdfParsing.testenv/132_references.usda")
+
+        let layer = try USDAReader().readLayer(from: data)
+        let references = layer.composition.references
+
+        #expect(references.contains(USDCompositionArc(
+            assetPath: "///test/layer.usda",
+            sitePrimPath: "/TestPrim1",
+            targetPrimPath: "/Prim"
+        )))
+        #expect(references.contains(USDCompositionArc(
+            assetPath: "///test/layer2.usda",
+            sitePrimPath: "/TestPrim2",
+            targetPrimPath: "/Prim2"
+        )))
+        #expect(references.contains(USDCompositionArc(
+            assetPath: "///test/layer.usda",
+            sitePrimPath: "/TestPrim3",
+            targetPrimPath: "/Prim",
+            layerOffset: USDLayerOffset(offset: 11, scale: 22)
+        )))
+        #expect(references.contains(USDCompositionArc(
+            assetPath: "///test/layer.usda",
+            sitePrimPath: "/TestFile1",
+            targetPrimPath: nil
+        )))
+        #expect(references.contains(USDCompositionArc(
+            assetPath: "///test/layer.usda",
+            sitePrimPath: "/TestFile5",
+            targetPrimPath: nil,
+            layerOffset: USDLayerOffset(offset: 11, scale: 22)
+        )))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingPayloadsFixtureReadsSupportedExternalArcs() throws {
+        let data = try openUSDFixture("testSdfParsing.testenv/152_payloads.usda")
+
+        let layer = try USDAReader().readLayer(from: data)
+        let payloads = layer.composition.payloads
+
+        #expect(payloads.contains(USDCompositionArc(
+            assetPath: "///test/layer.usda",
+            sitePrimPath: "/TestPrim1",
+            targetPrimPath: "/Prim"
+        )))
+        #expect(payloads.contains(USDCompositionArc(
+            assetPath: "///test/layer2.usda",
+            sitePrimPath: "/TestPrim2",
+            targetPrimPath: "/Prim2"
+        )))
+        #expect(payloads.contains(USDCompositionArc(
+            assetPath: "///test/layer.usda",
+            sitePrimPath: "/TestPrim3",
+            targetPrimPath: "/Prim",
+            layerOffset: USDLayerOffset(offset: 11, scale: 22)
+        )))
+        #expect(payloads.contains(USDCompositionArc(
+            assetPath: "///test/layer.usda",
+            sitePrimPath: "/TestFile1",
+            targetPrimPath: nil
+        )))
+        #expect(payloads.contains(USDCompositionArc(
+            assetPath: "///test/layer.usda",
+            sitePrimPath: "/TestFile5",
+            targetPrimPath: nil,
+            layerOffset: USDLayerOffset(offset: 11, scale: 22)
+        )))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFUSDCVersioningDeprecated070FixtureReadsLayer() throws {
         let data = try openUSDFixture("testSdfUsdcVersioning/deprecated_0_7_0.usd")
 

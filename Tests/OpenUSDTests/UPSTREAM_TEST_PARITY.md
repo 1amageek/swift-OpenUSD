@@ -47,6 +47,9 @@ flowchart LR
 | `pxr/usd/sdf/testenv/testSdfUsdcInvalidPrimChildren.testenv` | `root.usdc`, `duplicate_prim_children.usdc` | `ported` | `openUSDSDFUSDCInvalidPrimChildrenFixtureThrowsTypedError`, `openUSDSDFUSDCDuplicatePrimChildrenFixtureThrowsTypedError`; `readLayer` and scene materialization both reject invalid `primChildren` |
 | `pxr/usd/sdf/testenv/testSdfZipFile.testenv` | `test_reader.usdz`, `src/*` | `partial` | `openUSDSDFZipFileReaderFixtureReadsEntryInfoAndData`; writer assertions are blocked until a Swift USDZ writer API exists |
 | `pxr/usd/sdf/testenv/testSdfUsdzResolver` | `test.usdz`, `src/*` | `partial` | `openUSDSDFUSDZResolverFixtureReadsEntriesAndNestedData`; `ArAsset` buffer/read/file-handle APIs are represented through archive entry data, sizes, offsets, and nested layer paths |
+| `pxr/usd/sdf/testenv/testSdfParsing.testenv` | `01_empty.usda`, `204_really_empty.usda` | `partial` | `openUSDSDFParsingEmptyFixturesReadLayers`; upstream export, metadata-only open, and baseline output comparisons are blocked until writer and diagnostic APIs exist |
+| `pxr/usd/sdf/testenv/testSdfParsing.testenv` | `20_optionalsemicolons.usda` | `partial` | `openUSDSDFParsingOptionalSemicolonsFixtureReadsSublayersAndPrimTransforms`; arbitrary field/spec preservation is blocked by the current `USDALayer` surface |
+| `pxr/usd/sdf/testenv/testSdfParsing.testenv` | `132_references.usda`, `152_payloads.usda` | `partial` | `openUSDSDFParsingReferencesFixtureReadsSupportedExternalArcs`, `openUSDSDFParsingPayloadsFixtureReadsSupportedExternalArcs`; prim-only arcs, list-edit semantics, arc custom data, and writer parity require composition model expansion |
 | `pxr/usd/usd/testenv/testUsdReadOutOfBounds` | `corrupt.usd` | `ported` | `openUSDReadOutOfBoundsFixtureThrowsTypedError` |
 | `pxr/usd/usd/testenv/testUsdUsdcBugGHSA02.testenv` | `root.usdc` | `ported` | `openUSDUSDCSecurityFixtureThrowsTypedError` |
 | `pxr/usd/usd/testenv/testUsdUsdzBugGHSA01.testenv` | `root.usdz` | `ported` | `openUSDUSDZSecurityFixtureThrowsTypedError` |
@@ -70,7 +73,7 @@ flowchart LR
 | 8 | `testSdfUsdcVersioning` diagnostic and writer assertions | `blocked` | Define diagnostic warning capture and writer/export APIs before porting deprecated-version warning and export-upgrade assertions. |
 | 9 | `testSdfUsdcInvalidPrimChildren` | `ported` | Keep checking that invalid child-name and duplicate-child fixtures produce typed `primChildren` errors. |
 | 10 | `testSdfUsdzResolver` | `partial` | Keep checking package entry open, source bytes, sizes, absolute offsets, and nested package paths; full `ArAsset` API parity is blocked until an asset object API exists. |
-| 11 | `pxr/usd/sdf/testenv` file and value parsing subset | `pending` | Port USDA value parsing tests that map to `USDAReader` and `USDLayer`. |
+| 11 | `pxr/usd/sdf/testenv` file and value parsing subset | `partial` | Continue porting USDA parsing fixtures that map to `USDAReader` and `USDLayer`; define writer, diagnostic, metadata-only, Sdf spec, and list-edit APIs for full `testSdfParsing` parity. |
 | 12 | Stage composition, Sdf editing, schema, plugin, imaging tests | `blocked` | Define public APIs first, then port relevant upstream suites. |
 
 ## Completion Rules
