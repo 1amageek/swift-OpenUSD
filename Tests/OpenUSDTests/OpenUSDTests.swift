@@ -2762,6 +2762,17 @@ struct OpenUSDTests {
             ),
             (
                 fixture: "testUsdUsdzFileFormat/nested_anchored_refs.usdz",
+                rootPath: "anchored_refs.usdz[root.usd]",
+                expectedRootPath: "anchored_refs.usdz[root.usd]",
+                paths: [
+                    "anchored_refs.usdz[root.usd]",
+                    "anchored_refs.usdz[ref.usd]",
+                    "anchored_refs.usdz[sub/ref.usda]",
+                    "anchored_refs.usdz[sub/ref.usdc]",
+                ]
+            ),
+            (
+                fixture: "testUsdUsdzFileFormat/nested_anchored_refs.usdz",
                 rootPath: "anchored_refs.usdz[sub/ref.usda]",
                 expectedRootPath: "anchored_refs.usdz[sub/ref.usda]",
                 paths: [

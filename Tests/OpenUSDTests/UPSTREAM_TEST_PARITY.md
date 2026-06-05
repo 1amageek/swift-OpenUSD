@@ -59,7 +59,7 @@ flowchart LR
 | `pxr/usd/usd/testenv/testUsdUsdzFileFormat` | `single_usd.usdz`, `single_usda.usdz`, `single_usdc.usdz` | `ported` | Archive default layer tests and contained layer graph tests |
 | `pxr/usd/usd/testenv/testUsdUsdzFileFormat` | `anchored_refs*.usdz` | `ported` | `usdzReaderReadsAnchoredReferenceGraphsFromOpenUSDFixtures` and layer path tests |
 | `pxr/usd/usd/testenv/testUsdUsdzFileFormat` | `search_refs*.usdz` | `ported` | `usdzReaderReadsSearchReferenceGraphsFromOpenUSDFixtures` and layer path tests |
-| `pxr/usd/usd/testenv/testUsdUsdzFileFormat` | `nested_*refs*.usdz` | `ported` | `usdzReaderReadsNestedSubdirectoryReferenceGraphsFromOpenUSDFixtures` and specific layer path tests |
+| `pxr/usd/usd/testenv/testUsdUsdzFileFormat` | `nested_*refs*.usdz` | `ported` | `usdzReaderReadsNestedSubdirectoryReferenceGraphsFromOpenUSDFixtures` and specific layer path tests, including explicit nested root layer paths |
 | `pxr/usd/usd/testenv/testUsdUsdzFileFormat` | `first_file_not_usd.usdz` | `ported` | Typed rejection and archive entry tests |
 
 ## Next Upstream Categories
