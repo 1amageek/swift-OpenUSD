@@ -44,4 +44,20 @@ public struct USDZArchiveEntry: Sendable, Equatable {
     public var isPayload64ByteAligned: Bool {
         dataOffset.isMultiple(of: 64)
     }
+
+    public var size: Int {
+        data.count
+    }
+
+    public var uncompressedSize: Int {
+        data.count
+    }
+
+    public var compressionMethod: UInt16 {
+        0
+    }
+
+    public var isEncrypted: Bool {
+        false
+    }
 }

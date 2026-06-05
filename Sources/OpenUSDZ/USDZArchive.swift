@@ -21,8 +21,16 @@ public struct USDZArchive: Sendable, Equatable {
         entries.first
     }
 
+    public var entryPaths: [String] {
+        entries.map(\.path)
+    }
+
     public func entry(at path: String) -> USDZArchiveEntry? {
         entries.first { $0.path == path }
+    }
+
+    public func entryData(at path: String) -> Data? {
+        entry(at: path)?.data
     }
 
     public func data(for path: String) throws -> Data {

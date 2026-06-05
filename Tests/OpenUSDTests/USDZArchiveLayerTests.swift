@@ -6,6 +6,43 @@ import OpenUSDZ
 @Suite("USDZ Archive Layers")
 struct USDZArchiveLayerTests {
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFZipFileReaderFixtureReadsEntryInfoAndData() throws {
+        let archive = try openSDFZipFixtureArchive("test_reader.usdz")
+
+        #expect(archive.centralDirectoryOffset == 13_783)
+        #expect(archive.centralDirectorySize == 310)
+        #expect(archive.endOfCentralDirectoryOffset == 14_093)
+        #expect(archive.entryPaths == ["a.test", "b.png", "sub/c.png", "sub/d.txt"])
+        #expect(archive.entryData(at: "nonexistent.txt") == nil)
+        #expect(archive.entry(at: "nonexistent.txt") == nil)
+
+        let cases: [SDFZipEntryCase] = [
+            SDFZipEntryCase(path: "a.test", dataOffset: 64, size: 83, crc32: 2_187_659_876, normalizesLineEndings: true),
+            SDFZipEntryCase(path: "b.png", dataOffset: 192, size: 7_228, crc32: 384_784_137),
+            SDFZipEntryCase(path: "sub/c.png", dataOffset: 7_488, size: 6_139, crc32: 2_488_450_460),
+            SDFZipEntryCase(path: "sub/d.txt", dataOffset: 13_696, size: 87, crc32: 2_546_026_356, normalizesLineEndings: true),
+        ]
+
+        for testCase in cases {
+            let entry = try #require(archive.entry(at: testCase.path))
+            #expect(entry.dataOffset == testCase.dataOffset)
+            #expect(entry.size == testCase.size)
+            #expect(entry.uncompressedSize == testCase.size)
+            #expect(entry.crc32 == testCase.crc32)
+            #expect(entry.compressionMethod == 0)
+            #expect(!entry.isEncrypted)
+            #expect(entry.isPayload64ByteAligned)
+
+            let zippedData = try #require(archive.entryData(at: testCase.path))
+            var sourceData = try openSDFZipFixture("src/\(testCase.path)")
+            if testCase.normalizesLineEndings {
+                sourceData = sourceData.normalizingCRLFLineEndings()
+            }
+            #expect(zippedData == sourceData)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSingleUSDZFixturesResolveDefaultLayerData() throws {
         let cases = [
             (archive: "single_usd.usdz", layer: "test.usd", source: "single/test.usd"),
@@ -168,12 +205,38 @@ private func openUSDZArchive(_ relativePath: String) throws -> USDZArchive {
     try USDZArchive(data: openUSDZFixture(relativePath))
 }
 
+private func openSDFZipFixtureArchive(_ relativePath: String) throws -> USDZArchive {
+    try USDZArchive(data: openSDFZipFixture(relativePath))
+}
+
 private func openUSDZFixture(_ relativePath: String) throws -> Data {
+    try openFixture(root: "testUsdUsdzFileFormat", relativePath: relativePath)
+}
+
+private func openSDFZipFixture(_ relativePath: String) throws -> Data {
+    try openFixture(root: "testSdfZipFile.testenv", relativePath: relativePath)
+}
+
+private func openFixture(root: String, relativePath: String) throws -> Data {
     let url = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()
         .appendingPathComponent("Fixtures")
         .appendingPathComponent("OpenUSD")
-        .appendingPathComponent("testUsdUsdzFileFormat")
+        .appendingPathComponent(root)
         .appendingPathComponent(relativePath)
     return try Data(contentsOf: url)
+}
+
+private struct SDFZipEntryCase {
+    var path: String
+    var dataOffset: Int
+    var size: Int
+    var crc32: UInt32
+    var normalizesLineEndings: Bool = false
+}
+
+private extension Data {
+    func normalizingCRLFLineEndings() -> Data {
+        Data(String(decoding: self, as: UTF8.self).replacingOccurrences(of: "\r\n", with: "\n").utf8)
+    }
 }
