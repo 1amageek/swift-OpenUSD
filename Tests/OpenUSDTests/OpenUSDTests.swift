@@ -1646,6 +1646,114 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func usdzReaderReadsAnchoredReferenceGraphsFromOpenUSDFixtures() throws {
+        let cases: [(fixture: String, rootPath: String, paths: [String])] = [
+            (
+                fixture: "testUsdUsdzFileFormat/anchored_refs.usdz",
+                rootPath: "root.usd",
+                paths: [
+                    "root.usd",
+                    "ref.usd",
+                    "sub/ref.usda",
+                    "sub/ref.usdc",
+                ]
+            ),
+            (
+                fixture: "testUsdUsdzFileFormat/anchored_refs_sub.usdz",
+                rootPath: "anchored_refs/root.usd",
+                paths: [
+                    "anchored_refs/root.usd",
+                    "anchored_refs/ref.usd",
+                    "anchored_refs/sub/ref.usda",
+                    "anchored_refs/sub/ref.usdc",
+                ]
+            ),
+        ]
+
+        for testCase in cases {
+            let package = try openUSDFixture(testCase.fixture)
+
+            let graph = try USDZReader().readLayerGraph(from: package)
+
+            #expect(graph.rootPath == testCase.rootPath)
+            #expect(graph.paths == testCase.paths)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdzReaderReadsSearchReferenceGraphsFromOpenUSDFixtures() throws {
+        let cases: [(fixture: String, rootPath: String, paths: [String])] = [
+            (
+                fixture: "testUsdUsdzFileFormat/search_refs.usdz",
+                rootPath: "root.usd",
+                paths: [
+                    "root.usd",
+                    "refs/ref.usd",
+                    "refs/sub/ref_in_subdir.usd",
+                    "sub/ref_in_root.usd",
+                    "refs/sub/ref_in_both.usd",
+                ]
+            ),
+            (
+                fixture: "testUsdUsdzFileFormat/search_refs_sub.usdz",
+                rootPath: "search_refs/root.usd",
+                paths: [
+                    "search_refs/root.usd",
+                    "search_refs/refs/ref.usd",
+                    "search_refs/refs/sub/ref_in_subdir.usd",
+                    "search_refs/sub/ref_in_root.usd",
+                    "search_refs/refs/sub/ref_in_both.usd",
+                ]
+            ),
+        ]
+
+        for testCase in cases {
+            let package = try openUSDFixture(testCase.fixture)
+
+            let graph = try USDZReader().readLayerGraph(from: package)
+
+            #expect(graph.rootPath == testCase.rootPath)
+            #expect(graph.paths == testCase.paths)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdzReaderReadsNestedSubdirectoryReferenceGraphsFromOpenUSDFixtures() throws {
+        let cases: [(fixture: String, rootPath: String, paths: [String])] = [
+            (
+                fixture: "testUsdUsdzFileFormat/nested_anchored_refs_sub.usdz",
+                rootPath: "anchored_refs_sub.usdz[anchored_refs/root.usd]",
+                paths: [
+                    "anchored_refs_sub.usdz[anchored_refs/root.usd]",
+                    "anchored_refs_sub.usdz[anchored_refs/ref.usd]",
+                    "anchored_refs_sub.usdz[anchored_refs/sub/ref.usda]",
+                    "anchored_refs_sub.usdz[anchored_refs/sub/ref.usdc]",
+                ]
+            ),
+            (
+                fixture: "testUsdUsdzFileFormat/nested_search_refs_sub.usdz",
+                rootPath: "search_refs_sub.usdz[search_refs/root.usd]",
+                paths: [
+                    "search_refs_sub.usdz[search_refs/root.usd]",
+                    "search_refs_sub.usdz[search_refs/refs/ref.usd]",
+                    "search_refs_sub.usdz[search_refs/refs/sub/ref_in_subdir.usd]",
+                    "search_refs_sub.usdz[search_refs/sub/ref_in_root.usd]",
+                    "search_refs_sub.usdz[search_refs/refs/sub/ref_in_both.usd]",
+                ]
+            ),
+        ]
+
+        for testCase in cases {
+            let package = try openUSDFixture(testCase.fixture)
+
+            let graph = try USDZReader().readLayerGraph(from: package)
+
+            #expect(graph.rootPath == testCase.rootPath)
+            #expect(graph.paths == testCase.paths)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func usdzReaderRejectsUnalignedPayload() throws {
         let usda = Data("""
         #usda 1.0
