@@ -15,19 +15,4 @@ public struct USDCompositionArc: Sendable, Equatable {
         self.targetPrimPath = targetPrimPath
         self.layerOffset = layerOffset
     }
-
-    @available(*, deprecated, renamed: "init(assetPath:sitePrimPath:targetPrimPath:)")
-    public init(assetPath: String, primPath: String?) {
-        self.init(assetPath: assetPath, targetPrimPath: primPath)
-    }
-
-    @available(*, deprecated, renamed: "targetPrimPath")
-    public var primPath: String? {
-        get {
-            targetPrimPath
-        }
-        set {
-            targetPrimPath = newValue
-        }
-    }
 }

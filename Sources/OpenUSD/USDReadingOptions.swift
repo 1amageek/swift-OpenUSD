@@ -12,6 +12,3 @@ public struct USDReadingOptions: Sendable, Equatable, Hashable {
 
     public static let `default` = USDReadingOptions()
 }
-
-@available(*, deprecated, renamed: "USDReadingOptions")
-public typealias USDSceneReadingOptions = USDReadingOptions

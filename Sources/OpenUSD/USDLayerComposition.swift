@@ -34,29 +34,6 @@ public struct USDLayerComposition: Sendable, Equatable {
         }
     }
 
-    @available(*, deprecated, renamed: "sublayerAssetPaths")
-    public var subLayerAssetPaths: [String] {
-        get {
-            sublayerAssetPaths
-        }
-        set {
-            sublayerAssetPaths = newValue
-        }
-    }
-
-    @available(*, deprecated, renamed: "init(sublayerAssetPaths:references:payloads:)")
-    public init(
-        subLayerAssetPaths: [String],
-        references: [USDCompositionArc] = [],
-        payloads: [USDCompositionArc] = []
-    ) {
-        self.init(
-            sublayerAssetPaths: subLayerAssetPaths,
-            references: references,
-            payloads: payloads
-        )
-    }
-
     public var assetPaths: [String] {
         sublayerAssetPaths + references.map(\.assetPath) + payloads.map(\.assetPath)
     }

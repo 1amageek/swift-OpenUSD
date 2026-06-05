@@ -43,16 +43,6 @@ public struct USDZReader: USDSceneReader {
         return try readLayerGraph(defaultLayerPath: resolvedRootLayerPath, in: archive)
     }
 
-    @available(*, deprecated, message: "Use read(from:rootLayerPath:) instead.")
-    public func read(from data: Data, at rootPath: String) throws -> USDScene {
-        try read(from: data, rootLayerPath: rootPath)
-    }
-
-    @available(*, deprecated, message: "Use readLayerGraph(from:rootLayerPath:) instead.")
-    public func readLayerGraph(from data: Data, at rootPath: String) throws -> USDZLayerGraph {
-        try readLayerGraph(from: data, rootLayerPath: rootPath)
-    }
-
     private func readLayerGraph(defaultLayerPath: String, in archive: USDZArchive) throws -> USDZLayerGraph {
         let layers = try readResolvedLayers(defaultLayerPath: defaultLayerPath, in: archive)
         return USDZLayerGraph(

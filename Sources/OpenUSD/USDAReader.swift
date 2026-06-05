@@ -43,16 +43,6 @@ public struct USDAReader: USDSceneReader {
         return USDScene(defaultPrim: defaultPrim, metersPerUnit: metersPerUnit, upAxis: upAxis, meshes: meshes)
     }
 
-    @available(*, deprecated, renamed: "read(from:)")
-    public func read(_ text: String) throws -> USDScene {
-        try read(from: text)
-    }
-
-    @available(*, deprecated, renamed: "read(from:options:)")
-    public func read(_ text: String, options: USDReadingOptions) throws -> USDScene {
-        try read(from: text, options: options)
-    }
-
     public func readLayer(from text: String) throws -> USDALayer {
         try validateSignature(in: text)
         let metadataBody = try layerMetadataBody(in: text)
@@ -78,11 +68,6 @@ public struct USDAReader: USDSceneReader {
             composition: try parseLayerComposition(in: text, metadataBody: metadataBody),
             primTransforms: try parsePrimTransforms(in: text)
         )
-    }
-
-    @available(*, deprecated, renamed: "readLayer(from:)")
-    public func readLayer(_ text: String) throws -> USDALayer {
-        try readLayer(from: text)
     }
 
     public func readComposition(from data: Data) throws -> USDLayerComposition {
