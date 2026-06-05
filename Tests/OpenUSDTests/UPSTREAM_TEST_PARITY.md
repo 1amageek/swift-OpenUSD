@@ -1,0 +1,69 @@
+# OpenUSD Upstream Test Parity
+
+This file tracks the OpenUSD upstream tests that are relevant to the current
+pure Swift reader scope.
+
+The goal is full parity over time, but the current package is a reader-focused
+subset. Tests that require APIs not yet present in `swift-OpenUSD` are tracked
+as blocked instead of silently omitted.
+
+## Source
+
+| Field | Value |
+|---|---|
+| Repository | `https://github.com/PixarAnimationStudios/OpenUSD` |
+| Branch | `dev` |
+| Commit | `32ef0b2d9a301167dd1016e42cf1c0f5194ef0fa` |
+| Last verified | `2026-06-05` |
+
+## Status Values
+
+| Status | Meaning |
+|---|---|
+| `ported` | The upstream fixture or behavior has a Swift test in `OpenUSDTests`. |
+| `partial` | A subset is covered, but upstream assertions are not fully represented. |
+| `blocked` | The upstream test requires APIs or behavior outside the current reader surface. |
+| `pending` | The fixture or test intent is relevant and not yet ported. |
+
+## Reader Parity Flow
+
+```mermaid
+flowchart LR
+  A["OpenUSD upstream testenv"] --> B["file-format reader tests"]
+  A --> C["read-safety and corrupt asset tests"]
+  A --> D["Stage, Sdf editing, schemas, plugins"]
+  B --> E["Port to OpenUSDTests"]
+  C --> E
+  D --> F["Track as blocked until APIs exist"]
+```
+
+## Current Upstream Fixtures
+
+| Upstream testenv | Fixture | Status | Swift coverage |
+|---|---|---|---|
+| `pxr/usd/usd/testenv/testUsdFileFormats` | `ascii.usd` | `partial` | `openUSDFileFormatAsciiFixtureReadsLayerSpecs`; full spec parity is blocked by the current `USDALayer` surface |
+| `pxr/usd/usd/testenv/testUsdFileFormats` | `crate.usd` | `ported` | `openUSDFileFormatCrateFixtureReadsStructuralTables`, `openUSDFileFormatCrateFixtureKeepsLazyReadsStableAfterSourceDataMutation`, `openUSDFileFormatCrateFixtureReadsLayerSpecs` |
+| `pxr/usd/usd/testenv/testUsdUsdzFileFormat` | `single_usd.usdz`, `single_usda.usdz`, `single_usdc.usdz` | `ported` | Archive default layer tests and contained layer graph tests |
+| `pxr/usd/usd/testenv/testUsdUsdzFileFormat` | `anchored_refs*.usdz` | `ported` | `usdzReaderReadsAnchoredReferenceGraphsFromOpenUSDFixtures` and layer path tests |
+| `pxr/usd/usd/testenv/testUsdUsdzFileFormat` | `search_refs*.usdz` | `ported` | `usdzReaderReadsSearchReferenceGraphsFromOpenUSDFixtures` and layer path tests |
+| `pxr/usd/usd/testenv/testUsdUsdzFileFormat` | `nested_*refs*.usdz` | `ported` | `usdzReaderReadsNestedSubdirectoryReferenceGraphsFromOpenUSDFixtures` and specific layer path tests |
+| `pxr/usd/usd/testenv/testUsdUsdzFileFormat` | `first_file_not_usd.usdz` | `ported` | Typed rejection and archive entry tests |
+
+## Next Upstream Categories
+
+| Priority | Upstream area | Status | Next action |
+|---:|---|---|---|
+| 1 | `testUsdFileFormats` Python assertions | `partial` | Port remaining load/identifier assertions that map to reader APIs. |
+| 2 | `testUsdUsdzFileFormat` Python assertions | `partial` | Add tests for every currently copied package path and layer path edge. |
+| 3 | `testUsdReadOutOfBounds` | `pending` | Copy corrupt assets and assert typed bounds-checking errors. |
+| 4 | `testUsdUsdcBugGHSA02` | `pending` | Copy security regression fixtures and assert typed read failures. |
+| 5 | `testUsdUsdzBugGHSA01` | `pending` | Copy security regression fixtures and assert typed archive failures. |
+| 6 | `pxr/usd/sdf/testenv` file and value parsing subset | `pending` | Port USDA value parsing tests that map to `USDAReader` and `USDLayer`. |
+| 7 | Stage composition, Sdf editing, schema, plugin, imaging tests | `blocked` | Define public APIs first, then port relevant upstream suites. |
+
+## Completion Rules
+
+An upstream test is not considered complete until the Swift test checks the
+same reader-visible behavior against the same fixture or an explicitly recorded
+equivalent fixture. Unsupported APIs must remain listed in this file until the
+reader or model surface can express the behavior.

@@ -12,6 +12,7 @@ Source paths:
 
 | Local fixture | OpenUSD source path |
 |---|---|
+| `testUsdFileFormats/ascii.usd` | `pxr/usd/usd/testenv/testUsdFileFormats/ascii.usd` |
 | `testUsdFileFormats/crate.usd` | `pxr/usd/usd/testenv/testUsdFileFormats/crate.usd` |
 | `testUsdUsdzFileFormat/` | `pxr/usd/usd/testenv/testUsdUsdzFileFormat/` |
 

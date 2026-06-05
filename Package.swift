@@ -38,6 +38,7 @@ let package = Package(
         .testTarget(
             name: "OpenUSDTests",
             dependencies: ["OpenUSD", "OpenUSDC", "OpenUSDZ"],
+            exclude: ["UPSTREAM_TEST_PARITY.md"],
             resources: [
                 .copy("Fixtures"),
             ]

@@ -1318,6 +1318,21 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDFileFormatCrateFixtureKeepsLazyReadsStableAfterSourceDataMutation() throws {
+        var data = try openUSDFixture("testUsdFileFormats/crate.usd")
+        let crate = try USDCReader().readCrate(from: data)
+        let tokens = try crate.readTokens()
+        let paths = try crate.readPaths()
+        let specs = try crate.readSpecs()
+
+        data[0] = 0
+
+        #expect(try crate.readTokens() == tokens)
+        #expect(try crate.readPaths() == paths)
+        #expect(try crate.readSpecs() == specs)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDFileFormatCrateFixtureReadsLayerSpecs() throws {
         let data = try openUSDFixture("testUsdFileFormats/crate.usd")
 
@@ -1337,6 +1352,20 @@ struct OpenUSDTests {
         #expect(scope.specifier == .def)
         #expect(scope.typeName == "Scope")
         #expect(scope.fieldNames.contains("typeName"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func openUSDFileFormatAsciiFixtureReadsLayerSpecs() throws {
+        let data = try openUSDFixture("testUsdFileFormats/ascii.usd")
+
+        let layer = try USDAReader().readLayer(from: data)
+
+        #expect(layer.defaultPrim == nil)
+        #expect(layer.metersPerUnit == nil)
+        #expect(layer.upAxis == nil)
+        #expect(layer.composition.isEmpty)
+        #expect(layer.primTransforms.keys.sorted() == ["/AirConditioner", "/Scope"])
+        #expect(layer.primTransforms.values.allSatisfy { $0 == .identity })
     }
 
     @Test(.timeLimit(.minutes(1)))
