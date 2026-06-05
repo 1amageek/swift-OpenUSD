@@ -1,14 +1,14 @@
 import Foundation
 
-struct USDTransformMatrix4x4: Sendable, Equatable {
-    var values: [Double]
+public struct USDTransformMatrix4x4: Sendable, Equatable {
+    public var values: [Double]
 
-    init(values: [Double]) {
+    public init(values: [Double]) {
         precondition(values.count == 16)
         self.values = values
     }
 
-    static var identity: USDTransformMatrix4x4 {
+    public static var identity: USDTransformMatrix4x4 {
         USDTransformMatrix4x4(values: [
             1, 0, 0, 0,
             0, 1, 0, 0,
@@ -93,7 +93,7 @@ struct USDTransformMatrix4x4: Sendable, Equatable {
         return transform
     }
 
-    func concatenating(_ rhs: USDTransformMatrix4x4) -> USDTransformMatrix4x4 {
+    public func concatenating(_ rhs: USDTransformMatrix4x4) -> USDTransformMatrix4x4 {
         var output = [Double](repeating: 0, count: 16)
         for row in 0..<4 {
             for column in 0..<4 {
@@ -159,7 +159,7 @@ struct USDTransformMatrix4x4: Sendable, Equatable {
         return USDTransformMatrix4x4(values: inverse)
     }
 
-    func transform(_ point: USDPoint3D) throws -> USDPoint3D {
+    public func transform(_ point: USDPoint3D) throws -> USDPoint3D {
         let x = point.x * values[0] + point.y * values[4] + point.z * values[8] + values[12]
         let y = point.x * values[1] + point.y * values[5] + point.z * values[9] + values[13]
         let z = point.x * values[2] + point.y * values[6] + point.z * values[10] + values[14]
@@ -173,7 +173,7 @@ struct USDTransformMatrix4x4: Sendable, Equatable {
         return USDPoint3D(x: x / w, y: y / w, z: z / w)
     }
 
-    func transformNormal(_ normal: USDPoint3D) throws -> USDPoint3D {
+    public func transformNormal(_ normal: USDPoint3D) throws -> USDPoint3D {
         guard values[3] == 0, values[7] == 0, values[11] == 0 else {
             throw USDImportError.unsupportedFeature("USDA normal transforms require affine matrices.")
         }

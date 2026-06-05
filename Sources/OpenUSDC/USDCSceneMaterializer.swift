@@ -49,6 +49,35 @@ struct USDCSceneMaterializer {
         return USDScene(defaultPrim: defaultPrim, metersPerUnit: metersPerUnit, upAxis: upAxis, meshes: meshes)
     }
 
+    func readPrimTransforms() throws -> [String: USDTransformMatrix4x4] {
+        let tokens = try crate.readTokens()
+        let strings = try crate.readStrings()
+        let paths = try crate.readPaths()
+        let specs = try crate.readSpecs()
+        let fields = try crate.readFields()
+        let fieldSetIndexes = try crate.readFieldSetIndexes()
+        let valueDecoder = USDCCrateValueDecoder(crate: crate, tokens: tokens, strings: strings)
+        let specsByPath = try buildSpecsByPath(
+            specs: specs,
+            paths: paths,
+            fields: fields,
+            fieldSetIndexes: fieldSetIndexes,
+            tokens: tokens
+        )
+        var primTransforms: [String: USDTransformMatrix4x4] = [:]
+        for path in specsByPath.keys.sorted() where path != "/" {
+            guard specsByPath[path]?.specType == .prim else {
+                continue
+            }
+            primTransforms[path] = try worldTransform(
+                forPrimPath: path,
+                specsByPath: specsByPath,
+                valueDecoder: valueDecoder
+            ).usdTransformMatrix
+        }
+        return primTransforms
+    }
+
     private func buildSpecsByPath(
         specs: [USDCCrateSpec],
         paths: [String],

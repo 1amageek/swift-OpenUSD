@@ -182,6 +182,37 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func usdaLayerReaderPreservesPrimWorldTransforms() throws {
+        let data = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Scene"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def Xform "Scene"
+        {
+            double3 xformOp:translate = (10, 20, 30)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+
+            def "Instance"
+            {
+                double3 xformOp:translate = (1, 2, 3)
+                uniform token[] xformOpOrder = ["xformOp:translate"]
+            }
+        }
+        """.utf8)
+
+        let layer = try USDAReader().readLayer(from: data)
+        let sceneTransform = try #require(layer.primTransforms["/Scene"])
+        let instanceTransform = try #require(layer.primTransforms["/Scene/Instance"])
+
+        #expect(try sceneTransform.transform(USDPoint3D(x: 0, y: 0, z: 0)) == USDPoint3D(x: 10, y: 20, z: 30))
+        #expect(try instanceTransform.transform(USDPoint3D(x: 0, y: 0, z: 0)) == USDPoint3D(x: 11, y: 22, z: 33))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func generatedUSDCMeshFixtureMaterializesMeshExchangeScene() throws {
         let fixture = try generatedFixture("minimal_mesh.usdc")
 
@@ -277,6 +308,16 @@ struct OpenUSDTests {
         #expect(mesh.faceVertexCounts == [3])
         #expect(mesh.faceVertexIndices == [0, 1, 2])
         #expect(mesh.subdivisionScheme == "none")
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdcLayerReaderPreservesPrimWorldTransforms() throws {
+        let fixture = makeUSDCMeshSceneFixture(compressedXformOpOrder: true)
+
+        let layer = try USDCReader().readLayer(from: fixture)
+        let meshTransform = try #require(layer.primTransforms["/Triangle"])
+
+        #expect(try meshTransform.transform(USDPoint3D(x: 0, y: 0, z: 0)) == USDPoint3D(x: 2, y: 3, z: 4))
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -1662,6 +1703,41 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func usdzReaderAppliesReferenceSiteTransform() throws {
+        let root = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Scene"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def Xform "Scene" (
+            references = @./refs/model.usda@</Model>
+        )
+        {
+            double3 xformOp:translate = (10, 20, 30)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+        """.utf8)
+        let package = makeUSDZFixture(entries: [
+            ("root.usda", root),
+            ("refs/model.usda", makeUSDAMeshLayer(name: "Model")),
+        ], alignPayloads: true)
+
+        let scene = try USDZReader().read(from: package)
+        let mesh = try #require(scene.meshes.first)
+
+        #expect(mesh.name == "Scene")
+        #expect(mesh.primPath == "/Scene")
+        expectPointsApproximatelyEqual(mesh.points, [
+            USDPoint3D(x: 10, y: 20, z: 30),
+            USDPoint3D(x: 11, y: 20, z: 30),
+            USDPoint3D(x: 10, y: 21, z: 30),
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func usdzReaderIncludesReferenceTargetSubtreeMeshes() throws {
         let root = Data("""
         #usda 1.0
@@ -1770,6 +1846,41 @@ struct OpenUSDTests {
 
         #expect(scene.meshes.map(\.name) == ["PayloadChild"])
         #expect(scene.meshes.map(\.primPath) == ["/Scene/PayloadChild"])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdzReaderAppliesPayloadSiteTransform() throws {
+        let root = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Scene"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def Xform "Scene" (
+            payload = @./payloads/model.usda@</Model>
+        )
+        {
+            double3 xformOp:translate = (10, 20, 30)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+        """.utf8)
+        let package = makeUSDZFixture(entries: [
+            ("root.usda", root),
+            ("payloads/model.usda", makeUSDAMeshLayer(name: "Model")),
+        ], alignPayloads: true)
+
+        let scene = try USDZReader().read(from: package)
+        let mesh = try #require(scene.meshes.first)
+
+        #expect(mesh.name == "Scene")
+        #expect(mesh.primPath == "/Scene")
+        expectPointsApproximatelyEqual(mesh.points, [
+            USDPoint3D(x: 10, y: 20, z: 30),
+            USDPoint3D(x: 11, y: 20, z: 30),
+            USDPoint3D(x: 10, y: 21, z: 30),
+        ])
     }
 
     @Test(.timeLimit(.minutes(1)))

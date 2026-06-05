@@ -54,7 +54,8 @@ public struct USDAReader: USDSceneReader {
             defaultPrim: defaultPrim,
             metersPerUnit: metersPerUnit,
             upAxis: upAxis,
-            composition: try parseLayerComposition(in: text, metadataBody: metadataBody)
+            composition: try parseLayerComposition(in: text, metadataBody: metadataBody),
+            primTransforms: try parsePrimTransforms(in: text)
         )
     }
 
@@ -126,6 +127,35 @@ public struct USDAReader: USDSceneReader {
 
     private func parseMeshes(in text: String) throws -> [USDMesh] {
         try parseMeshes(in: text, inheritedTransform: .identity, parentPrimPath: "")
+    }
+
+    private func parsePrimTransforms(in text: String) throws -> [String: USDTransformMatrix4x4] {
+        try parsePrimTransforms(in: text, inheritedTransform: .identity, parentPrimPath: "")
+    }
+
+    private func parsePrimTransforms(
+        in text: String,
+        inheritedTransform: USDTransformMatrix4x4,
+        parentPrimPath: String
+    ) throws -> [String: USDTransformMatrix4x4] {
+        var primTransforms: [String: USDTransformMatrix4x4] = [:]
+        let prims = try parseDirectPrims(in: text)
+        for prim in prims {
+            let primPath = primPath(for: prim, parentPrimPath: parentPrimPath)
+            let directBody = try directAttributeText(from: prim.body)
+            let localTransform = try parseLocalTransform(in: directBody)
+            let primTransform = localTransform.resetsParentStack
+                ? localTransform.matrix
+                : localTransform.matrix.concatenating(inheritedTransform)
+            primTransforms[primPath] = primTransform
+            let childTransforms = try parsePrimTransforms(
+                in: prim.body,
+                inheritedTransform: primTransform,
+                parentPrimPath: primPath
+            )
+            primTransforms.merge(childTransforms) { _, new in new }
+        }
+        return primTransforms
     }
 
     private func parseMeshes(

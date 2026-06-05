@@ -9,6 +9,10 @@ struct USDCMatrix4x4: Sendable, Equatable {
         self.values = values
     }
 
+    var usdTransformMatrix: USDTransformMatrix4x4 {
+        USDTransformMatrix4x4(values: values)
+    }
+
     static var identity: USDCMatrix4x4 {
         USDCMatrix4x4(values: [
             1, 0, 0, 0,

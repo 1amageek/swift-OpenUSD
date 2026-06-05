@@ -5,17 +5,20 @@ public struct USDCLayer: Sendable, Equatable {
     public var metersPerUnit: Double?
     public var upAxis: USDUpAxis?
     public var specs: [USDCLayerSpec]
+    public var primTransforms: [String: USDTransformMatrix4x4]
 
     public init(
         defaultPrim: String? = nil,
         metersPerUnit: Double? = nil,
         upAxis: USDUpAxis? = nil,
-        specs: [USDCLayerSpec] = []
+        specs: [USDCLayerSpec] = [],
+        primTransforms: [String: USDTransformMatrix4x4] = [:]
     ) {
         self.defaultPrim = defaultPrim
         self.metersPerUnit = metersPerUnit
         self.upAxis = upAxis
         self.specs = specs
+        self.primTransforms = primTransforms
     }
 
     public var prims: [USDCLayerSpec] {

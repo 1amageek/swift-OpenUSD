@@ -13,7 +13,9 @@ public struct USDCReader: USDSceneReader {
     public func readLayer(from data: Data) throws -> USDCLayer {
         let crate = try readCrate(from: data)
         try crate.requireStructuralSections()
-        return try USDCLayerReader(crate: crate).readLayer()
+        var layer = try USDCLayerReader(crate: crate).readLayer()
+        layer.primTransforms = try USDCSceneMaterializer(crate: crate).readPrimTransforms()
+        return layer
     }
 
     public func read(from data: Data) throws -> USDScene {

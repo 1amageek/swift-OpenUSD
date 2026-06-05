@@ -133,8 +133,8 @@ public struct USDZReader: USDSceneReader {
 
     private func readResolvedScene(defaultLayerPath: String, in archive: USDZArchive) throws -> USDScene {
         let resolvedLayerInstances = try readResolvedLayerInstances(defaultLayerPath: defaultLayerPath, in: archive)
-        let meshes = resolvedLayerInstances.flatMap { layerInstance in
-            materializedMeshes(in: layerInstance)
+        let meshes = try resolvedLayerInstances.flatMap { layerInstance in
+            try materializedMeshes(in: layerInstance)
         }
         guard !meshes.isEmpty else {
             throw USDImportError.invalidData("USDZ scene contains no Mesh prims.")
@@ -158,6 +158,7 @@ public struct USDZReader: USDSceneReader {
             USDZPendingLayerInstance(
                 layerPath: defaultLayerPath,
                 sitePrimPath: nil as String?,
+                siteTransform: .identity,
                 targetPrimPath: nil as String?
             )
         ]
@@ -183,6 +184,7 @@ public struct USDZReader: USDSceneReader {
             resolvedLayerInstances.append(USDZResolvedLayerInstance(
                 layer: layer,
                 sitePrimPath: pendingLayerInstance.sitePrimPath,
+                siteTransform: pendingLayerInstance.siteTransform,
                 targetPrimPath: effectiveTargetPrimPath
             ))
             for assetPath in layer.composition.subLayerAssetPaths {
@@ -197,6 +199,7 @@ public struct USDZReader: USDSceneReader {
                 pendingLayerInstances.append(USDZPendingLayerInstance(
                     layerPath: resolvedLayerPath,
                     sitePrimPath: pendingLayerInstance.sitePrimPath,
+                    siteTransform: pendingLayerInstance.siteTransform,
                     targetPrimPath: effectiveTargetPrimPath
                 ))
             }
@@ -208,6 +211,8 @@ public struct USDZReader: USDSceneReader {
                 ) else {
                     continue
                 }
+                let arcSiteTransform = arc.sitePrimPath.flatMap { layer.primTransforms[$0] } ?? .identity
+                let composedSiteTransform = arcSiteTransform.concatenating(pendingLayerInstance.siteTransform)
                 guard let resolvedLayerPath = try archive.resolveLayerPath(
                     for: arc.assetPath,
                     referencedFrom: pendingLayerInstance.layerPath
@@ -219,6 +224,7 @@ public struct USDZReader: USDSceneReader {
                 pendingLayerInstances.append(USDZPendingLayerInstance(
                     layerPath: resolvedLayerPath,
                     sitePrimPath: composedSitePrimPath,
+                    siteTransform: composedSiteTransform,
                     targetPrimPath: arc.targetPrimPath
                 ))
             }
@@ -226,7 +232,7 @@ public struct USDZReader: USDSceneReader {
         return resolvedLayerInstances
     }
 
-    private func materializedMeshes(in layerInstance: USDZResolvedLayerInstance) -> [USDMesh] {
+    private func materializedMeshes(in layerInstance: USDZResolvedLayerInstance) throws -> [USDMesh] {
         let targetPrimPath = effectiveTargetPrimPath(
             targetPrimPath: layerInstance.targetPrimPath,
             sitePrimPath: layerInstance.sitePrimPath,
@@ -237,8 +243,13 @@ public struct USDZReader: USDSceneReader {
               let targetPrimPath else {
             return meshes
         }
-        return meshes.map { mesh in
-            rewriting(mesh, sourceTargetPrimPath: targetPrimPath, sitePrimPath: sitePrimPath)
+        return try meshes.map { mesh in
+            try rewriting(
+                mesh,
+                sourceTargetPrimPath: targetPrimPath,
+                sitePrimPath: sitePrimPath,
+                siteTransform: layerInstance.siteTransform
+            )
         }
     }
 
@@ -261,20 +272,63 @@ public struct USDZReader: USDSceneReader {
     private func rewriting(
         _ mesh: USDMesh,
         sourceTargetPrimPath: String,
-        sitePrimPath: String
-    ) -> USDMesh {
-        guard let primPath = mesh.primPath,
-              let rewrittenPrimPath = rewrittenPrimPath(
-                  primPath,
-                  replacing: sourceTargetPrimPath,
-                  with: sitePrimPath
-              ) else {
-            return mesh
-        }
+        sitePrimPath: String,
+        siteTransform: USDTransformMatrix4x4
+    ) throws -> USDMesh {
         var rewrittenMesh = mesh
-        rewrittenMesh.primPath = rewrittenPrimPath
-        rewrittenMesh.name = lastPrimName(in: rewrittenPrimPath) ?? rewrittenMesh.name
+        if let primPath = mesh.primPath,
+           let rewrittenPrimPath = rewrittenPrimPath(
+               primPath,
+               replacing: sourceTargetPrimPath,
+               with: sitePrimPath
+           ) {
+            rewrittenMesh.primPath = rewrittenPrimPath
+            rewrittenMesh.name = lastPrimName(in: rewrittenPrimPath) ?? rewrittenMesh.name
+        }
+        rewrittenMesh.points = try rewrittenMesh.points.map { try siteTransform.transform($0) }
+        rewrittenMesh.normals = try rewrittenMesh.normals.map { try siteTransform.transformNormal($0) }
+        rewrittenMesh.extent = try rewrittenExtent(rewrittenMesh.extent, applying: siteTransform)
         return rewrittenMesh
+    }
+
+    private func rewrittenExtent(
+        _ extent: [USDPoint3D]?,
+        applying transform: USDTransformMatrix4x4
+    ) throws -> [USDPoint3D]? {
+        guard let extent else {
+            return nil
+        }
+        guard extent.count == 2 else {
+            return try extent.map { try transform.transform($0) }
+        }
+        let minimum = extent[0]
+        let maximum = extent[1]
+        let corners = [
+            USDPoint3D(x: minimum.x, y: minimum.y, z: minimum.z),
+            USDPoint3D(x: maximum.x, y: minimum.y, z: minimum.z),
+            USDPoint3D(x: minimum.x, y: maximum.y, z: minimum.z),
+            USDPoint3D(x: minimum.x, y: minimum.y, z: maximum.z),
+            USDPoint3D(x: maximum.x, y: maximum.y, z: minimum.z),
+            USDPoint3D(x: maximum.x, y: minimum.y, z: maximum.z),
+            USDPoint3D(x: minimum.x, y: maximum.y, z: maximum.z),
+            USDPoint3D(x: maximum.x, y: maximum.y, z: maximum.z),
+        ]
+        let transformedCorners = try corners.map { try transform.transform($0) }
+        let xs = transformedCorners.map(\.x)
+        let ys = transformedCorners.map(\.y)
+        let zs = transformedCorners.map(\.z)
+        guard let minX = xs.min(),
+              let minY = ys.min(),
+              let minZ = zs.min(),
+              let maxX = xs.max(),
+              let maxY = ys.max(),
+              let maxZ = zs.max() else {
+            return nil
+        }
+        return [
+            USDPoint3D(x: minX, y: minY, z: minZ),
+            USDPoint3D(x: maxX, y: maxY, z: maxZ),
+        ]
     }
 
     private func composedSitePrimPath(
@@ -395,6 +449,7 @@ public struct USDZReader: USDSceneReader {
             metersPerUnit: layer.metersPerUnit,
             upAxis: layer.upAxis,
             composition: layer.composition,
+            primTransforms: layer.primTransforms,
             scene: scene
         )
     }
@@ -411,6 +466,7 @@ public struct USDZReader: USDSceneReader {
             metersPerUnit: layer.metersPerUnit,
             upAxis: layer.upAxis,
             composition: layer.composition,
+            primTransforms: layer.primTransforms,
             scene: scene
         )
     }
@@ -444,18 +500,21 @@ private struct USDZResolvedLayer: Sendable {
     var metersPerUnit: Double?
     var upAxis: USDUpAxis?
     var composition: USDLayerComposition
+    var primTransforms: [String: USDTransformMatrix4x4]
     var scene: USDScene?
 }
 
 private struct USDZResolvedLayerInstance: Sendable {
     var layer: USDZResolvedLayer
     var sitePrimPath: String?
+    var siteTransform: USDTransformMatrix4x4
     var targetPrimPath: String?
 }
 
 private struct USDZPendingLayerInstance: Sendable {
     var layerPath: String
     var sitePrimPath: String?
+    var siteTransform: USDTransformMatrix4x4
     var targetPrimPath: String?
 }
 
