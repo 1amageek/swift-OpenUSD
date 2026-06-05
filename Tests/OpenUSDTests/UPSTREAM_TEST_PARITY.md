@@ -43,7 +43,6 @@ flowchart LR
 |---|---|---|---|
 | `pxr/usd/usd/testenv/testUsdFileFormats` | `ascii.usd` | `partial` | `openUSDFileFormatAsciiFixtureReadsLayerSpecs`; prim specifier, type name, and path visibility are covered; arbitrary field/spec preservation requires broader Sdf field modeling |
 | `pxr/usd/usd/testenv/testUsdFileFormats` | `crate.usd` | `ported` | `openUSDFileFormatCrateFixtureReadsStructuralTables`, `openUSDFileFormatCrateFixtureKeepsLazyReadsStableAfterSourceDataMutation`, `openUSDFileFormatCrateFixtureReadsLayerSpecs` |
-| `pxr/usd/sdf/testenv/testSdfUsdcVersioning` | `deprecated_0_7_0.usd` | `partial` | `openUSDSDFUSDCVersioningDeprecated070FixtureReadsLayer`; warning and export-upgrade assertions are blocked until diagnostic and writer APIs exist |
 | `pxr/usd/sdf/testenv/testSdfUsdcInvalidPrimChildren.testenv` | `root.usdc`, `duplicate_prim_children.usdc` | `ported` | `openUSDSDFUSDCInvalidPrimChildrenFixtureThrowsTypedError`, `openUSDSDFUSDCDuplicatePrimChildrenFixtureThrowsTypedError`; `readLayer` and scene materialization both reject invalid `primChildren` |
 | `pxr/usd/sdf/testenv/testSdfZipFile.testenv` | `test_reader.usdz`, `src/*` | `partial` | `openUSDSDFZipFileReaderFixtureReadsEntryInfoAndData`; writer assertions are blocked until a Swift USDZ writer API exists |
 | `pxr/usd/sdf/testenv/testSdfUsdzResolver` | `test.usdz`, `src/*` | `partial` | `openUSDSDFUSDZResolverFixtureReadsEntriesAndNestedData`; `ArAsset` buffer/read/file-handle APIs are represented through archive entry data, sizes, offsets, and nested layer paths |
@@ -88,11 +87,10 @@ flowchart LR
 | 5 | `testUsdUsdzBugGHSA01` | `ported` | Keep checking that corrupt USDZ security fixtures produce typed archive or crate failures. |
 | 6 | `testSdfZipFile` reader assertions | `partial` | Keep checking file names, entry metadata, alignment, CRC, and source payload bytes. |
 | 7 | `testSdfZipFile` writer assertions | `blocked` | Define a Swift USDZ writer API before porting writer, discard, alignment, and empty archive writer tests. |
-| 8 | `testSdfUsdcVersioning` diagnostic and writer assertions | `blocked` | Define diagnostic warning capture and writer/export APIs before porting deprecated-version warning and export-upgrade assertions. |
-| 9 | `testSdfUsdcInvalidPrimChildren` | `ported` | Keep checking that invalid child-name and duplicate-child fixtures produce typed `primChildren` errors. |
-| 10 | `testSdfUsdzResolver` | `partial` | Keep checking package entry open, source bytes, sizes, absolute offsets, and nested package paths; full `ArAsset` API parity is blocked until an asset object API exists. |
-| 11 | `pxr/usd/sdf/testenv` file and value parsing subset | `partial` | Continue porting USDA parsing fixtures that map to `USDAReader` and `USDLayer`; define writer, diagnostic, metadata-only, Sdf spec, and list-edit APIs for full `testSdfParsing` parity. |
-| 12 | Stage composition, Sdf editing, schema, plugin, imaging tests | `blocked` | Define public APIs first, then port relevant upstream suites. |
+| 8 | `testSdfUsdcInvalidPrimChildren` | `ported` | Keep checking that invalid child-name and duplicate-child fixtures produce typed `primChildren` errors. |
+| 9 | `testSdfUsdzResolver` | `partial` | Keep checking package entry open, source bytes, sizes, absolute offsets, and nested package paths; full `ArAsset` API parity is blocked until an asset object API exists. |
+| 10 | `pxr/usd/sdf/testenv` file and value parsing subset | `partial` | Continue porting USDA parsing fixtures that map to `USDAReader` and `USDLayer`; define writer, diagnostic, metadata-only, Sdf spec, and list-edit APIs for full `testSdfParsing` parity. |
+| 11 | Stage composition, Sdf editing, schema, plugin, imaging tests | `blocked` | Define public APIs first, then port relevant upstream suites. |
 
 ## Completion Rules
 

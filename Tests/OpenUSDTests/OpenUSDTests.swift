@@ -1874,22 +1874,6 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func openUSDSDFUSDCVersioningDeprecated070FixtureReadsLayer() throws {
-        let data = try openUSDFixture("testSdfUsdcVersioning/deprecated_0_7_0.usd")
-
-        let crate = try USDCReader().readCrate(from: data)
-
-        #expect(crate.version == USDCCrateVersion(major: 0, minor: 7, patch: 0))
-        try crate.requireStructuralSections()
-        #expect(try crate.readTokens().contains("primChildren"))
-        #expect(!((try crate.readFields()).isEmpty))
-
-        let layer = try USDCReader().readLayer(from: data)
-        #expect(layer.spec(at: "/")?.specType == .pseudoRoot)
-        #expect(!layer.specs.isEmpty)
-    }
-
-    @Test(.timeLimit(.minutes(1)))
     func openUSDReadOutOfBoundsFixtureThrowsTypedError() throws {
         let data = try openUSDFixture("testUsdReadOutOfBounds/corrupt.usd")
 

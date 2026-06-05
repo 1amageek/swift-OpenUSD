@@ -14,7 +14,6 @@ Source paths:
 |---|---|
 | `testUsdFileFormats/ascii.usd` | `pxr/usd/usd/testenv/testUsdFileFormats/ascii.usd` |
 | `testUsdFileFormats/crate.usd` | `pxr/usd/usd/testenv/testUsdFileFormats/crate.usd` |
-| `testSdfUsdcVersioning/deprecated_0_7_0.usd` | `pxr/usd/sdf/testenv/testSdfUsdcVersioning/deprecated_0_7_0.usd` |
 | `testSdfUsdcInvalidPrimChildren.testenv/root.usdc` | `pxr/usd/sdf/testenv/testSdfUsdcInvalidPrimChildren.testenv/root.usdc` |
 | `testSdfUsdcInvalidPrimChildren.testenv/duplicate_prim_children.usdc` | `pxr/usd/sdf/testenv/testSdfUsdcInvalidPrimChildren.testenv/duplicate_prim_children.usdc` |
 | `testSdfZipFile.testenv/` | `pxr/usd/sdf/testenv/testSdfZipFile.testenv/` |
