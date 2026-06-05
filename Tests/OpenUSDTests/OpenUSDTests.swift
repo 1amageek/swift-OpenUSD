@@ -1849,6 +1849,29 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingInvalidTypeNameFixtureReadsUnknownPropertyTypes() throws {
+        let layer = try USDAReader().readLayer(from: openUSDFixture("testSdfParsing.testenv/178_invalid_typeName.usda"))
+
+        #expect(layer.prims.map(\.path) == ["/foo"])
+        let foo = try #require(layer.spec(at: "/foo"))
+        #expect(foo.specifier == .def)
+        #expect(foo.typeName == "MfScope")
+        #expect(foo.fieldNames.contains("properties"))
+
+        let unknownArrayValue = try #require(layer.spec(at: "/foo.a1"))
+        #expect(unknownArrayValue.specType == .attribute)
+        #expect(unknownArrayValue.typeName == "foobar")
+        #expect(unknownArrayValue.fieldNames.contains("typeName"))
+        #expect(unknownArrayValue.fieldNames.contains("default"))
+
+        let namespacedType = try #require(layer.spec(at: "/foo.a2"))
+        #expect(namespacedType.specType == .attribute)
+        #expect(namespacedType.typeName == "Some::EnumValue")
+        #expect(namespacedType.fieldNames.contains("typeName"))
+        #expect(namespacedType.fieldNames.contains("default"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingNamespacedPropertySpecsReadLayer() throws {
         let data = try openUSDFixture("testSdfParsing.testenv/185_namespaced_properties.usda")
 

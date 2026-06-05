@@ -244,7 +244,7 @@ public struct USDAReader: USDSceneReader {
         } else {
             baseTypeName = authoredTypeName
         }
-        guard isValidUSDIdentifier(baseTypeName) else {
+        guard isValidUSDPropertyTypeName(baseTypeName) else {
             throw USDImportError.invalidData("USDA property type name \(baseTypeName) is not a valid identifier.")
         }
         var valueCursor = cursor
@@ -325,10 +325,66 @@ public struct USDAReader: USDSceneReader {
                     in: text
                 )
             }
-        } else if text[cursor] == "[" {
+        } else if text[cursor] == "[", Self.knownScalarValueTypes.contains(typeName) {
             throw USDImportError.invalidData("USDA \(typeName) attribute cannot use a shaped list value.")
         }
     }
+
+    private static let knownScalarValueTypes: Set<String> = [
+        "asset",
+        "bool",
+        "color3d",
+        "color3f",
+        "color3h",
+        "color4d",
+        "color4f",
+        "color4h",
+        "double",
+        "double2",
+        "double3",
+        "double4",
+        "float",
+        "float2",
+        "float3",
+        "float4",
+        "frame4d",
+        "half",
+        "half2",
+        "half3",
+        "half4",
+        "int",
+        "int64",
+        "int2",
+        "int3",
+        "int4",
+        "matrix2d",
+        "matrix3d",
+        "matrix4d",
+        "normal3d",
+        "normal3f",
+        "normal3h",
+        "point3d",
+        "point3f",
+        "point3h",
+        "quatd",
+        "quatf",
+        "quath",
+        "string",
+        "texCoord2d",
+        "texCoord2f",
+        "texCoord2h",
+        "texCoord3d",
+        "texCoord3f",
+        "texCoord3h",
+        "timecode",
+        "token",
+        "uchar",
+        "uint",
+        "uint64",
+        "vector3d",
+        "vector3f",
+        "vector3h",
+    ]
 
     private func validateTargetListEditValue(
         qualifiers: [String],
@@ -1832,6 +1888,11 @@ public struct USDAReader: USDSceneReader {
     }
 
     private func isValidUSDIdentifier(_ name: String) -> Bool {
+        let substring: Substring = name[...]
+        return isValidUSDIdentifier(substring)
+    }
+
+    private func isValidUSDIdentifier(_ name: Substring) -> Bool {
         guard let firstScalar = name.unicodeScalars.first else {
             return false
         }
@@ -1844,6 +1905,45 @@ public struct USDAReader: USDSceneReader {
             }
         }
         return true
+    }
+
+    private func isValidUSDPropertyTypeName(_ name: String) -> Bool {
+        var componentStart = name.startIndex
+        var cursor = name.startIndex
+        var hasNamespaceSeparator = false
+
+        while cursor < name.endIndex {
+            if name[cursor] == ":" {
+                guard componentStart < cursor else {
+                    return false
+                }
+                guard isValidUSDIdentifier(name[componentStart..<cursor]) else {
+                    return false
+                }
+                let next = name.index(after: cursor)
+                guard next < name.endIndex, name[next] == ":" else {
+                    return false
+                }
+                let afterSeparator = name.index(after: next)
+                guard afterSeparator < name.endIndex else {
+                    return false
+                }
+                hasNamespaceSeparator = true
+                componentStart = afterSeparator
+                cursor = afterSeparator
+            } else {
+                cursor = name.index(after: cursor)
+            }
+        }
+
+        guard componentStart < name.endIndex else {
+            return false
+        }
+        let finalComponent = name[componentStart..<name.endIndex]
+        if hasNamespaceSeparator {
+            return isValidUSDIdentifier(finalComponent)
+        }
+        return isValidUSDIdentifier(name)
     }
 
     private func primDeclarationKeyword(at index: String.Index, in text: String) -> String? {

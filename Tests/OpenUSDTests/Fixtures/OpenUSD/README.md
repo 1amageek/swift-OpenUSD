@@ -94,6 +94,7 @@ Source paths:
 | `testSdfParsing.testenv/155_bad_relationship_noLoadHint.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/155_bad_relationship_noLoadHint.usda` |
 | `testSdfParsing.testenv/176_empty_lists.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/176_empty_lists.usda` |
 | `testSdfParsing.testenv/177_bad_empty_lists.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/177_bad_empty_lists.usda` |
+| `testSdfParsing.testenv/178_invalid_typeName.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/178_invalid_typeName.usda` |
 | `testSdfParsing.testenv/179_bad_shaped_attr_dimensions1.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/179_bad_shaped_attr_dimensions1.usda` |
 | `testSdfParsing.testenv/184_def_AnyType.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/184_def_AnyType.usda` |
 | `testSdfParsing.testenv/185_namespaced_properties.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/185_namespaced_properties.usda` |
