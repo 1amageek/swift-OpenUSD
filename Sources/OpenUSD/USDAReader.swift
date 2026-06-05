@@ -225,7 +225,7 @@ public struct USDAReader: USDSceneReader {
         options: USDSceneReadingOptions,
         transform: USDTransformMatrix4x4
     ) throws -> USDMesh {
-        let points = try parsePointArray(named: "points", in: directBody, timeCode: options.timeCode)
+        let points = try parsePointArray(named: "points", in: directBody, options: options)
         let transformedPoints = try points.map { try transform.transform($0) }
         let counts = try parseIntArray(named: "faceVertexCounts", in: directBody)
         let indices = try parseIntArray(named: "faceVertexIndices", in: directBody)
@@ -718,12 +718,16 @@ public struct USDAReader: USDSceneReader {
     }
 
     private func parsePointArray(named name: String, in text: String) throws -> [USDPoint3D] {
-        try parsePointArray(named: name, in: text, timeCode: nil)
+        try parsePointArray(named: name, in: text, options: .default)
     }
 
-    private func parsePointArray(named name: String, in text: String, timeCode: Double?) throws -> [USDPoint3D] {
+    private func parsePointArray(
+        named name: String,
+        in text: String,
+        options: USDSceneReadingOptions
+    ) throws -> [USDPoint3D] {
         if let timeSamplesBody = try optionalTimeSamplesBody(named: name, in: text),
-           let sampledPoints = try parsePointTimeSamples(named: name, in: timeSamplesBody, timeCode: timeCode) {
+           let sampledPoints = try parsePointTimeSamples(named: name, in: timeSamplesBody, options: options) {
             return sampledPoints
         }
         let body = try bracketArrayBody(named: name, in: text)
@@ -875,29 +879,83 @@ public struct USDAReader: USDSceneReader {
         }
     }
 
-    private func parsePointTimeSamples(named name: String, in body: String, timeCode: Double?) throws -> [USDPoint3D]? {
+    private func parsePointTimeSamples(
+        named name: String,
+        in body: String,
+        options: USDSceneReadingOptions
+    ) throws -> [USDPoint3D]? {
         let entries = try parseTimeSampleEntries(in: body)
         guard !entries.isEmpty else {
             throw USDImportError.invalidData("USDA \(name).timeSamples contains no samples.")
         }
-        var firstUnblockedSample: [USDPoint3D]?
-        var exactSample: [USDPoint3D]?
+        var samples: [(timeCode: Double, points: [USDPoint3D])] = []
         for entry in entries {
             guard entry.value != "None" else {
+                if let timeCode = options.timeCode, entry.timeCode == timeCode {
+                    return nil
+                }
                 continue
             }
             let sample = try parsePointTuples(named: "\(name).timeSamples", in: entry.value)
-            if firstUnblockedSample == nil {
-                firstUnblockedSample = sample
+            samples.append((timeCode: entry.timeCode, points: sample))
+        }
+        samples.sort { lhs, rhs in
+            lhs.timeCode < rhs.timeCode
+        }
+        guard let timeCode = options.timeCode else {
+            return samples.first?.points
+        }
+        return interpolatedPointSample(
+            samples,
+            at: timeCode,
+            interpolation: options.timeSampleInterpolation
+        )
+    }
+
+    private func interpolatedPointSample(
+        _ samples: [(timeCode: Double, points: [USDPoint3D])],
+        at timeCode: Double,
+        interpolation: USDTimeSampleInterpolation
+    ) -> [USDPoint3D]? {
+        var lowerSample: (timeCode: Double, points: [USDPoint3D])?
+        var upperSample: (timeCode: Double, points: [USDPoint3D])?
+        for sample in samples {
+            if sample.timeCode == timeCode {
+                return sample.points
             }
-            if let timeCode, entry.timeCode == timeCode {
-                exactSample = sample
+            if sample.timeCode < timeCode {
+                lowerSample = sample
+            } else if sample.timeCode > timeCode {
+                upperSample = sample
+                break
             }
         }
-        if timeCode != nil {
-            return exactSample
+        switch interpolation {
+        case .held:
+            return lowerSample?.points ?? upperSample?.points
+        case .linear:
+            guard let lowerSample else {
+                return upperSample?.points
+            }
+            guard let upperSample else {
+                return lowerSample.points
+            }
+            guard upperSample.timeCode > lowerSample.timeCode,
+                  lowerSample.points.count == upperSample.points.count else {
+                return lowerSample.points
+            }
+            let fraction = (timeCode - lowerSample.timeCode) / (upperSample.timeCode - lowerSample.timeCode)
+            guard fraction.isFinite else {
+                return lowerSample.points
+            }
+            return zip(lowerSample.points, upperSample.points).map { lower, upper in
+                USDPoint3D(
+                    x: lower.x + (upper.x - lower.x) * fraction,
+                    y: lower.y + (upper.y - lower.y) * fraction,
+                    z: lower.z + (upper.z - lower.z) * fraction
+                )
+            }
         }
-        return firstUnblockedSample
     }
 
     private func parseTimeSampleEntries(in body: String) throws -> [(timeCode: Double, value: String)] {

@@ -1181,6 +1181,37 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func generatedUSDATimeSampledMeshFixtureInterpolatesRequestedSnapshot() throws {
+        let fixture = try generatedFixture("animated_mesh.usda")
+
+        let scene = try USDAReader().read(from: fixture, options: USDSceneReadingOptions(timeCode: 1.5))
+
+        let mesh = try #require(scene.meshes.first)
+        #expect(mesh.points == [
+            USDPoint3D(x: 0, y: 0, z: 0.5),
+            USDPoint3D(x: 1, y: 0, z: 0.5),
+            USDPoint3D(x: 0, y: 1, z: 0.5),
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func generatedUSDATimeSampledMeshFixtureCanUseHeldInterpolation() throws {
+        let fixture = try generatedFixture("animated_mesh.usda")
+
+        let scene = try USDAReader().read(
+            from: fixture,
+            options: USDSceneReadingOptions(timeCode: 1.5, timeSampleInterpolation: .held)
+        )
+
+        let mesh = try #require(scene.meshes.first)
+        #expect(mesh.points == [
+            USDPoint3D(x: 0, y: 0, z: 0),
+            USDPoint3D(x: 1, y: 0, z: 0),
+            USDPoint3D(x: 0, y: 1, z: 0),
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func generatedUSDCTimeSampledMeshFixtureUsesRequestedSnapshot() throws {
         let fixture = try generatedFixture("animated_mesh.usdc")
 
@@ -1191,6 +1222,20 @@ struct OpenUSDTests {
             USDPoint3D(x: 0, y: 0, z: 1),
             USDPoint3D(x: 1, y: 0, z: 1),
             USDPoint3D(x: 0, y: 1, z: 1),
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func generatedUSDCTimeSampledMeshFixtureInterpolatesRequestedSnapshot() throws {
+        let fixture = try generatedFixture("animated_mesh.usdc")
+
+        let scene = try USDCReader().read(from: fixture, options: USDSceneReadingOptions(timeCode: 1.5))
+
+        let mesh = try #require(scene.meshes.first)
+        #expect(mesh.points == [
+            USDPoint3D(x: 0, y: 0, z: 0.5),
+            USDPoint3D(x: 1, y: 0, z: 0.5),
+            USDPoint3D(x: 0, y: 1, z: 0.5),
         ])
     }
 
@@ -1833,6 +1878,58 @@ struct OpenUSDTests {
             USDPoint3D(x: 0, y: 0, z: 1),
             USDPoint3D(x: 1, y: 0, z: 1),
             USDPoint3D(x: 0, y: 1, z: 1),
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdzReaderInterpolatesReferenceLayerOffsetTimeSamples() throws {
+        let root = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Scene"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def Xform "Scene" (
+            references = @./refs/animated.usda@</Triangle> (offset = 10; scale = 2)
+        )
+        {
+        }
+        """.utf8)
+        let animatedLayer = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Triangle"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def Mesh "Triangle"
+        {
+            point3f[] points.timeSamples = {
+                1: [(0, 0, 0), (1, 0, 0), (0, 1, 0)],
+                2: [(0, 0, 1), (1, 0, 1), (0, 1, 1)]
+            }
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            uniform token subdivisionScheme = "none"
+        }
+        """.utf8)
+        let package = makeUSDZFixture(entries: [
+            ("root.usda", root),
+            ("refs/animated.usda", animatedLayer),
+        ], alignPayloads: true)
+
+        let scene = try USDZReader().read(from: package, options: USDSceneReadingOptions(timeCode: 13))
+        let mesh = try #require(scene.meshes.first)
+
+        #expect(mesh.name == "Scene")
+        #expect(mesh.primPath == "/Scene")
+        #expect(mesh.points == [
+            USDPoint3D(x: 0, y: 0, z: 0.5),
+            USDPoint3D(x: 1, y: 0, z: 0.5),
+            USDPoint3D(x: 0, y: 1, z: 0.5),
         ])
     }
 

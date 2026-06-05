@@ -1,6 +1,11 @@
 import OpenUSD
 import Foundation
 
+private struct USDCTimeSampleValueRep {
+    var timeCode: Double
+    var valueRep: USDCCrateValueRep?
+}
+
 struct USDCCrateValueDecoder {
     private let crate: USDCCrateFile
     private let tokens: [String]
@@ -123,6 +128,97 @@ struct USDCCrateValueDecoder {
     }
 
     func readTimeSampleValueRep(_ valueRep: USDCCrateValueRep, at timeCode: Double?) throws -> USDCCrateValueRep? {
+        let samples = try readTimeSampleValueReps(valueRep, at: timeCode)
+        guard let timeCode else {
+            return samples.first { $0.valueRep != nil }?.valueRep
+        }
+        var lowerSample: USDCTimeSampleValueRep?
+        var upperSample: USDCTimeSampleValueRep?
+        for sample in samples {
+            if sample.timeCode == timeCode {
+                return sample.valueRep
+            }
+            guard sample.valueRep != nil else {
+                continue
+            }
+            if sample.timeCode < timeCode {
+                lowerSample = sample
+            } else if sample.timeCode > timeCode {
+                upperSample = sample
+                break
+            }
+        }
+        return lowerSample?.valueRep ?? upperSample?.valueRep
+    }
+
+    func readPointTimeSampleArray(
+        _ valueRep: USDCCrateValueRep,
+        at timeCode: Double?,
+        interpolation: USDTimeSampleInterpolation
+    ) throws -> [USDPoint3D]? {
+        let samples = try readTimeSampleValueReps(valueRep, at: timeCode)
+        guard let timeCode else {
+            guard let firstSample = samples.first(where: { $0.valueRep != nil })?.valueRep else {
+                return nil
+            }
+            return try readPointArray(firstSample)
+        }
+        var lowerSample: USDCTimeSampleValueRep?
+        var upperSample: USDCTimeSampleValueRep?
+        for sample in samples {
+            if sample.timeCode == timeCode {
+                return try sample.valueRep.map { try readPointArray($0) }
+            }
+            guard sample.valueRep != nil else {
+                continue
+            }
+            if sample.timeCode < timeCode {
+                lowerSample = sample
+            } else if sample.timeCode > timeCode {
+                upperSample = sample
+                break
+            }
+        }
+        switch interpolation {
+        case .held:
+            guard let sampleRep = lowerSample?.valueRep ?? upperSample?.valueRep else {
+                return nil
+            }
+            return try readPointArray(sampleRep)
+        case .linear:
+            guard let lowerSample, let lowerRep = lowerSample.valueRep else {
+                guard let upperRep = upperSample?.valueRep else {
+                    return nil
+                }
+                return try readPointArray(upperRep)
+            }
+            guard let upperSample, let upperRep = upperSample.valueRep else {
+                return try readPointArray(lowerRep)
+            }
+            let lowerPoints = try readPointArray(lowerRep)
+            let upperPoints = try readPointArray(upperRep)
+            guard upperSample.timeCode > lowerSample.timeCode,
+                  lowerPoints.count == upperPoints.count else {
+                return lowerPoints
+            }
+            let fraction = (timeCode - lowerSample.timeCode) / (upperSample.timeCode - lowerSample.timeCode)
+            guard fraction.isFinite else {
+                return lowerPoints
+            }
+            return zip(lowerPoints, upperPoints).map { lower, upper in
+                USDPoint3D(
+                    x: lower.x + (upper.x - lower.x) * fraction,
+                    y: lower.y + (upper.y - lower.y) * fraction,
+                    z: lower.z + (upper.z - lower.z) * fraction
+                )
+            }
+        }
+    }
+
+    private func readTimeSampleValueReps(
+        _ valueRep: USDCCrateValueRep,
+        at timeCode: Double?
+    ) throws -> [USDCTimeSampleValueRep] {
         guard valueRep.type == .timeSamples, !valueRep.isArray, !valueRep.isInlined else {
             throw USDImportError.invalidData("USDC timeSamples field is malformed.")
         }
@@ -146,25 +242,20 @@ struct USDCCrateValueDecoder {
         guard times.count == valueCount else {
             throw USDImportError.invalidData("USDC timeSamples times and values have different counts.")
         }
-        var firstUnblockedSampleRep: USDCCrateValueRep?
-        var exactSampleRep: USDCCrateValueRep?
+        var samples: [USDCTimeSampleValueRep] = []
+        samples.reserveCapacity(valueCount)
         for index in 0..<valueCount {
             let sampleCursor = cursor + index * MemoryLayout<UInt64>.size
             let sampleRep = USDCCrateValueRep(rawValue: try crate.readFileUInt64(at: sampleCursor))
-            guard !isBlockedValue(sampleRep) else {
-                continue
-            }
-            if firstUnblockedSampleRep == nil {
-                firstUnblockedSampleRep = sampleRep
-            }
-            if let timeCode, times[index] == timeCode {
-                exactSampleRep = sampleRep
-            }
+            samples.append(USDCTimeSampleValueRep(
+                timeCode: times[index],
+                valueRep: isBlockedValue(sampleRep) ? nil : sampleRep
+            ))
         }
-        if timeCode != nil {
-            return exactSampleRep
+        samples.sort { lhs, rhs in
+            lhs.timeCode < rhs.timeCode
         }
-        return firstUnblockedSampleRep
+        return samples
     }
 
     func isBlockedValue(_ valueRep: USDCCrateValueRep) -> Bool {

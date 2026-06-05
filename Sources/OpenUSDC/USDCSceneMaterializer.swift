@@ -382,11 +382,10 @@ struct USDCSceneMaterializer {
     ) throws -> [USDPoint3D] {
         guard
             let record = attributeRecords[name],
-            let defaultValue = try resolvedValueRep(record: record, valueDecoder: valueDecoder)
+            let points = try resolvedPointArray(record: record, valueDecoder: valueDecoder)
         else {
             throw USDImportError.missingRequiredField(name)
         }
-        let points = try valueDecoder.readPointArray(defaultValue)
         guard !points.isEmpty else {
             throw USDImportError.invalidData("USDC Mesh \(name) contains no points.")
         }
@@ -400,8 +399,27 @@ struct USDCSceneMaterializer {
     ) throws -> [USDPoint3D]? {
         guard
             let record = attributeRecords[name],
-            let defaultValue = try resolvedValueRep(record: record, valueDecoder: valueDecoder)
+            let points = try resolvedPointArray(record: record, valueDecoder: valueDecoder)
         else {
+            return nil
+        }
+        return points
+    }
+
+    private func resolvedPointArray(
+        record: USDCSpecRecord,
+        valueDecoder: USDCCrateValueDecoder
+    ) throws -> [USDPoint3D]? {
+        if let timeSamples = record.fields["timeSamples"],
+           options.timeCode != nil,
+           let points = try valueDecoder.readPointTimeSampleArray(
+               timeSamples,
+               at: options.timeCode,
+               interpolation: options.timeSampleInterpolation
+           ) {
+            return points
+        }
+        guard let defaultValue = try resolvedValueRep(record: record, valueDecoder: valueDecoder) else {
             return nil
         }
         return try valueDecoder.readPointArray(defaultValue)
