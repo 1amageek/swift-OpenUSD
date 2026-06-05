@@ -31,6 +31,7 @@ public struct USDAReader: USDSceneReader {
         try validateTopLevelSyntax(in: text)
         let metadataBody = try layerMetadataBody(in: text)
         try validateLayerMetadataStatements(in: metadataBody)
+        try validateRelocatesMetadata(in: metadataBody)
         try validatePrimAttributeSyntax(in: text)
         try validateUniqueSiblingPrimPaths(in: text, parentPrimPath: "")
         if let timeCode = options.timeCode, !timeCode.isFinite {
@@ -55,6 +56,7 @@ public struct USDAReader: USDSceneReader {
         try validateTopLevelSyntax(in: text)
         let metadataBody = try layerMetadataBody(in: text)
         try validateLayerMetadataStatements(in: metadataBody)
+        try validateRelocatesMetadata(in: metadataBody)
         try validatePrimAttributeSyntax(in: text)
         let specs = try parseLayerSpecs(in: text)
         try validateUniqueSiblingPrimPaths(in: text, parentPrimPath: "")
@@ -153,6 +155,7 @@ public struct USDAReader: USDSceneReader {
             try validateTokenMetadata(named: "permission", allowedValues: ["private", "public"], in: prim.metadataBody)
             try validateTokenMetadata(named: "permission", allowedValues: ["private", "public"], in: directAttributeText)
             try validateCompositionListEdits(in: prim.metadataBody)
+            try validateRelocatesMetadata(in: prim.metadataBody)
             try validatePropertyDeclarations(in: directAttributeText)
             try validateScalarAssignments(in: directAttributeText)
             try validatePrimAttributeSyntax(in: prim.body)
@@ -594,6 +597,144 @@ public struct USDAReader: USDSceneReader {
     private func validateCompositionListEdits(in text: String) throws {
         try validateBracketedListEdits(forField: "references", in: text)
         try validateBracketedListEdits(forField: "payload", in: text)
+    }
+
+    private func validateRelocatesMetadata(in metadataBody: String?) throws {
+        guard let metadataBody else {
+            return
+        }
+        try validateRelocatesMetadata(in: metadataBody)
+    }
+
+    private func validateRelocatesMetadata(in text: String) throws {
+        var cursor = text.startIndex
+        var parenthesisDepth = 0
+        var bracketDepth = 0
+        var braceDepth = 0
+        while cursor < text.endIndex {
+            let character = text[cursor]
+            if character == "#" {
+                skipLineComment(in: text, index: &cursor)
+                continue
+            }
+            if character == "\"" || character == "'" {
+                try skipQuotedString(in: text, index: &cursor)
+                continue
+            }
+            if character == "@" {
+                try skipAssetPathLiteral(in: text, index: &cursor)
+                continue
+            }
+
+            let isAtTopLevel = parenthesisDepth == 0 && bracketDepth == 0 && braceDepth == 0
+            if isAtTopLevel, token("relocates", matchesAt: cursor, in: text) {
+                cursor = try validateRelocatesAssignment(startingAt: cursor, in: text)
+                continue
+            }
+
+            if character == "(" {
+                parenthesisDepth += 1
+            } else if character == ")" {
+                parenthesisDepth = max(0, parenthesisDepth - 1)
+            } else if character == "[" {
+                bracketDepth += 1
+            } else if character == "]" {
+                bracketDepth = max(0, bracketDepth - 1)
+            } else if character == "{" {
+                braceDepth += 1
+            } else if character == "}" {
+                braceDepth = max(0, braceDepth - 1)
+            }
+            cursor = text.index(after: cursor)
+        }
+    }
+
+    private func validateRelocatesAssignment(startingAt index: String.Index, in text: String) throws -> String.Index {
+        var cursor = text.index(index, offsetBy: "relocates".count)
+        skipWhitespace(in: text, index: &cursor)
+        guard cursor < text.endIndex, text[cursor] == "=" else {
+            return cursor
+        }
+        cursor = text.index(after: cursor)
+        skipWhitespaceAndLineComments(in: text, index: &cursor)
+        guard cursor < text.endIndex, text[cursor] == "{" else {
+            throw USDImportError.invalidData("USDA relocates metadata must use a map value.")
+        }
+        let closeBrace = try matchingBrace(startingAt: cursor, in: text)
+        try validateRelocatesMapEntries(from: text.index(after: cursor), to: closeBrace, in: text)
+        return text.index(after: closeBrace)
+    }
+
+    private func validateRelocatesMapEntries(
+        from start: String.Index,
+        to end: String.Index,
+        in text: String
+    ) throws {
+        var cursor = start
+        while cursor < end {
+            skipWhitespaceAndLineComments(in: text, index: &cursor)
+            guard cursor < end else {
+                return
+            }
+            let sourcePath = try parseRelocatesPath(role: "source", at: &cursor, before: end, in: text)
+            try validateRelocatesPath(sourcePath, role: "source")
+            skipWhitespaceAndLineComments(in: text, index: &cursor)
+            guard cursor < end, text[cursor] == ":" else {
+                throw USDImportError.invalidData("USDA relocates metadata must separate source and target paths with ':'.")
+            }
+            cursor = text.index(after: cursor)
+            skipWhitespaceAndLineComments(in: text, index: &cursor)
+            let targetPath = try parseRelocatesPath(role: "target", at: &cursor, before: end, in: text)
+            try validateRelocatesPath(targetPath, role: "target")
+            skipWhitespaceAndLineComments(in: text, index: &cursor)
+            if cursor < end {
+                guard text[cursor] == "," else {
+                    throw USDImportError.invalidData("USDA relocates metadata entries must be separated by commas.")
+                }
+                cursor = text.index(after: cursor)
+            }
+        }
+    }
+
+    private func parseRelocatesPath(
+        role: String,
+        at cursor: inout String.Index,
+        before end: String.Index,
+        in text: String
+    ) throws -> String {
+        guard cursor < end, text[cursor] == "<" else {
+            throw USDImportError.invalidData("USDA relocates \(role) path must use angle brackets.")
+        }
+        let pathStart = text.index(after: cursor)
+        cursor = pathStart
+        while cursor < end, text[cursor] != ">" {
+            cursor = text.index(after: cursor)
+        }
+        guard cursor < end else {
+            throw USDImportError.invalidData("USDA relocates \(role) path is unterminated.")
+        }
+        let path = String(text[pathStart..<cursor])
+        cursor = text.index(after: cursor)
+        return path
+    }
+
+    private func validateRelocatesPath(_ path: String, role: String) throws {
+        if path.isEmpty {
+            guard role == "target" else {
+                throw USDImportError.invalidData("USDA relocates source path cannot be empty.")
+            }
+            return
+        }
+        guard path != "/" else {
+            throw USDImportError.invalidData("USDA relocates \(role) path cannot be the pseudo-root path.")
+        }
+        guard !path.contains("{"), !path.contains("}") else {
+            throw USDImportError.invalidData("USDA relocates \(role) path cannot contain variant selections.")
+        }
+        let invalidCharacters: Set<Character> = ["\\", "?", "*", "\"", "'"]
+        guard !path.contains(where: { invalidCharacters.contains($0) || $0.isWhitespace }) else {
+            throw USDImportError.invalidData("USDA relocates \(role) path contains invalid path characters.")
+        }
     }
 
     private func validateBracketedListEdits(forField fieldName: String, in text: String) throws {

@@ -2186,6 +2186,46 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingRelocatesMetadataFixturesReadLayers() throws {
+        for fixturePath in [
+            "testSdfParsing.testenv/139_relocates_metadata.usda",
+            "testSdfParsing.testenv/148_relocates_empty_map.usda",
+        ] {
+            let layer = try USDAReader().readLayer(from: openUSDFixture(fixturePath))
+
+            #expect(layer.prims.map(\.path) == ["/TestPrim"])
+            #expect(layer.composition.isEmpty)
+            let testPrim = try #require(layer.spec(at: "/TestPrim"))
+            #expect(testPrim.specifier == .def)
+            #expect(testPrim.typeName == "MfScope")
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingBadRelocatesMetadataFixturesThrowTypedErrors() throws {
+        let cases = [
+            ("testSdfParsing.testenv/140_bad_relocates_paths_1.usda", "relocates source path", "pseudo-root"),
+            ("testSdfParsing.testenv/141_bad_relocates_paths_2.usda", "relocates target path", "invalid path characters"),
+            ("testSdfParsing.testenv/142_bad_relocates_paths_3.usda", "relocates source path", "empty"),
+            ("testSdfParsing.testenv/143_bad_relocates_formatting_1.usda", "relocates metadata", "map"),
+            ("testSdfParsing.testenv/144_bad_relocates_formatting_2.usda", "relocates source path", "angle brackets"),
+            ("testSdfParsing.testenv/145_bad_relocates_formatting_3.usda", "relocates metadata entries", "commas"),
+            ("testSdfParsing.testenv/146_bad_relocates_formatting_4.usda", "source and target", "':'"),
+            ("testSdfParsing.testenv/147_bad_relocates_formatting_5.usda", "relocates metadata entries", "commas"),
+            ("testSdfParsing.testenv/216_bad_variant_in_relocates_path.usda", "relocates metadata", "map"),
+        ]
+
+        for (fixturePath, expectedSubject, expectedDetail) in cases {
+            let message = try usdImportFailureMessage {
+                _ = try USDAReader().readLayer(from: openUSDFixture(fixturePath))
+            }
+
+            #expect(message.contains(expectedSubject))
+            #expect(message.contains(expectedDetail))
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingBadKindMetadataFixtureThrowsTypedError() throws {
         let data = try openUSDFixture("testSdfParsing.testenv/150_bad_kind_metadata_1.usda")
 

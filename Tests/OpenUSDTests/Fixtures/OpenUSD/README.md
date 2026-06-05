@@ -76,6 +76,16 @@ Source paths:
 | `testSdfParsing.testenv/127_varyingRelationship.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/127_varyingRelationship.usda` |
 | `testSdfParsing.testenv/132_references.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/132_references.usda` |
 | `testSdfParsing.testenv/133_bad_reference.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/133_bad_reference.usda` |
+| `testSdfParsing.testenv/139_relocates_metadata.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/139_relocates_metadata.usda` |
+| `testSdfParsing.testenv/140_bad_relocates_paths_1.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/140_bad_relocates_paths_1.usda` |
+| `testSdfParsing.testenv/141_bad_relocates_paths_2.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/141_bad_relocates_paths_2.usda` |
+| `testSdfParsing.testenv/142_bad_relocates_paths_3.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/142_bad_relocates_paths_3.usda` |
+| `testSdfParsing.testenv/143_bad_relocates_formatting_1.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/143_bad_relocates_formatting_1.usda` |
+| `testSdfParsing.testenv/144_bad_relocates_formatting_2.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/144_bad_relocates_formatting_2.usda` |
+| `testSdfParsing.testenv/145_bad_relocates_formatting_3.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/145_bad_relocates_formatting_3.usda` |
+| `testSdfParsing.testenv/146_bad_relocates_formatting_4.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/146_bad_relocates_formatting_4.usda` |
+| `testSdfParsing.testenv/147_bad_relocates_formatting_5.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/147_bad_relocates_formatting_5.usda` |
+| `testSdfParsing.testenv/148_relocates_empty_map.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/148_relocates_empty_map.usda` |
 | `testSdfParsing.testenv/149_kind_metadata.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/149_kind_metadata.usda` |
 | `testSdfParsing.testenv/150_bad_kind_metadata_1.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/150_bad_kind_metadata_1.usda` |
 | `testSdfParsing.testenv/152_payloads.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/152_payloads.usda` |
@@ -92,6 +102,7 @@ Source paths:
 | `testSdfParsing.testenv/204_really_empty.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/204_really_empty.usda` |
 | `testSdfParsing.testenv/210_opaque_attributes.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/210_opaque_attributes.usda` |
 | `testSdfParsing.testenv/211_bad_authored_opaque_attributes.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/211_bad_authored_opaque_attributes.usda` |
+| `testSdfParsing.testenv/216_bad_variant_in_relocates_path.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/216_bad_variant_in_relocates_path.usda` |
 | `testSdfParsing.testenv/217_utf8_identifiers.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/217_utf8_identifiers.usda` |
 | `testSdfParsing.testenv/218_utf8_bad_identifier.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/218_utf8_bad_identifier.usda` |
 | `testSdfParsing.testenv/219_utf8_bad_type_name.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/219_utf8_bad_type_name.usda` |
