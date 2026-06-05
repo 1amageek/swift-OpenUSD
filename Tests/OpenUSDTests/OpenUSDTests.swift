@@ -1370,6 +1370,38 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func usdcLayerReaderPreservesMetadataFieldValues() throws {
+        let fixture = makeUSDCLayerMetadataFieldFixture()
+
+        let layer = try USDCReader().readLayer(from: fixture)
+
+        #expect(layer.specs.map(\.path) == ["/", "/Scope"])
+        let root = try #require(layer.spec(at: "/"))
+        #expect(root.fields["subLayers"] == .stringVector(["layers/base.usda", "layers/anim.usdc"]))
+        #expect(root.fields["subLayerOffsets"] == .layerOffsetVector([
+            USDLayerOffset(offset: 10, scale: 0.5),
+            .identity,
+        ]))
+        #expect(layer.composition.sublayers == [
+            USDSublayer(assetPath: "layers/base.usda", layerOffset: USDLayerOffset(offset: 10, scale: 0.5)),
+            USDSublayer(assetPath: "layers/anim.usdc"),
+        ])
+
+        let scope = try #require(layer.spec(at: "/Scope"))
+        #expect(scope.fields["variantSelections"] == .variantSelectionMap([
+            "lod": "render",
+            "modelingVariant": "high",
+        ]))
+        #expect(scope.fields["permission"] == .permission(.privateAccess))
+        #expect(scope.fields["variability"] == .variability(.uniform))
+        #expect(scope.fields["timeCodeValue"] == .timeCode(24))
+        #expect(scope.fields["timeCodeArray"] == .timeCodeArray([1, 2.5]))
+        #expect(scope.fields["stringVector"] == .stringVector(["alpha", "beta"]))
+        #expect(scope.fields["doubleVector"] == .doubleVector([1.25, 2.5]))
+        #expect(scope.fields["dictionaryValue"] == .dictionary([:]))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func usdcLayerReaderPreservesNumericFieldValues() throws {
         let fixture = makeUSDCLayerNumericFieldFixture()
 
@@ -2567,6 +2599,113 @@ private func makeUSDCLayerAssetPathAndPathVectorFixture() -> Data {
     ])
 }
 
+private func makeUSDCLayerMetadataFieldFixture() -> Data {
+    let version = USDCCrateVersion(major: 0, minor: 9, patch: 0)
+    let tokens = [
+        "specifier",
+        "Scope",
+        "subLayers",
+        "subLayerOffsets",
+        "variantSelections",
+        "permission",
+        "variability",
+        "timeCodeValue",
+        "timeCodeArray",
+        "stringVector",
+        "doubleVector",
+        "dictionaryValue",
+        "layers/base.usda",
+        "layers/anim.usdc",
+        "modelingVariant",
+        "high",
+        "lod",
+        "render",
+        "alpha",
+        "beta",
+    ]
+    var valueData = Data()
+    let subLayersOffset = appendUSDCStringVector([0, 1], to: &valueData)
+    let subLayerOffsetsOffset = appendUSDCLayerOffsetVector([
+        USDLayerOffset(offset: 10, scale: 0.5),
+        .identity,
+    ], to: &valueData)
+    let variantSelectionMapOffset = appendUSDCVariantSelectionMap([
+        USDCEncodedStringMapEntry(keyStringIndex: 2, valueStringIndex: 3),
+        USDCEncodedStringMapEntry(keyStringIndex: 4, valueStringIndex: 5),
+    ], to: &valueData)
+    let timeCodeValueOffset = appendUSDCDoubleScalar(24, to: &valueData)
+    let timeCodeArrayOffset = appendUSDCDoubleArray([1, 2.5], to: &valueData)
+    let stringVectorOffset = appendUSDCStringVector([6, 7], to: &valueData)
+    let doubleVectorOffset = appendUSDCDoubleVector([1.25, 2.5], to: &valueData)
+    let fields = [
+        USDCCrateField(
+            tokenIndex: 0,
+            valueRep: USDCCrateValueRep(type: .specifier, isInlined: true, isArray: false, payload: 0)
+        ),
+        USDCCrateField(
+            tokenIndex: 2,
+            valueRep: USDCCrateValueRep(type: .stringVector, isInlined: false, isArray: false, payload: subLayersOffset)
+        ),
+        USDCCrateField(
+            tokenIndex: 3,
+            valueRep: USDCCrateValueRep(type: .layerOffsetVector, isInlined: false, isArray: false, payload: subLayerOffsetsOffset)
+        ),
+        USDCCrateField(
+            tokenIndex: 4,
+            valueRep: USDCCrateValueRep(type: .variantSelectionMap, isInlined: false, isArray: false, payload: variantSelectionMapOffset)
+        ),
+        USDCCrateField(
+            tokenIndex: 5,
+            valueRep: USDCCrateValueRep(type: .permission, isInlined: true, isArray: false, payload: UInt64(USDPermission.privateAccess.rawValue))
+        ),
+        USDCCrateField(
+            tokenIndex: 6,
+            valueRep: USDCCrateValueRep(type: .variability, isInlined: true, isArray: false, payload: 2)
+        ),
+        USDCCrateField(
+            tokenIndex: 7,
+            valueRep: USDCCrateValueRep(type: .timeCode, isInlined: false, isArray: false, payload: timeCodeValueOffset)
+        ),
+        USDCCrateField(
+            tokenIndex: 8,
+            valueRep: USDCCrateValueRep(type: .timeCode, isInlined: false, isArray: true, payload: timeCodeArrayOffset)
+        ),
+        USDCCrateField(
+            tokenIndex: 9,
+            valueRep: USDCCrateValueRep(type: .stringVector, isInlined: false, isArray: false, payload: stringVectorOffset)
+        ),
+        USDCCrateField(
+            tokenIndex: 10,
+            valueRep: USDCCrateValueRep(type: .doubleVector, isInlined: false, isArray: false, payload: doubleVectorOffset)
+        ),
+        USDCCrateField(
+            tokenIndex: 11,
+            valueRep: USDCCrateValueRep(type: .dictionary, isInlined: true, isArray: false, payload: 0)
+        ),
+    ]
+    let specs = [
+        USDCCrateSpec(pathIndex: 0, fieldSetIndex: 0, specType: .pseudoRoot),
+        USDCCrateSpec(pathIndex: 1, fieldSetIndex: 3, specType: .prim),
+    ]
+
+    return makeUSDCFixture(version: version, valueData: valueData, sections: [
+        ("TOKENS", makeUSDCTokenSection(version: version, tokenData: nullSeparatedTokenData(tokens))),
+        ("STRINGS", makeUSDCStringsSection([12, 13, 14, 15, 16, 17, 18, 19])),
+        ("FIELDS", makeUSDCFieldsSection(version: version, fields: fields)),
+        ("FIELDSETS", makeUSDCFieldSetsSection(version: version, indexes: [
+            1, 2, UInt32.max,
+            0, 3, 4, 5, 6, 7, 8, 9, 10, UInt32.max,
+        ])),
+        ("PATHS", makeUSDCCompressedPathsSection(
+            pathCount: 2,
+            pathIndexes: [0, 1],
+            elementTokenIndexes: [0, 1],
+            jumps: [-1, -2]
+        )),
+        ("SPECS", makeUSDCSpecsSection(version: version, specs: specs)),
+    ])
+}
+
 private func makeUSDCLayerNumericFieldFixture() -> Data {
     let version = USDCCrateVersion(major: 0, minor: 8, patch: 0)
     let tokens = [
@@ -3233,6 +3372,45 @@ private func appendUSDCStringIndex(_ stringIndex: UInt32, to data: inout Data) -
     return offset
 }
 
+private func appendUSDCDoubleScalar(_ value: Double, to data: inout Data) -> UInt64 {
+    let offset = alignUSDCValueData(&data)
+    data.appendLittleEndian(value.bitPattern)
+    return offset
+}
+
+private func appendUSDCDoubleVector(_ values: [Double], to data: inout Data) -> UInt64 {
+    appendUSDCDoubleArray(values, to: &data)
+}
+
+private func appendUSDCStringVector(_ stringIndexes: [UInt32], to data: inout Data) -> UInt64 {
+    let offset = alignUSDCValueData(&data)
+    data.appendLittleEndian(UInt64(stringIndexes.count))
+    for stringIndex in stringIndexes {
+        data.appendLittleEndian(stringIndex)
+    }
+    return offset
+}
+
+private func appendUSDCLayerOffsetVector(_ values: [USDLayerOffset], to data: inout Data) -> UInt64 {
+    let offset = alignUSDCValueData(&data)
+    data.appendLittleEndian(UInt64(values.count))
+    for value in values {
+        data.appendLittleEndian(value.offset.bitPattern)
+        data.appendLittleEndian(value.scale.bitPattern)
+    }
+    return offset
+}
+
+private func appendUSDCVariantSelectionMap(_ entries: [USDCEncodedStringMapEntry], to data: inout Data) -> UInt64 {
+    let offset = alignUSDCValueData(&data)
+    data.appendLittleEndian(UInt64(entries.count))
+    for entry in entries {
+        data.appendLittleEndian(entry.keyStringIndex)
+        data.appendLittleEndian(entry.valueStringIndex)
+    }
+    return offset
+}
+
 private func appendUSDCPathVector(_ pathIndexes: [UInt32], to data: inout Data) -> UInt64 {
     let offset = alignUSDCValueData(&data)
     data.appendLittleEndian(UInt64(pathIndexes.count))
@@ -3310,6 +3488,11 @@ private struct USDCEncodedDictionaryEntry {
     var valueRep: USDCCrateValueRep
     var nestedPayload: Data = Data()
     var usesNestedPayloadOffset = false
+}
+
+private struct USDCEncodedStringMapEntry {
+    var keyStringIndex: UInt32
+    var valueStringIndex: UInt32
 }
 
 private func appendUSDCReferenceListOperation(

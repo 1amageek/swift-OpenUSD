@@ -7,9 +7,11 @@ enum USDCCrateValue: Sendable, Equatable {
     case tokenArray([String])
     case tokenVector([String])
     case string(String)
+    case stringVector([String])
     case assetPath(String)
     case dictionary([String: USDCLayerFieldValue])
     case pathVector([String])
+    case variantSelectionMap([String: String])
     case tokenListOperation(USDCListOperation<String>)
     case stringListOperation(USDCListOperation<String>)
     case pathListOperation(USDCListOperation<String>)
@@ -23,9 +25,15 @@ enum USDCCrateValue: Sendable, Equatable {
     case quaternion(USDCQuaternion)
     case matrix4x4(USDCMatrix4x4)
     case doubleArray([Double])
+    case doubleVector([Double])
     case intArray([Int])
+    case timeCode(Double)
+    case timeCodeArray([Double])
     case point2Array([USDPoint2D])
     case pointArray([USDPoint3D])
+    case layerOffsetVector([USDLayerOffset])
+    case permission(USDPermission)
+    case variability(USDVariability)
 
     var stringValue: String? {
         switch self {

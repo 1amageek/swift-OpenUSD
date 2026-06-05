@@ -30,9 +30,13 @@ public struct USDCLayer: Sendable, Equatable {
     }
 
     public var composition: USDLayerComposition {
+        var sublayers: [USDSublayer] = []
         var references: [USDCompositionArc] = []
         var payloads: [USDCompositionArc] = []
         for spec in specs {
+            if spec.path == "/" {
+                sublayers.append(contentsOf: layerSublayers(from: spec))
+            }
             for fieldName in spec.fieldNames {
                 guard let field = spec.fields[fieldName] else {
                     continue
@@ -68,7 +72,25 @@ public struct USDCLayer: Sendable, Equatable {
                 }
             }
         }
-        return USDLayerComposition(references: references, payloads: payloads)
+        return USDLayerComposition(sublayers: sublayers, references: references, payloads: payloads)
+    }
+
+    private func layerSublayers(from spec: USDCLayerSpec) -> [USDSublayer] {
+        guard case .stringVector(let assetPaths)? = spec.fields["subLayers"] else {
+            return []
+        }
+        let layerOffsets: [USDLayerOffset]
+        if case .layerOffsetVector(let offsets)? = spec.fields["subLayerOffsets"] {
+            layerOffsets = offsets
+        } else {
+            layerOffsets = []
+        }
+        return assetPaths.enumerated().map { index, assetPath in
+            USDSublayer(
+                assetPath: assetPath,
+                layerOffset: index < layerOffsets.count ? layerOffsets[index] : .identity
+            )
+        }
     }
 }
 
