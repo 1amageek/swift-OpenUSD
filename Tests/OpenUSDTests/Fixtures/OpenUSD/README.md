@@ -79,6 +79,7 @@ Source paths:
 | `testSdfParsing.testenv/154_relationship_noLoadHint.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/154_relationship_noLoadHint.usda` |
 | `testSdfParsing.testenv/155_bad_relationship_noLoadHint.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/155_bad_relationship_noLoadHint.usda` |
 | `testSdfParsing.testenv/179_bad_shaped_attr_dimensions1.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/179_bad_shaped_attr_dimensions1.usda` |
+| `testSdfParsing.testenv/185_namespaced_properties.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/185_namespaced_properties.usda` |
 | `testSdfParsing.testenv/187_displayName_metadata.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/187_displayName_metadata.usda` |
 | `testSdfParsing.testenv/203_newlines.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/203_newlines.usda` |
 | `testSdfParsing.testenv/204_really_empty.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/204_really_empty.usda` |

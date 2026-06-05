@@ -1406,20 +1406,27 @@ struct OpenUSDTests {
         #expect(layer.metersPerUnit == nil)
         #expect(layer.upAxis == nil)
         #expect(layer.composition.isEmpty)
-        #expect(layer.specs.map(\.path) == [
-            "/",
+        #expect(layer.spec(at: "/")?.specType == .pseudoRoot)
+        #expect(layer.prims.map(\.path) == [
             "/overview_cam",
             "/overview_cam/Head",
             "/TestOver",
             "/TestOverWithoutTypename",
         ])
-        #expect(layer.spec(at: "/")?.specType == .pseudoRoot)
         let overviewCamera = try #require(layer.spec(at: "/overview_cam"))
         #expect(overviewCamera.specifier == .def)
         #expect(overviewCamera.typeName == "Camera")
+        let camX = try #require(layer.spec(at: "/overview_cam.camx"))
+        #expect(camX.specType == .attribute)
+        #expect(camX.typeName == "double")
+        #expect(camX.fieldNames.contains("default"))
         let head = try #require(layer.spec(at: "/overview_cam/Head"))
         #expect(head.specifier == .def)
         #expect(head.typeName == "Scope")
+        let aspect = try #require(layer.spec(at: "/overview_cam/Head.aspect"))
+        #expect(aspect.specType == .attribute)
+        #expect(aspect.typeName == "double")
+        #expect(aspect.fieldNames.contains("default"))
         let testOver = try #require(layer.spec(at: "/TestOver"))
         #expect(testOver.specifier == .over)
         #expect(testOver.typeName == "MfScope")
@@ -1681,6 +1688,21 @@ struct OpenUSDTests {
             "/foo",
             "/foo/Scope",
         ])
+        let noTargets = try #require(layer.spec(at: "/foo.no_targets_rel"))
+        #expect(noTargets.specType == .relationship)
+        #expect(!noTargets.fieldNames.contains("targetPaths"))
+        let singleTarget = try #require(layer.spec(at: "/foo.single_target_rel"))
+        #expect(singleTarget.specType == .relationship)
+        #expect(singleTarget.fieldNames.contains("targetPaths"))
+        let complex = try #require(layer.spec(at: "/foo.complex_rel"))
+        #expect(complex.specType == .relationship)
+        #expect(complex.fieldNames.contains("targetPaths"))
+        let customNoTargets = try #require(layer.spec(at: "/customFoo.no_targets_rel"))
+        #expect(customNoTargets.specType == .relationship)
+        #expect(customNoTargets.fieldNames.contains("custom"))
+        let relative = try #require(layer.spec(at: "/foo/Scope.rel_relative_path"))
+        #expect(relative.specType == .relationship)
+        #expect(relative.fieldNames.contains("targetPaths"))
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -1715,6 +1737,72 @@ struct OpenUSDTests {
 
             #expect(layer.prims.map(\.path).sorted() == testCase.primPaths.sorted())
         }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingAttributePropertySpecsReadLayer() throws {
+        let uniformLayer = try USDAReader().readLayer(
+            from: openUSDFixture("testSdfParsing.testenv/104_uniformAttributes.usda")
+        )
+        let foo = try #require(uniformLayer.spec(at: "/bool_tests.foo"))
+        #expect(foo.specType == .attribute)
+        #expect(foo.typeName == "double")
+        #expect(foo.fieldNames.contains("custom"))
+        #expect(foo.fieldNames.contains("variability"))
+        #expect(foo.fieldNames.contains("default"))
+        #expect(foo.fieldNames.contains("connectionPaths"))
+
+        let stringArrayLayer = try USDAReader().readLayer(
+            from: openUSDFixture("testSdfParsing.testenv/111_string_arrays.usda")
+        )
+        let stringTest = try #require(stringArrayLayer.spec(at: "/string_array_tests.test1"))
+        #expect(stringTest.specType == .attribute)
+        #expect(stringTest.typeName == "string[]")
+        #expect(stringTest.fieldNames.contains("custom"))
+        #expect(stringTest.fieldNames.contains("default"))
+        let tokenTest = try #require(stringArrayLayer.spec(at: "/token_array_tests.test4"))
+        #expect(tokenTest.specType == .attribute)
+        #expect(tokenTest.typeName == "token[]")
+        #expect(tokenTest.fieldNames.contains("default"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingNamespacedPropertySpecsReadLayer() throws {
+        let data = try openUSDFixture("testSdfParsing.testenv/185_namespaced_properties.usda")
+
+        let layer = try USDAReader().readLayer(from: data)
+
+        #expect(layer.prims.map(\.path).sorted() == ["/Prim", "/Prim/Child"])
+        let fooBaz = try #require(layer.spec(at: "/Prim.foo:baz"))
+        #expect(fooBaz.specType == .attribute)
+        #expect(fooBaz.typeName == "double")
+        #expect(fooBaz.fieldNames.contains("custom"))
+        #expect(fooBaz.fieldNames.contains("default"))
+        let fooArgle = try #require(layer.spec(at: "/Prim.foo:argle"))
+        #expect(fooArgle.specType == .attribute)
+        #expect(fooArgle.typeName == "double")
+        #expect(fooArgle.fieldNames.contains("default"))
+        #expect(fooArgle.fieldNames.contains("connectionPaths"))
+        let fooBargle = try #require(layer.spec(at: "/Prim.foo:bargle"))
+        #expect(fooBargle.specType == .attribute)
+        #expect(fooBargle.typeName == "double")
+        #expect(!fooBargle.fieldNames.contains("default"))
+        #expect(fooBargle.fieldNames.contains("connectionPaths"))
+        let barArgle = try #require(layer.spec(at: "/Prim.bar:argle"))
+        #expect(barArgle.specType == .attribute)
+        #expect(barArgle.fieldNames.contains("default"))
+        #expect(barArgle.fieldNames.contains("timeSamples"))
+        let argleBargle = try #require(layer.spec(at: "/Prim.argle:bargle"))
+        #expect(argleBargle.specType == .relationship)
+        #expect(argleBargle.fieldNames.contains("targetPaths"))
+        let varyingRelationship = try #require(layer.spec(at: "/Prim.a:b:d"))
+        #expect(varyingRelationship.specType == .relationship)
+        #expect(varyingRelationship.fieldNames.contains("variability"))
+        #expect(varyingRelationship.fieldNames.contains("targetPaths"))
+        let emptyRelationship = try #require(layer.spec(at: "/Prim.a:b:e"))
+        #expect(emptyRelationship.specType == .relationship)
+        #expect(emptyRelationship.fieldNames.contains("variability"))
+        #expect(!emptyRelationship.fieldNames.contains("targetPaths"))
     }
 
     @Test(.timeLimit(.minutes(1)))

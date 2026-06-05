@@ -210,9 +210,14 @@ public struct USDAReader: USDSceneReader {
 
     private func validatePropertyDeclaration(startingAt index: String.Index, in text: String) throws {
         var cursor = index
+        var qualifiers: [String] = []
         while let qualifier = propertyDeclarationQualifier(at: cursor, in: text) {
+            qualifiers.append(qualifier)
             cursor = text.index(cursor, offsetBy: qualifier.count)
             try skipPropertyDeclarationWhitespace(in: text, index: &cursor)
+        }
+        if try validatePropertyOrderListEdit(qualifiers: qualifiers, startingAt: cursor, in: text) {
+            return
         }
         guard cursor < text.endIndex else {
             return
@@ -310,6 +315,29 @@ public struct USDAReader: USDSceneReader {
         } else if text[cursor] == "[" {
             throw USDImportError.invalidData("USDA \(typeName) attribute cannot use a shaped list value.")
         }
+    }
+
+    private func validatePropertyOrderListEdit(
+        qualifiers: [String],
+        startingAt cursor: String.Index,
+        in text: String
+    ) throws -> Bool {
+        guard qualifiers.contains(where: isListEditQualifier),
+              token("properties", matchesAt: cursor, in: text) else {
+            return false
+        }
+        var valueCursor = text.index(cursor, offsetBy: "properties".count)
+        try skipPropertyDeclarationWhitespace(in: text, index: &valueCursor)
+        guard valueCursor < text.endIndex, text[valueCursor] == "=" else {
+            throw USDImportError.invalidData("USDA properties list-edit is missing an assignment.")
+        }
+        valueCursor = text.index(after: valueCursor)
+        try skipPropertyValueStartWhitespace(in: text, index: &valueCursor)
+        guard valueCursor < text.endIndex, text[valueCursor] == "[" else {
+            throw USDImportError.invalidData("USDA properties list-edit must use a bracketed list value.")
+        }
+        _ = try matchingBracket(startingAt: valueCursor, in: text)
+        return true
     }
 
     private func validateArrayAttributeValue(
@@ -946,12 +974,255 @@ public struct USDAReader: USDSceneReader {
                 typeName: prim.typeName,
                 fieldNames: fieldNames
             ))
+            let directBody = try directAttributeText(from: prim.body)
+            specs.append(contentsOf: try parsePropertySpecs(in: directBody, parentPrimPath: path))
             specs.append(contentsOf: try parseLayerSpecs(
                 from: parseDirectPrims(in: prim.body),
                 parentPrimPath: path
             ))
         }
         return specs
+    }
+
+    private func parsePropertySpecs(in text: String, parentPrimPath: String) throws -> [USDLayerSpec] {
+        var specs: [USDLayerSpec] = []
+        var specIndexByPath: [String: Int] = [:]
+        var cursor = text.startIndex
+        var isStatementStart = true
+        var parenthesisDepth = 0
+        var bracketDepth = 0
+        var braceDepth = 0
+        while cursor < text.endIndex {
+            let character = text[cursor]
+            if character == "#" {
+                skipLineComment(in: text, index: &cursor)
+                isStatementStart = true
+                continue
+            }
+            if character == "\"" || character == "'" {
+                try skipQuotedString(in: text, index: &cursor)
+                continue
+            }
+            if character == "(" {
+                parenthesisDepth += 1
+            } else if character == ")" {
+                parenthesisDepth = max(0, parenthesisDepth - 1)
+            } else if character == "[" {
+                bracketDepth += 1
+            } else if character == "]" {
+                bracketDepth = max(0, bracketDepth - 1)
+            } else if character == "{" {
+                braceDepth += 1
+            } else if character == "}" {
+                braceDepth = max(0, braceDepth - 1)
+            }
+
+            let isAtTopLevel = parenthesisDepth == 0 && bracketDepth == 0 && braceDepth == 0
+            if isAtTopLevel && (character == "\n" || character == "\r" || character == ";") {
+                isStatementStart = true
+                cursor = text.index(after: cursor)
+                continue
+            }
+            if isAtTopLevel, isStatementStart {
+                if character.isWhitespace {
+                    cursor = text.index(after: cursor)
+                    continue
+                }
+                if let declaration = try parsePropertySpecDeclaration(
+                    startingAt: cursor,
+                    parentPrimPath: parentPrimPath,
+                    in: text
+                ) {
+                    mergePropertySpec(declaration, into: &specs, specIndexByPath: &specIndexByPath)
+                }
+                isStatementStart = false
+            }
+            cursor = text.index(after: cursor)
+        }
+        return specs
+    }
+
+    private func parsePropertySpecDeclaration(
+        startingAt index: String.Index,
+        parentPrimPath: String,
+        in text: String
+    ) throws -> USDAPropertySpecDeclaration? {
+        var cursor = index
+        var qualifiers: [String] = []
+        while let qualifier = propertyDeclarationQualifier(at: cursor, in: text) {
+            qualifiers.append(qualifier)
+            cursor = text.index(cursor, offsetBy: qualifier.count)
+            try skipPropertyDeclarationWhitespace(in: text, index: &cursor)
+        }
+        if isPropertyOrderListEdit(qualifiers: qualifiers, startingAt: cursor, in: text) {
+            return nil
+        }
+        guard cursor < text.endIndex else {
+            return nil
+        }
+        let typeStart = cursor
+        while cursor < text.endIndex {
+            let character = text[cursor]
+            if character.isWhitespace || character == "=" || character == "(" || character == "{" || character == ";" {
+                break
+            }
+            cursor = text.index(after: cursor)
+        }
+        guard typeStart < cursor else {
+            return nil
+        }
+        let authoredTypeName = String(text[typeStart..<cursor])
+        try skipPropertyDeclarationWhitespace(in: text, index: &cursor)
+        let propertyNameStart = cursor
+        while cursor < text.endIndex {
+            let character = text[cursor]
+            if character.isWhitespace || character == "=" || character == "(" || character == ";" || character == "{" {
+                break
+            }
+            cursor = text.index(after: cursor)
+        }
+        guard propertyNameStart < cursor else {
+            return nil
+        }
+        let authoredPropertyName = String(text[propertyNameStart..<cursor])
+        let normalizedName = normalizedPropertyName(authoredPropertyName)
+        guard !normalizedName.baseName.isEmpty else {
+            return nil
+        }
+        let hasAssignment = try propertyDeclarationHasAssignment(afterPropertyName: cursor, in: text)
+        let specType: USDSpecType = authoredTypeName == "rel" ? .relationship : .attribute
+        var fieldNames: Set<String> = []
+        if qualifiers.contains("custom") {
+            fieldNames.insert("custom")
+        }
+        if qualifiers.contains("uniform") || qualifiers.contains("varying") {
+            fieldNames.insert("variability")
+        }
+        switch specType {
+        case .relationship:
+            if hasAssignment {
+                fieldNames.insert("targetPaths")
+            }
+        default:
+            fieldNames.insert("typeName")
+            switch normalizedName.valueField {
+            case .connectionPaths:
+                fieldNames.insert("connectionPaths")
+            case .timeSamples:
+                fieldNames.insert("timeSamples")
+            case .defaultValue:
+                if hasAssignment {
+                    fieldNames.insert("default")
+                }
+            case nil:
+                if hasAssignment {
+                    fieldNames.insert("default")
+                }
+            }
+        }
+        if specType == .relationship,
+           normalizedName.valueField == .defaultValue,
+           hasAssignment {
+            fieldNames.insert("targetPaths")
+        }
+        return USDAPropertySpecDeclaration(
+            path: propertyPath(parentPrimPath: parentPrimPath, propertyName: normalizedName.baseName),
+            specType: specType,
+            typeName: specType == .attribute ? authoredTypeName : nil,
+            fieldNames: fieldNames
+        )
+    }
+
+    private func isPropertyOrderListEdit(
+        qualifiers: [String],
+        startingAt cursor: String.Index,
+        in text: String
+    ) -> Bool {
+        qualifiers.contains(where: isListEditQualifier) && token("properties", matchesAt: cursor, in: text)
+    }
+
+    private func isListEditQualifier(_ qualifier: String) -> Bool {
+        qualifier == "delete" || qualifier == "add" || qualifier == "reorder"
+    }
+
+    private func propertyDeclarationHasAssignment(afterPropertyName cursor: String.Index, in text: String) throws -> Bool {
+        var cursor = cursor
+        while cursor < text.endIndex, text[cursor].isWhitespace {
+            if text[cursor].isNewline {
+                return false
+            }
+            cursor = text.index(after: cursor)
+        }
+        if cursor < text.endIndex, text[cursor] == "(" {
+            let closeParenthesis = try matchingParenthesis(startingAt: cursor, in: text)
+            cursor = text.index(after: closeParenthesis)
+            while cursor < text.endIndex, text[cursor].isWhitespace {
+                if text[cursor].isNewline {
+                    return false
+                }
+                cursor = text.index(after: cursor)
+            }
+        }
+        guard cursor < text.endIndex else {
+            return false
+        }
+        return text[cursor] == "="
+    }
+
+    private func normalizedPropertyName(_ authoredName: String) -> (baseName: String, valueField: USDAPropertyValueField?) {
+        for suffix in [(".connect", USDAPropertyValueField.connectionPaths),
+                       (".timeSamples", USDAPropertyValueField.timeSamples),
+                       (".default", USDAPropertyValueField.defaultValue)] {
+            guard authoredName.hasSuffix(suffix.0) else {
+                continue
+            }
+            return (String(authoredName.dropLast(suffix.0.count)), suffix.1)
+        }
+        return (authoredName, nil)
+    }
+
+    private func propertyPath(parentPrimPath: String, propertyName: String) -> String {
+        "\(parentPrimPath).\(propertyName)"
+    }
+
+    private func mergePropertySpec(
+        _ declaration: USDAPropertySpecDeclaration,
+        into specs: inout [USDLayerSpec],
+        specIndexByPath: inout [String: Int]
+    ) {
+        if let index = specIndexByPath[declaration.path] {
+            var spec = specs[index]
+            if spec.typeName == nil {
+                spec.typeName = declaration.typeName
+            }
+            var fieldNames = Set(spec.fieldNames)
+            fieldNames.formUnion(declaration.fieldNames)
+            spec.fieldNames = orderedPropertyFieldNames(fieldNames)
+            specs[index] = spec
+            return
+        }
+        specIndexByPath[declaration.path] = specs.count
+        specs.append(USDLayerSpec(
+            path: declaration.path,
+            specType: declaration.specType,
+            typeName: declaration.typeName,
+            fieldNames: orderedPropertyFieldNames(declaration.fieldNames)
+        ))
+    }
+
+    private func orderedPropertyFieldNames(_ fieldNames: Set<String>) -> [String] {
+        let preferredOrder = [
+            "custom",
+            "typeName",
+            "variability",
+            "default",
+            "connectionPaths",
+            "timeSamples",
+            "targetPaths",
+        ]
+        var ordered = preferredOrder.filter { fieldNames.contains($0) }
+        ordered.append(contentsOf: fieldNames.subtracting(preferredOrder).sorted())
+        return ordered
     }
 
     private func parsePrimTransforms(in text: String) throws -> [String: USDTransformMatrix4x4] {
@@ -2173,6 +2444,19 @@ private struct USDAPrim {
     var metadataBody: String
     var body: String
     var fullRange: Range<String.Index>
+}
+
+private struct USDAPropertySpecDeclaration {
+    var path: String
+    var specType: USDSpecType
+    var typeName: String?
+    var fieldNames: Set<String>
+}
+
+private enum USDAPropertyValueField {
+    case connectionPaths
+    case defaultValue
+    case timeSamples
 }
 
 private struct USDALocalTransform {
