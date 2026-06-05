@@ -95,7 +95,7 @@ public struct USDCCrateFile: Sendable, Equatable {
         guard data.count >= Self.bootstrapByteCount else {
             throw USDImportError.invalidData("USDC data is too small to contain a bootstrap.")
         }
-        guard Array(data.prefix(USDCReader.fileSignature.count)) == USDCReader.fileSignature else {
+        guard data.starts(with: USDCReader.fileSignature) else {
             throw USDImportError.invalidData("USDC data is missing the PXR-USDC signature.")
         }
 
@@ -492,7 +492,7 @@ public struct USDCCrateFile: Sendable, Equatable {
     private func dataForSection(_ section: USDCCrateSection) throws -> Data {
         let start = data.index(data.startIndex, offsetBy: section.start)
         let end = data.index(data.startIndex, offsetBy: section.range.upperBound)
-        return Data(data[start..<end])
+        return data[start..<end]
     }
 
     private func readUInt32Vector(from data: Data, sectionName: String) throws -> [UInt32] {
@@ -872,15 +872,26 @@ public struct USDCCrateFile: Sendable, Equatable {
             compressedBytes,
             expectedByteCount: byteCount
         )
-        let reader = USDCBinaryReader(data: Data(valueBytes))
         var valueReps: [USDCCrateValueRep] = []
         valueReps.reserveCapacity(count)
         var cursor = 0
         for _ in 0..<count {
-            valueReps.append(USDCCrateValueRep(rawValue: try reader.readUInt64(at: cursor)))
+            valueReps.append(USDCCrateValueRep(rawValue: try Self.readUInt64(in: valueBytes, at: cursor)))
             cursor += MemoryLayout<UInt64>.size
         }
         return valueReps
+    }
+
+    private static func readUInt64(in bytes: [UInt8], at offset: Int) throws -> UInt64 {
+        let byteCount = MemoryLayout<UInt64>.size
+        guard offset >= 0, offset <= bytes.count - byteCount else {
+            throw USDImportError.invalidData("USDC read is outside the decompressed buffer.")
+        }
+        var value: UInt64 = 0
+        for index in 0..<byteCount {
+            value |= UInt64(bytes[offset + index]) << UInt64(index * 8)
+        }
+        return value
     }
 
     private func checkedInt(_ value: UInt64, label: String) throws -> Int {
@@ -945,26 +956,26 @@ private struct USDCBinaryReader {
     let data: Data
 
     func readUInt8(at offset: Int) throws -> UInt8 {
-        guard offset >= 0, offset < data.count else {
-            throw USDImportError.invalidData("USDC read is outside the file.")
-        }
-        return data[data.index(data.startIndex, offsetBy: offset)]
+        try validateRange(offset: offset, byteCount: 1)
+        return readByteUnchecked(at: offset)
     }
 
     func readUInt64(at offset: Int) throws -> UInt64 {
-        let bytes = try readBytes(at: offset, byteCount: 8)
+        let byteCount = MemoryLayout<UInt64>.size
+        try validateRange(offset: offset, byteCount: byteCount)
         var value: UInt64 = 0
-        for (index, byte) in bytes.enumerated() {
-            value |= UInt64(byte) << UInt64(index * 8)
+        for index in 0..<byteCount {
+            value |= UInt64(readByteUnchecked(at: offset + index)) << UInt64(index * 8)
         }
         return value
     }
 
     func readUInt32(at offset: Int) throws -> UInt32 {
-        let bytes = try readBytes(at: offset, byteCount: 4)
+        let byteCount = MemoryLayout<UInt32>.size
+        try validateRange(offset: offset, byteCount: byteCount)
         var value: UInt32 = 0
-        for (index, byte) in bytes.enumerated() {
-            value |= UInt32(byte) << UInt32(index * 8)
+        for index in 0..<byteCount {
+            value |= UInt32(readByteUnchecked(at: offset + index)) << UInt32(index * 8)
         }
         return value
     }
@@ -978,25 +989,37 @@ private struct USDCBinaryReader {
     }
 
     func readNullTerminatedASCII(at offset: Int, byteCount: Int) throws -> String {
-        let bytes = try readBytes(at: offset, byteCount: byteCount)
-        let end = bytes.firstIndex(of: 0) ?? bytes.endIndex
-        let nameBytes = bytes[..<end]
-        guard !nameBytes.contains(where: { $0 < 0x20 || $0 > 0x7e }) else {
-            throw USDImportError.invalidData("USDC section name is not printable ASCII.")
+        try validateRange(offset: offset, byteCount: byteCount)
+        var nameBytes: [UInt8] = []
+        nameBytes.reserveCapacity(byteCount)
+        for index in 0..<byteCount {
+            let byte = readByteUnchecked(at: offset + index)
+            if byte == 0 {
+                break
+            }
+            guard byte >= 0x20, byte <= 0x7e else {
+                throw USDImportError.invalidData("USDC section name is not printable ASCII.")
+            }
+            nameBytes.append(byte)
         }
-        guard let name = String(bytes: nameBytes, encoding: .ascii) else {
-            throw USDImportError.invalidData("USDC section name is not ASCII.")
-        }
-        return name
+        return String(decoding: nameBytes, as: UTF8.self)
     }
 
     func readBytes(at offset: Int, byteCount: Int) throws -> [UInt8] {
-        guard offset >= 0, byteCount >= 0, offset <= data.count - byteCount else {
-            throw USDImportError.invalidData("USDC read is outside the file.")
-        }
+        try validateRange(offset: offset, byteCount: byteCount)
         let start = data.index(data.startIndex, offsetBy: offset)
         let end = data.index(start, offsetBy: byteCount)
         return Array(data[start..<end])
+    }
+
+    private func readByteUnchecked(at offset: Int) -> UInt8 {
+        return data[data.index(data.startIndex, offsetBy: offset)]
+    }
+
+    private func validateRange(offset: Int, byteCount: Int) throws {
+        guard offset >= 0, byteCount >= 0, offset <= data.count - byteCount else {
+            throw USDImportError.invalidData("USDC read is outside the file.")
+        }
     }
 }
 
