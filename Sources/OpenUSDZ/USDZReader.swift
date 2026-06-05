@@ -12,21 +12,74 @@ public struct USDZReader: USDSceneReader {
     }
 
     public func read(from data: Data) throws -> USDScene {
+        let archive = try readArchive(from: data)
+        let defaultLayerPath = try defaultLayerPath(in: archive)
+        return try readResolvedScene(defaultLayerPath: defaultLayerPath, in: archive)
+    }
+
+    public func readLayerGraph(from data: Data) throws -> USDZLayerGraph {
+        let archive = try readArchive(from: data)
+        let defaultLayerPath = try defaultLayerPath(in: archive)
+        let layers = try readResolvedLayers(defaultLayerPath: defaultLayerPath, in: archive)
+        return USDZLayerGraph(
+            rootPath: defaultLayerPath,
+            layers: layers.map { layer in
+                USDZLayerGraph.Layer(
+                    path: layer.path,
+                    defaultPrim: layer.defaultPrim,
+                    metersPerUnit: layer.metersPerUnit,
+                    upAxis: layer.upAxis,
+                    composition: layer.composition,
+                    hasScene: layer.scene != nil
+                )
+            }
+        )
+    }
+
+    private func readArchive(from data: Data) throws -> USDZArchive {
         guard data.starts(with: Self.fileSignature) else {
             throw USDImportError.invalidData("USDZ data is missing the ZIP signature.")
         }
+        return try USDZArchive(data: data)
+    }
 
-        let archive = try USDZArchive(data: data)
+    private func defaultLayerPath(in archive: USDZArchive) throws -> String {
         guard let defaultLayer = archive.defaultLayer else {
             throw USDImportError.invalidData("USDZ package contains no entries.")
         }
-        guard defaultLayer.isUSDLayer else {
-            throw USDImportError.unsupportedFeature("USDZ default layer must be the first file and use a USD extension.")
+        if defaultLayer.isUSDLayer {
+            return defaultLayer.path
         }
-        return try readResolvedScene(defaultLayerPath: defaultLayer.path, in: archive)
+        if defaultLayer.fileExtension == "usdz" {
+            let nestedArchive = try USDZArchive(data: defaultLayer.data)
+            guard let nestedDefaultLayer = nestedArchive.defaultLayer,
+                  nestedDefaultLayer.isUSDLayer else {
+                throw USDImportError.unsupportedFeature(
+                    "USDZ nested default package \(defaultLayer.path) must contain a USD default layer."
+                )
+            }
+            return "\(defaultLayer.path)[\(nestedDefaultLayer.path)]"
+        }
+        throw USDImportError.unsupportedFeature("USDZ default layer must be the first file and use a USD extension.")
     }
 
     private func readResolvedScene(defaultLayerPath: String, in archive: USDZArchive) throws -> USDScene {
+        let resolvedLayers = try readResolvedLayers(defaultLayerPath: defaultLayerPath, in: archive)
+        let meshes = resolvedLayers.flatMap { $0.scene?.meshes ?? [] }
+        guard !meshes.isEmpty else {
+            throw USDImportError.invalidData("USDZ scene contains no Mesh prims.")
+        }
+        let rootLayer = resolvedLayers.first
+        let firstScene = resolvedLayers.compactMap(\.scene).first
+        return USDScene(
+            defaultPrim: rootLayer?.defaultPrim ?? rootLayer?.scene?.defaultPrim ?? firstScene?.defaultPrim,
+            metersPerUnit: rootLayer?.metersPerUnit ?? rootLayer?.scene?.metersPerUnit ?? firstScene?.metersPerUnit ?? 1,
+            upAxis: rootLayer?.upAxis ?? rootLayer?.scene?.upAxis ?? firstScene?.upAxis ?? .y,
+            meshes: meshes
+        )
+    }
+
+    private func readResolvedLayers(defaultLayerPath: String, in archive: USDZArchive) throws -> [USDZResolvedLayer] {
         var visitedLayerPaths: Set<String> = []
         var pendingLayerPaths = [defaultLayerPath]
         var resolvedLayers: [USDZResolvedLayer] = []
@@ -48,19 +101,7 @@ public struct USDZReader: USDSceneReader {
                 pendingLayerPaths.append(resolvedLayerPath)
             }
         }
-
-        let meshes = resolvedLayers.flatMap { $0.scene?.meshes ?? [] }
-        guard !meshes.isEmpty else {
-            throw USDImportError.invalidData("USDZ scene contains no Mesh prims.")
-        }
-        let rootLayer = resolvedLayers.first
-        let firstScene = resolvedLayers.compactMap(\.scene).first
-        return USDScene(
-            defaultPrim: rootLayer?.defaultPrim ?? rootLayer?.scene?.defaultPrim ?? firstScene?.defaultPrim,
-            metersPerUnit: rootLayer?.metersPerUnit ?? rootLayer?.scene?.metersPerUnit ?? firstScene?.metersPerUnit ?? 1,
-            upAxis: rootLayer?.upAxis ?? rootLayer?.scene?.upAxis ?? firstScene?.upAxis ?? .y,
-            meshes: meshes
-        )
+        return resolvedLayers
     }
 
     private func readLayer(at layerPath: String, in archive: USDZArchive) throws -> USDZResolvedLayer {
@@ -90,6 +131,7 @@ public struct USDZReader: USDSceneReader {
             scene = nil
         }
         return USDZResolvedLayer(
+            path: layerPath,
             defaultPrim: layer.defaultPrim,
             metersPerUnit: layer.metersPerUnit,
             upAxis: layer.upAxis,
@@ -105,6 +147,7 @@ public struct USDZReader: USDSceneReader {
             ? try reader.read(from: data)
             : nil
         return USDZResolvedLayer(
+            path: layerPath,
             defaultPrim: layer.defaultPrim,
             metersPerUnit: layer.metersPerUnit,
             upAxis: layer.upAxis,
@@ -137,6 +180,7 @@ public struct USDZReader: USDSceneReader {
 }
 
 private struct USDZResolvedLayer: Sendable {
+    var path: String
     var defaultPrim: String?
     var metersPerUnit: Double?
     var upAxis: USDUpAxis?

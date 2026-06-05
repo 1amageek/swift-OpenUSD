@@ -1575,6 +1575,77 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func usdzReaderReadsFixtureBackedSubLayerGraph() throws {
+        let package = try makeOpenUSDUSDSiblingPackage(root: "sublayers.usda")
+
+        let graph = try USDZReader().readLayerGraph(from: package)
+
+        #expect(graph.rootPath == "sublayers.usda")
+        #expect(graph.paths == [
+            "sublayers.usda",
+            "single_usd.usdz[test.usd]",
+            "single_usda.usdz[test.usda]",
+            "single_usdc.usdz[test.usdc]",
+        ])
+        #expect(graph.layers.first?.composition.subLayerAssetPaths == [
+            "./single_usd.usdz",
+            "./single_usda.usdz",
+            "./single_usdc.usdz",
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdzReaderReadsFixtureBackedReferenceGraph() throws {
+        let package = try makeOpenUSDUSDSiblingPackage(root: "refs.usda")
+
+        let graph = try USDZReader().readLayerGraph(from: package)
+
+        #expect(graph.rootPath == "refs.usda")
+        #expect(graph.paths == [
+            "refs.usda",
+            "single_usd.usdz[test.usd]",
+            "single_usda.usdz[test.usda]",
+            "single_usdc.usdz[test.usdc]",
+        ])
+        #expect(graph.layers.first?.composition.references == [
+            USDCompositionArc(assetPath: "./single_usd.usdz", primPath: "/Root_USD"),
+            USDCompositionArc(assetPath: "./single_usda.usdz", primPath: "/Root_USDA"),
+            USDCompositionArc(assetPath: "./single_usdc.usdz", primPath: "/Root_USDC"),
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdzReaderReadsNestedDefaultReferenceGraph() throws {
+        let package = try openUSDFixture("testUsdUsdzFileFormat/nested_anchored_refs.usdz")
+
+        let graph = try USDZReader().readLayerGraph(from: package)
+
+        #expect(graph.rootPath == "anchored_refs.usdz[root.usd]")
+        #expect(graph.paths == [
+            "anchored_refs.usdz[root.usd]",
+            "anchored_refs.usdz[ref.usd]",
+            "anchored_refs.usdz[sub/ref.usda]",
+            "anchored_refs.usdz[sub/ref.usdc]",
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdzReaderReadsNestedSearchReferenceGraph() throws {
+        let package = try openUSDFixture("testUsdUsdzFileFormat/nested_search_refs.usdz")
+
+        let graph = try USDZReader().readLayerGraph(from: package)
+
+        #expect(graph.rootPath == "search_refs.usdz[root.usd]")
+        #expect(graph.paths == [
+            "search_refs.usdz[root.usd]",
+            "search_refs.usdz[refs/ref.usd]",
+            "search_refs.usdz[refs/sub/ref_in_subdir.usd]",
+            "search_refs.usdz[sub/ref_in_root.usd]",
+            "search_refs.usdz[refs/sub/ref_in_both.usd]",
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func usdzReaderRejectsUnalignedPayload() throws {
         let usda = Data("""
         #usda 1.0
@@ -2407,6 +2478,15 @@ private func openUSDFixture(_ relativePath: String) throws -> Data {
 
 private func generatedFixture(_ relativePath: String) throws -> Data {
     try fixtureData(root: "Generated", relativePath: relativePath)
+}
+
+private func makeOpenUSDUSDSiblingPackage(root: String) throws -> Data {
+    try makeUSDZFixture(entries: [
+        (root, openUSDFixture("testUsdUsdzFileFormat/\(root)")),
+        ("single_usd.usdz", openUSDFixture("testUsdUsdzFileFormat/single_usd.usdz")),
+        ("single_usda.usdz", openUSDFixture("testUsdUsdzFileFormat/single_usda.usdz")),
+        ("single_usdc.usdz", openUSDFixture("testUsdUsdzFileFormat/single_usdc.usdz")),
+    ], alignPayloads: true)
 }
 
 private func defaultFieldValueRep(in crate: USDCCrateFile, atPath path: String) throws -> USDCCrateValueRep {
