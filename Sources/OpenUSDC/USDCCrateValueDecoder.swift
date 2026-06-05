@@ -637,24 +637,26 @@ struct USDCCrateValueDecoder {
         var cursor = try arrayPayloadCursor(valueRep, label: "token array")
         let count = try readArrayCount(cursor: &cursor, label: "USDC token array count")
         let byteCount = try checkedMultiplication(count, MemoryLayout<UInt32>.size, label: "USDC token array byte count")
-        let bytes = try arrayBytes(
+        let storage = try arrayByteStorage(
             valueRep,
             cursor: &cursor,
             byteCount: byteCount,
             label: "token array"
         )
-        var values: [String] = []
-        values.reserveCapacity(count)
-        var byteCursor = 0
-        for _ in 0..<count {
-            let tokenIndex = littleEndianUInt32(bytes[byteCursor..<(byteCursor + 4)])
-            byteCursor += MemoryLayout<UInt32>.size
-            guard tokenIndex < UInt32(tokens.count) else {
-                throw USDImportError.invalidData("USDC token array references a token outside TOKENS.")
+        return try storage.withByteReader { reader in
+            var values: [String] = []
+            values.reserveCapacity(count)
+            var byteCursor = 0
+            for _ in 0..<count {
+                let tokenIndex = try reader.readUInt32LittleEndian(at: byteCursor)
+                byteCursor += MemoryLayout<UInt32>.size
+                guard tokenIndex < UInt32(tokens.count) else {
+                    throw USDImportError.invalidData("USDC token array references a token outside TOKENS.")
+                }
+                values.append(tokens[Int(tokenIndex)])
             }
-            values.append(tokens[Int(tokenIndex)])
+            return values
         }
-        return values
     }
 
     private func readTokenVectorValue(_ valueRep: USDCCrateValueRep) throws -> [String] {
@@ -1207,13 +1209,20 @@ struct USDCCrateValueDecoder {
         }
         var cursor = try arrayPayloadCursor(valueRep, label: "bool array")
         let count = try readArrayCount(cursor: &cursor, label: "USDC bool array count")
-        let bytes = try arrayBytes(
+        let storage = try arrayByteStorage(
             valueRep,
             cursor: &cursor,
             byteCount: count,
             label: "bool array"
         )
-        return bytes.map { $0 != 0 }
+        return try storage.withByteReader { reader in
+            var values: [Bool] = []
+            values.reserveCapacity(count)
+            for offset in 0..<count {
+                values.append(try reader.readUInt8(at: offset) != 0)
+            }
+            return values
+        }
     }
 
     private func readUInt8ArrayValue(_ valueRep: USDCCrateValueRep) throws -> [Int] {
@@ -1225,13 +1234,20 @@ struct USDCCrateValueDecoder {
         }
         var cursor = try arrayPayloadCursor(valueRep, label: "uchar array")
         let count = try readArrayCount(cursor: &cursor, label: "USDC uchar array count")
-        let bytes = try arrayBytes(
+        let storage = try arrayByteStorage(
             valueRep,
             cursor: &cursor,
             byteCount: count,
             label: "uchar array"
         )
-        return bytes.map(Int.init)
+        return try storage.withByteReader { reader in
+            var values: [Int] = []
+            values.reserveCapacity(count)
+            for offset in 0..<count {
+                values.append(Int(try reader.readUInt8(at: offset)))
+            }
+            return values
+        }
     }
 
     private func readIntArrayValue(_ valueRep: USDCCrateValueRep) throws -> [Int] {
@@ -1277,18 +1293,22 @@ struct USDCCrateValueDecoder {
             )
             cursor += MemoryLayout<UInt64>.size
             let compressedBytes = try crate.readFileBytes(at: cursor, byteCount: compressedByteCount)
+            cursor += compressedByteCount
             return try USDCIntegerCompression.decompressUInt32(compressedBytes, count: count)
         }
         let byteCount = try checkedMultiplication(count, MemoryLayout<UInt32>.size, label: "USDC \(label) byte count")
-        let bytes = try crate.readFileBytes(at: cursor, byteCount: byteCount)
-        var values: [UInt32] = []
-        values.reserveCapacity(count)
-        var byteCursor = 0
-        for _ in 0..<count {
-            values.append(littleEndianUInt32(bytes[byteCursor..<(byteCursor + 4)]))
-            byteCursor += MemoryLayout<UInt32>.size
+        let data = try crate.readFileDataSlice(at: cursor, byteCount: byteCount)
+        cursor += byteCount
+        return try USDCArrayByteStorage.borrowed(data).withByteReader { reader in
+            var values: [UInt32] = []
+            values.reserveCapacity(count)
+            var byteCursor = 0
+            for _ in 0..<count {
+                values.append(try reader.readUInt32LittleEndian(at: byteCursor))
+                byteCursor += MemoryLayout<UInt32>.size
+            }
+            return values
         }
-        return values
     }
 
     private func readUInt64ArrayPayload(_ valueRep: USDCCrateValueRep, label: String) throws -> [UInt64] {
@@ -1301,20 +1321,22 @@ struct USDCCrateValueDecoder {
         var cursor = try arrayPayloadCursor(valueRep, label: label)
         let count = try readArrayCount(cursor: &cursor, label: "USDC \(label) count")
         let byteCount = try checkedMultiplication(count, MemoryLayout<UInt64>.size, label: "USDC \(label) byte count")
-        let bytes = try arrayBytes(
+        let storage = try arrayByteStorage(
             valueRep,
             cursor: &cursor,
             byteCount: byteCount,
             label: label
         )
-        var values: [UInt64] = []
-        values.reserveCapacity(count)
-        var byteCursor = 0
-        for _ in 0..<count {
-            values.append(littleEndianUInt64(bytes[byteCursor..<(byteCursor + 8)]))
-            byteCursor += MemoryLayout<UInt64>.size
+        return try storage.withByteReader { reader in
+            var values: [UInt64] = []
+            values.reserveCapacity(count)
+            var byteCursor = 0
+            for _ in 0..<count {
+                values.append(try reader.readUInt64LittleEndian(at: byteCursor))
+                byteCursor += MemoryLayout<UInt64>.size
+            }
+            return values
         }
-        return values
     }
 
     private func readVec3fArrayValue(_ valueRep: USDCCrateValueRep) throws -> [USDPoint3D] {
@@ -1328,28 +1350,30 @@ struct USDCCrateValueDecoder {
         let count = try readArrayCount(cursor: &cursor, label: "USDC vec3f array count")
         let scalarCount = try checkedMultiplication(count, 3, label: "USDC vec3f scalar count")
         let byteCount = try checkedMultiplication(scalarCount, MemoryLayout<Float32>.size, label: "USDC vec3f array byte count")
-        let bytes = try arrayBytes(
+        let storage = try arrayByteStorage(
             valueRep,
             cursor: &cursor,
             byteCount: byteCount,
             label: "vec3f array"
         )
-        var points: [USDPoint3D] = []
-        points.reserveCapacity(count)
-        var byteCursor = 0
-        for _ in 0..<count {
-            let x = Double(littleEndianFloat32(bytes[byteCursor..<(byteCursor + 4)]))
-            byteCursor += MemoryLayout<Float32>.size
-            let y = Double(littleEndianFloat32(bytes[byteCursor..<(byteCursor + 4)]))
-            byteCursor += MemoryLayout<Float32>.size
-            let z = Double(littleEndianFloat32(bytes[byteCursor..<(byteCursor + 4)]))
-            byteCursor += MemoryLayout<Float32>.size
-            guard x.isFinite, y.isFinite, z.isFinite else {
-                throw USDImportError.invalidData("USDC vec3f array contains a non-finite point.")
+        return try storage.withByteReader { reader in
+            var points: [USDPoint3D] = []
+            points.reserveCapacity(count)
+            var byteCursor = 0
+            for _ in 0..<count {
+                let x = Double(try reader.readFloat32LittleEndian(at: byteCursor))
+                byteCursor += MemoryLayout<Float32>.size
+                let y = Double(try reader.readFloat32LittleEndian(at: byteCursor))
+                byteCursor += MemoryLayout<Float32>.size
+                let z = Double(try reader.readFloat32LittleEndian(at: byteCursor))
+                byteCursor += MemoryLayout<Float32>.size
+                guard x.isFinite, y.isFinite, z.isFinite else {
+                    throw USDImportError.invalidData("USDC vec3f array contains a non-finite point.")
+                }
+                points.append(USDPoint3D(x: x, y: y, z: z))
             }
-            points.append(USDPoint3D(x: x, y: y, z: z))
+            return points
         }
-        return points
     }
 
     private func readVec3dArrayValue(_ valueRep: USDCCrateValueRep) throws -> [USDPoint3D] {
@@ -1363,25 +1387,27 @@ struct USDCCrateValueDecoder {
         let count = try readArrayCount(cursor: &cursor, label: "USDC vec3d array count")
         let scalarCount = try checkedMultiplication(count, 3, label: "USDC vec3d scalar count")
         let byteCount = try checkedMultiplication(scalarCount, MemoryLayout<UInt64>.size, label: "USDC vec3d array byte count")
-        let bytes = try arrayBytes(
+        let storage = try arrayByteStorage(
             valueRep,
             cursor: &cursor,
             byteCount: byteCount,
             label: "vec3d array"
         )
-        var points: [USDPoint3D] = []
-        points.reserveCapacity(count)
-        var byteCursor = 0
-        for _ in 0..<count {
-            let x = try float64(bytes[byteCursor..<(byteCursor + 8)], label: "USDC vec3d array x")
-            byteCursor += MemoryLayout<UInt64>.size
-            let y = try float64(bytes[byteCursor..<(byteCursor + 8)], label: "USDC vec3d array y")
-            byteCursor += MemoryLayout<UInt64>.size
-            let z = try float64(bytes[byteCursor..<(byteCursor + 8)], label: "USDC vec3d array z")
-            byteCursor += MemoryLayout<UInt64>.size
-            points.append(USDPoint3D(x: x, y: y, z: z))
+        return try storage.withByteReader { reader in
+            var points: [USDPoint3D] = []
+            points.reserveCapacity(count)
+            var byteCursor = 0
+            for _ in 0..<count {
+                let x = try reader.readFloat64LittleEndian(at: byteCursor, label: "USDC vec3d array x")
+                byteCursor += MemoryLayout<UInt64>.size
+                let y = try reader.readFloat64LittleEndian(at: byteCursor, label: "USDC vec3d array y")
+                byteCursor += MemoryLayout<UInt64>.size
+                let z = try reader.readFloat64LittleEndian(at: byteCursor, label: "USDC vec3d array z")
+                byteCursor += MemoryLayout<UInt64>.size
+                points.append(USDPoint3D(x: x, y: y, z: z))
+            }
+            return points
         }
-        return points
     }
 
     private func readFloatArrayValue(_ valueRep: USDCCrateValueRep) throws -> [Double] {
@@ -1394,24 +1420,26 @@ struct USDCCrateValueDecoder {
         var cursor = try arrayPayloadCursor(valueRep, label: "float array")
         let count = try readArrayCount(cursor: &cursor, label: "USDC float array count")
         let byteCount = try checkedMultiplication(count, MemoryLayout<Float32>.size, label: "USDC float array byte count")
-        let bytes = try arrayBytes(
+        let storage = try arrayByteStorage(
             valueRep,
             cursor: &cursor,
             byteCount: byteCount,
             label: "float array"
         )
-        var values: [Double] = []
-        values.reserveCapacity(count)
-        var byteCursor = 0
-        for _ in 0..<count {
-            let value = Double(littleEndianFloat32(bytes[byteCursor..<(byteCursor + 4)]))
-            byteCursor += MemoryLayout<Float32>.size
-            guard value.isFinite else {
-                throw USDImportError.invalidData("USDC float array contains a non-finite value.")
+        return try storage.withByteReader { reader in
+            var values: [Double] = []
+            values.reserveCapacity(count)
+            var byteCursor = 0
+            for _ in 0..<count {
+                let value = Double(try reader.readFloat32LittleEndian(at: byteCursor))
+                byteCursor += MemoryLayout<Float32>.size
+                guard value.isFinite else {
+                    throw USDImportError.invalidData("USDC float array contains a non-finite value.")
+                }
+                values.append(value)
             }
-            values.append(value)
+            return values
         }
-        return values
     }
 
     private func readDoubleArrayValue(_ valueRep: USDCCrateValueRep) throws -> [Double] {
@@ -1424,21 +1452,23 @@ struct USDCCrateValueDecoder {
         var cursor = try arrayPayloadCursor(valueRep, label: "double array")
         let count = try readArrayCount(cursor: &cursor, label: "USDC double array count")
         let byteCount = try checkedMultiplication(count, MemoryLayout<UInt64>.size, label: "USDC double array byte count")
-        let bytes = try arrayBytes(
+        let storage = try arrayByteStorage(
             valueRep,
             cursor: &cursor,
             byteCount: byteCount,
             label: "double array"
         )
-        var values: [Double] = []
-        values.reserveCapacity(count)
-        var byteCursor = 0
-        for _ in 0..<count {
-            let value = try float64(bytes[byteCursor..<(byteCursor + 8)], label: "USDC double array value")
-            byteCursor += MemoryLayout<UInt64>.size
-            values.append(value)
+        return try storage.withByteReader { reader in
+            var values: [Double] = []
+            values.reserveCapacity(count)
+            var byteCursor = 0
+            for _ in 0..<count {
+                let value = try reader.readFloat64LittleEndian(at: byteCursor, label: "USDC double array value")
+                byteCursor += MemoryLayout<UInt64>.size
+                values.append(value)
+            }
+            return values
         }
-        return values
     }
 
     private func readVec2fArrayValue(_ valueRep: USDCCrateValueRep) throws -> [USDPoint2D] {
@@ -1452,26 +1482,28 @@ struct USDCCrateValueDecoder {
         let count = try readArrayCount(cursor: &cursor, label: "USDC vec2f array count")
         let scalarCount = try checkedMultiplication(count, 2, label: "USDC vec2f scalar count")
         let byteCount = try checkedMultiplication(scalarCount, MemoryLayout<Float32>.size, label: "USDC vec2f array byte count")
-        let bytes = try arrayBytes(
+        let storage = try arrayByteStorage(
             valueRep,
             cursor: &cursor,
             byteCount: byteCount,
             label: "vec2f array"
         )
-        var points: [USDPoint2D] = []
-        points.reserveCapacity(count)
-        var byteCursor = 0
-        for _ in 0..<count {
-            let x = Double(littleEndianFloat32(bytes[byteCursor..<(byteCursor + 4)]))
-            byteCursor += MemoryLayout<Float32>.size
-            let y = Double(littleEndianFloat32(bytes[byteCursor..<(byteCursor + 4)]))
-            byteCursor += MemoryLayout<Float32>.size
-            guard x.isFinite, y.isFinite else {
-                throw USDImportError.invalidData("USDC vec2f array contains a non-finite point.")
+        return try storage.withByteReader { reader in
+            var points: [USDPoint2D] = []
+            points.reserveCapacity(count)
+            var byteCursor = 0
+            for _ in 0..<count {
+                let x = Double(try reader.readFloat32LittleEndian(at: byteCursor))
+                byteCursor += MemoryLayout<Float32>.size
+                let y = Double(try reader.readFloat32LittleEndian(at: byteCursor))
+                byteCursor += MemoryLayout<Float32>.size
+                guard x.isFinite, y.isFinite else {
+                    throw USDImportError.invalidData("USDC vec2f array contains a non-finite point.")
+                }
+                points.append(USDPoint2D(x: x, y: y))
             }
-            points.append(USDPoint2D(x: x, y: y))
+            return points
         }
-        return points
     }
 
     private func readVec2dArrayValue(_ valueRep: USDCCrateValueRep) throws -> [USDPoint2D] {
@@ -1485,33 +1517,37 @@ struct USDCCrateValueDecoder {
         let count = try readArrayCount(cursor: &cursor, label: "USDC vec2d array count")
         let scalarCount = try checkedMultiplication(count, 2, label: "USDC vec2d scalar count")
         let byteCount = try checkedMultiplication(scalarCount, MemoryLayout<UInt64>.size, label: "USDC vec2d array byte count")
-        let bytes = try arrayBytes(
+        let storage = try arrayByteStorage(
             valueRep,
             cursor: &cursor,
             byteCount: byteCount,
             label: "vec2d array"
         )
-        var points: [USDPoint2D] = []
-        points.reserveCapacity(count)
-        var byteCursor = 0
-        for _ in 0..<count {
-            let x = try float64(bytes[byteCursor..<(byteCursor + 8)], label: "USDC vec2d array x")
-            byteCursor += MemoryLayout<UInt64>.size
-            let y = try float64(bytes[byteCursor..<(byteCursor + 8)], label: "USDC vec2d array y")
-            byteCursor += MemoryLayout<UInt64>.size
-            points.append(USDPoint2D(x: x, y: y))
+        return try storage.withByteReader { reader in
+            var points: [USDPoint2D] = []
+            points.reserveCapacity(count)
+            var byteCursor = 0
+            for _ in 0..<count {
+                let x = try reader.readFloat64LittleEndian(at: byteCursor, label: "USDC vec2d array x")
+                byteCursor += MemoryLayout<UInt64>.size
+                let y = try reader.readFloat64LittleEndian(at: byteCursor, label: "USDC vec2d array y")
+                byteCursor += MemoryLayout<UInt64>.size
+                points.append(USDPoint2D(x: x, y: y))
+            }
+            return points
         }
-        return points
     }
 
-    private func arrayBytes(
+    private func arrayByteStorage(
         _ valueRep: USDCCrateValueRep,
         cursor: inout Int,
         byteCount: Int,
         label: String
-    ) throws -> [UInt8] {
+    ) throws -> USDCArrayByteStorage {
         guard valueRep.isCompressed else {
-            return try crate.readFileBytes(at: cursor, byteCount: byteCount)
+            let data = try crate.readFileDataSlice(at: cursor, byteCount: byteCount)
+            cursor += byteCount
+            return .borrowed(data)
         }
         guard crate.version >= USDCCrateVersion(major: 0, minor: 5, patch: 0) else {
             throw USDImportError.invalidData("USDC \(label) is marked compressed before compression support.")
@@ -1522,7 +1558,8 @@ struct USDCCrateValueDecoder {
         )
         cursor += MemoryLayout<UInt64>.size
         let compressedBytes = try crate.readFileBytes(at: cursor, byteCount: compressedByteCount)
-        return try USDCFastCompression.decompress(compressedBytes, expectedByteCount: byteCount)
+        cursor += compressedByteCount
+        return .owned(try USDCFastCompression.decompress(compressedBytes, expectedByteCount: byteCount))
     }
 
     private func arrayPayloadCursor(_ valueRep: USDCCrateValueRep, label: String) throws -> Int {
@@ -1718,6 +1755,77 @@ struct USDCCrateValueDecoder {
     private func littleEndianUInt32(_ bytes: ArraySlice<UInt8>) -> UInt32 {
         bytes.enumerated().reduce(UInt32(0)) { result, element in
             result | (UInt32(element.element) << UInt32(element.offset * 8))
+        }
+    }
+}
+
+private enum USDCArrayByteStorage {
+    case borrowed(Data)
+    case owned([UInt8])
+
+    func withByteReader<Result>(_ body: (USDCArrayByteReader) throws -> Result) throws -> Result {
+        switch self {
+        case .borrowed(let data):
+            return try data.withUnsafeBytes { bytes in
+                try body(USDCArrayByteReader(bytes: bytes))
+            }
+        case .owned(let bytes):
+            return try bytes.withUnsafeBytes { bytes in
+                try body(USDCArrayByteReader(bytes: bytes))
+            }
+        }
+    }
+}
+
+private struct USDCArrayByteReader {
+    private let bytes: UnsafeRawBufferPointer
+
+    init(bytes: UnsafeRawBufferPointer) {
+        self.bytes = bytes
+    }
+
+    func readUInt8(at offset: Int) throws -> UInt8 {
+        try requireAvailable(offset: offset, byteCount: MemoryLayout<UInt8>.size)
+        return bytes[offset]
+    }
+
+    func readUInt32LittleEndian(at offset: Int) throws -> UInt32 {
+        let byteCount = MemoryLayout<UInt32>.size
+        try requireAvailable(offset: offset, byteCount: byteCount)
+        var value: UInt32 = 0
+        for index in 0..<byteCount {
+            value |= UInt32(bytes[offset + index]) << UInt32(index * 8)
+        }
+        return value
+    }
+
+    func readUInt64LittleEndian(at offset: Int) throws -> UInt64 {
+        let byteCount = MemoryLayout<UInt64>.size
+        try requireAvailable(offset: offset, byteCount: byteCount)
+        var value: UInt64 = 0
+        for index in 0..<byteCount {
+            value |= UInt64(bytes[offset + index]) << UInt64(index * 8)
+        }
+        return value
+    }
+
+    func readFloat32LittleEndian(at offset: Int) throws -> Float32 {
+        Float32(bitPattern: try readUInt32LittleEndian(at: offset))
+    }
+
+    func readFloat64LittleEndian(at offset: Int, label: String) throws -> Double {
+        let value = Double(bitPattern: try readUInt64LittleEndian(at: offset))
+        guard value.isFinite else {
+            throw USDImportError.invalidData("\(label) is not finite.")
+        }
+        return value
+    }
+
+    private func requireAvailable(offset: Int, byteCount: Int) throws {
+        guard offset >= 0,
+              byteCount >= 0,
+              offset <= bytes.count - byteCount else {
+            throw USDImportError.invalidData("USDC array byte read is outside the payload.")
         }
     }
 }

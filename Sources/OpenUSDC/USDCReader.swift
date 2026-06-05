@@ -451,6 +451,10 @@ public struct USDCCrateFile: Sendable, Equatable {
         try USDCBinaryReader(data: data).readBytes(at: offset, byteCount: byteCount)
     }
 
+    func readFileDataSlice(at offset: Int, byteCount: Int) throws -> Data {
+        try USDCBinaryReader(data: data).readDataSlice(at: offset, byteCount: byteCount)
+    }
+
     func readFileUInt32(at offset: Int) throws -> UInt32 {
         try USDCBinaryReader(data: data).readUInt32(at: offset)
     }
@@ -1010,6 +1014,16 @@ private struct USDCBinaryReader {
         let start = data.index(data.startIndex, offsetBy: offset)
         let end = data.index(start, offsetBy: byteCount)
         return Array(data[start..<end])
+    }
+
+    func readDataSlice(at offset: Int, byteCount: Int) throws -> Data {
+        try validateRange(offset: offset, byteCount: byteCount)
+        guard byteCount > 0 else {
+            return Data()
+        }
+        let start = data.index(data.startIndex, offsetBy: offset)
+        let end = data.index(start, offsetBy: byteCount)
+        return data[start..<end]
     }
 
     private func readByteUnchecked(at offset: Int) -> UInt8 {
