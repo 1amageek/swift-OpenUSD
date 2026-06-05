@@ -46,6 +46,7 @@ Source paths:
 | `testSdfParsing.testenv/53_bad_typeName.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/53_bad_typeName.usda` |
 | `testSdfParsing.testenv/61_bad_primName.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/61_bad_primName.usda` |
 | `testSdfParsing.testenv/64_bad_boolPrimInstantiate.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/64_bad_boolPrimInstantiate.usda` |
+| `testSdfParsing.testenv/66_bad_attrVariability.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/66_bad_attrVariability.usda` |
 | `testSdfParsing.testenv/69_bad_list.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/69_bad_list.usda` |
 | `testSdfParsing.testenv/70_bad_list.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/70_bad_list.usda` |
 | `testSdfParsing.testenv/71_empty_shaped_attrs.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/71_empty_shaped_attrs.usda` |

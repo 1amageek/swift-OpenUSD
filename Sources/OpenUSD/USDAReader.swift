@@ -207,9 +207,9 @@ public struct USDAReader: USDSceneReader {
 
     private func validatePropertyDeclaration(startingAt index: String.Index, in text: String) throws {
         var cursor = index
-        if let qualifier = propertyDeclarationQualifier(at: cursor, in: text) {
+        while let qualifier = propertyDeclarationQualifier(at: cursor, in: text) {
             cursor = text.index(cursor, offsetBy: qualifier.count)
-            skipWhitespace(in: text, index: &cursor)
+            try skipPropertyDeclarationWhitespace(in: text, index: &cursor)
         }
         guard cursor < text.endIndex else {
             return
@@ -263,14 +263,18 @@ public struct USDAReader: USDSceneReader {
             cursor = text.index(after: cursor)
         }
         let propertyName = String(text[propertyNameStart..<cursor])
-        skipWhitespace(in: text, index: &cursor)
+        if skipPropertyNameTrailingWhitespace(in: text, index: &cursor) {
+            return
+        }
         if cursor < text.endIndex, text[cursor] == "(" {
             let closeParenthesis = try matchingParenthesis(startingAt: cursor, in: text)
             cursor = text.index(after: closeParenthesis)
-            skipWhitespace(in: text, index: &cursor)
+            if skipPropertyNameTrailingWhitespace(in: text, index: &cursor) {
+                return
+            }
         }
         guard cursor < text.endIndex, text[cursor] == "=" else {
-            return
+            throw USDImportError.invalidData("USDA property declaration contains unexpected token after property name.")
         }
         cursor = text.index(after: cursor)
         try skipPropertyValueStartWhitespace(in: text, index: &cursor)
@@ -278,6 +282,10 @@ public struct USDAReader: USDSceneReader {
             return
         }
         if text[cursor...].hasPrefix("None") {
+            return
+        }
+        if propertyName.hasSuffix(".connect") {
+            try validateRelationshipTargetValue(named: propertyName, startingAt: cursor, in: text)
             return
         }
         if typeName == "rel" {
@@ -367,7 +375,7 @@ public struct USDAReader: USDSceneReader {
     }
 
     private func propertyDeclarationQualifier(at index: String.Index, in text: String) -> String? {
-        for qualifier in ["custom", "uniform", "varying"] {
+        for qualifier in ["custom", "uniform", "varying", "delete", "add", "reorder"] {
             guard token(qualifier, matchesAt: index, in: text) else {
                 continue
             }
@@ -1172,6 +1180,19 @@ public struct USDAReader: USDSceneReader {
             }
             index = text.index(after: index)
         }
+    }
+
+    private func skipPropertyNameTrailingWhitespace(in text: String, index: inout String.Index) -> Bool {
+        while index < text.endIndex, text[index].isWhitespace {
+            if text[index].isNewline {
+                return true
+            }
+            index = text.index(after: index)
+        }
+        guard index < text.endIndex else {
+            return true
+        }
+        return text[index] == ";" || text[index] == "}" || text[index] == "#"
     }
 
     private func skipPrimDeclarationWhitespace(in text: String, index: inout String.Index) throws {

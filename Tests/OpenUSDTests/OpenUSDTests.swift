@@ -1534,6 +1534,18 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingBadAttributeVariabilityFixtureThrowsTypedError() throws {
+        let data = try openUSDFixture("testSdfParsing.testenv/66_bad_attrVariability.usda")
+
+        let message = try usdImportFailureMessage {
+            _ = try USDAReader().readLayer(from: data)
+        }
+
+        #expect(message.contains("property declaration"))
+        #expect(message.contains("unexpected token"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingDuplicatePrimFixtureThrowsTypedError() throws {
         let data = try openUSDFixture("testSdfParsing.testenv/90_bad_dupePrim.usda")
 
