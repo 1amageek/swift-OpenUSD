@@ -1544,6 +1544,17 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingBadSpecifierFixtureThrowsTypedError() throws {
+        let data = try openUSDFixture("testSdfParsing.testenv/30_bad_specifier.usda")
+
+        let message = try usdImportFailureMessage {
+            _ = try USDAReader().readLayer(from: data)
+        }
+
+        #expect(message.contains("unexpected top-level syntax"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingBadValueTypeFixturesThrowTypedErrors() throws {
         for fixturePath in [
             "testSdfParsing.testenv/91_bad_valueType.usda",
@@ -1720,6 +1731,18 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingBadPrimNameFixtureThrowsTypedError() throws {
+        let data = try openUSDFixture("testSdfParsing.testenv/61_bad_primName.usda")
+
+        let message = try usdImportFailureMessage {
+            _ = try USDAReader().readLayer(from: data)
+        }
+
+        #expect(message.contains("prim name"))
+        #expect(message.contains("valid identifier"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingHiddenMetadataFixtureReadsLayer() throws {
         let data = try openUSDFixture("testSdfParsing.testenv/93_hidden.usda")
 
@@ -1746,6 +1769,17 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingBadTypeNameSyntaxFixtureThrowsTypedError() throws {
+        let data = try openUSDFixture("testSdfParsing.testenv/53_bad_typeName.usda")
+
+        let message = try usdImportFailureMessage {
+            _ = try USDAReader().readLayer(from: data)
+        }
+
+        #expect(message.contains("unterminated"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingBadHiddenMetadataFixturesThrowTypedErrors() throws {
         for fixturePath in [
             "testSdfParsing.testenv/80_bad_hidden.usda",
@@ -1761,6 +1795,18 @@ struct OpenUSDTests {
             #expect(message.contains("hidden metadata"))
             #expect(message.contains("bad"))
         }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingBadBoolPrimMetadataFixtureThrowsTypedError() throws {
+        let data = try openUSDFixture("testSdfParsing.testenv/64_bad_boolPrimInstantiate.usda")
+
+        let message = try usdImportFailureMessage {
+            _ = try USDAReader().readLayer(from: data)
+        }
+
+        #expect(message.contains("hidden metadata"))
+        #expect(message.contains("bad"))
     }
 
     @Test(.timeLimit(.minutes(1)))
