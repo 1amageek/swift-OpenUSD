@@ -29,6 +29,7 @@ public struct USDAReader: USDSceneReader {
         let text = try readerVisibleText(from: text)
         try validateSignature(in: text)
         try validateTopLevelSyntax(in: text)
+        try validatePrimAttributeSyntax(in: text)
         if let timeCode = options.timeCode, !timeCode.isFinite {
             throw USDImportError.invalidData("USDA requested timeCode must be finite.")
         }
@@ -49,6 +50,7 @@ public struct USDAReader: USDSceneReader {
         let text = try readerVisibleText(from: text)
         try validateSignature(in: text)
         try validateTopLevelSyntax(in: text)
+        try validatePrimAttributeSyntax(in: text)
         let metadataBody = try layerMetadataBody(in: text)
         let defaultPrim = try metadataBody.flatMap { try parseOptionalString(named: "defaultPrim", in: $0) }
         let metersPerUnit = try metadataBody.flatMap { try parseOptionalDouble(named: "metersPerUnit", in: $0) }
@@ -130,6 +132,87 @@ public struct USDAReader: USDSceneReader {
             }
             skipLineComment(in: text, index: &index)
         }
+    }
+
+    private func validatePrimAttributeSyntax(in text: String) throws {
+        let prims = try parseDirectPrims(in: text)
+        for prim in prims {
+            try validateBoolAssignments(in: directAttributeText(from: prim.body))
+            try validatePrimAttributeSyntax(in: prim.body)
+        }
+    }
+
+    private func validateBoolAssignments(in text: String) throws {
+        var cursor = text.startIndex
+        while cursor < text.endIndex {
+            let character = text[cursor]
+            if character == "#" {
+                skipLineComment(in: text, index: &cursor)
+                continue
+            }
+            if character == "\"" || character == "'" {
+                try skipQuotedString(in: text, index: &cursor)
+                continue
+            }
+            guard boolDeclarationKeyword(at: cursor, in: text) else {
+                cursor = text.index(after: cursor)
+                continue
+            }
+            try validateBoolAssignment(startingAt: cursor, in: text)
+            cursor = text.index(cursor, offsetBy: "bool".count)
+        }
+    }
+
+    private func validateBoolAssignment(startingAt boolIndex: String.Index, in text: String) throws {
+        var cursor = text.index(boolIndex, offsetBy: "bool".count)
+        skipWhitespace(in: text, index: &cursor)
+        while cursor < text.endIndex {
+            let character = text[cursor]
+            if character.isWhitespace || character == "=" || character == "(" || character == "\n" || character == "\r" {
+                break
+            }
+            cursor = text.index(after: cursor)
+        }
+        skipWhitespace(in: text, index: &cursor)
+        if cursor < text.endIndex, text[cursor] == "(" {
+            let metadataEnd = try matchingParenthesis(startingAt: cursor, in: text)
+            cursor = text.index(after: metadataEnd)
+            skipWhitespace(in: text, index: &cursor)
+        }
+        guard cursor < text.endIndex, text[cursor] == "=" else {
+            return
+        }
+        cursor = text.index(after: cursor)
+        skipWhitespace(in: text, index: &cursor)
+        let valueStart = cursor
+        while cursor < text.endIndex {
+            let character = text[cursor]
+            if character.isWhitespace || character == ";" || character == "," || character == ")" || character == "]" || character == "}" {
+                break
+            }
+            cursor = text.index(after: cursor)
+        }
+        let value = String(text[valueStart..<cursor])
+        guard ["true", "false", "0", "1", "None"].contains(value) else {
+            throw USDImportError.invalidData("USDA bool attribute contains invalid value \(value).")
+        }
+    }
+
+    private func boolDeclarationKeyword(at index: String.Index, in text: String) -> Bool {
+        let keyword = "bool"
+        guard text[index...].hasPrefix(keyword),
+              let keywordEnd = text.index(index, offsetBy: keyword.count, limitedBy: text.endIndex) else {
+            return false
+        }
+        let hasLeadingBoundary: Bool
+        if index == text.startIndex {
+            hasLeadingBoundary = true
+        } else {
+            let previous = text[text.index(before: index)]
+            hasLeadingBoundary = previous.isWhitespace || previous == ";" || previous == "{" || previous == "("
+        }
+        let hasTrailingBoundary = keywordEnd == text.endIndex || text[keywordEnd].isWhitespace
+        return hasLeadingBoundary && hasTrailingBoundary
     }
 
     private func readerVisibleText(from text: String) throws -> String {

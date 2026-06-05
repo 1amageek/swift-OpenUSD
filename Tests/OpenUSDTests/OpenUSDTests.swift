@@ -1464,6 +1464,18 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingBadBoolValueFixtureThrowsTypedError() throws {
+        let data = try openUSDFixture("testSdfParsing.testenv/10_bad_value.usda")
+
+        let message = try usdImportFailureMessage {
+            _ = try USDAReader().readLayer(from: data)
+        }
+
+        #expect(message.contains("bool attribute"))
+        #expect(message.contains("one"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingEndTokenFixtureIgnoresTrailingGarbage() throws {
         let data = try openUSDFixture("testSdfParsing.testenv/07_end.usda")
 
