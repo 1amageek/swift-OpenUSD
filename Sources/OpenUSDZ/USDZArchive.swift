@@ -33,6 +33,10 @@ public struct USDZArchive: Sendable, Equatable {
         entry(at: path)?.data
     }
 
+    public func assetData(for path: String) throws -> Data {
+        try data(for: USDZLayerPath.parse(path), requiringUSDLayer: false)
+    }
+
     public func data(for path: String) throws -> Data {
         try data(for: USDZLayerPath.parse(path))
     }
@@ -54,6 +58,10 @@ public struct USDZArchive: Sendable, Equatable {
     }
 
     private func data(for layerPath: USDZLayerPath) throws -> Data {
+        try data(for: layerPath, requiringUSDLayer: true)
+    }
+
+    private func data(for layerPath: USDZLayerPath, requiringUSDLayer: Bool) throws -> Data {
         var archive = self
         for (index, entryPath) in layerPath.entryPaths.enumerated() {
             guard let entry = archive.entry(at: entryPath) else {
@@ -61,7 +69,7 @@ public struct USDZArchive: Sendable, Equatable {
             }
             let isLastEntry = index == layerPath.entryPaths.count - 1
             if isLastEntry {
-                guard entry.isUSDLayer else {
+                guard !requiringUSDLayer || entry.isUSDLayer else {
                     throw USDImportError.unsupportedFeature("USDZ entry \(entry.path) is not a USD layer.")
                 }
                 return entry.data

@@ -43,6 +43,72 @@ struct USDZArchiveLayerTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFUSDZResolverFixtureReadsEntriesAndNestedData() throws {
+        let packageData = try openSDFUSDZResolverFixture("test.usdz")
+        let archive = try USDZArchive(data: packageData)
+        #expect(archive.entry(at: "bogus.file") == nil)
+        #expect(throws: USDImportError.self) {
+            _ = try archive.assetData(for: "bogus.file")
+        }
+        #expect(archive.entryPaths == ["file_1.usdc", "nested.usdz", "file_2.usdc", "subdir/file_3.usdc"])
+
+        let topLevelCases: [SDFZipEntryCase] = [
+            SDFZipEntryCase(path: "file_1.usdc", dataOffset: 64, size: 680),
+            SDFZipEntryCase(path: "nested.usdz", dataOffset: 832, size: 2_376),
+            SDFZipEntryCase(path: "file_2.usdc", dataOffset: 3_264, size: 621),
+            SDFZipEntryCase(path: "subdir/file_3.usdc", dataOffset: 3_968, size: 640),
+        ]
+
+        for testCase in topLevelCases {
+            try assertSDFUSDZResolverEntry(
+                testCase,
+                in: archive,
+                packageData: packageData,
+                sourcePath: "src/\(testCase.path)"
+            )
+        }
+
+        #expect(try archive.assetData(for: "nested.usdz") == openSDFUSDZResolverFixture("src/nested.usdz"))
+        #expect(try archive.data(for: "file_1.usdc") == openSDFUSDZResolverFixture("src/file_1.usdc"))
+        #expect(try archive.data(for: "file_2.usdc") == openSDFUSDZResolverFixture("src/file_2.usdc"))
+        #expect(
+            try archive.data(for: "subdir/file_3.usdc")
+                == openSDFUSDZResolverFixture("src/subdir/file_3.usdc")
+        )
+        #expect(try archive.data(for: "nested.usdz[file_1.usdc]") == openSDFUSDZResolverFixture("src/file_1.usdc"))
+        #expect(try archive.data(for: "nested.usdz[file_2.usdc]") == openSDFUSDZResolverFixture("src/file_2.usdc"))
+        #expect(
+            try archive.data(for: "nested.usdz[subdir/file_3.usdc]")
+                == openSDFUSDZResolverFixture("src/subdir/file_3.usdc")
+        )
+
+        let nestedEntry = try #require(archive.entry(at: "nested.usdz"))
+        let nestedArchive = try USDZArchive(data: nestedEntry.data)
+        let nestedCases: [SDFZipEntryCase] = [
+            SDFZipEntryCase(path: "file_1.usdc", dataOffset: 896, size: 680),
+            SDFZipEntryCase(path: "file_2.usdc", dataOffset: 1_664, size: 621),
+            SDFZipEntryCase(path: "subdir/file_3.usdc", dataOffset: 2_368, size: 640),
+        ]
+
+        for testCase in nestedCases {
+            let entry = try #require(nestedArchive.entry(at: testCase.path))
+            let sourceData = try openSDFUSDZResolverFixture("src/\(testCase.path)")
+            let nestedPath = "nested.usdz[\(testCase.path)]"
+            #expect(nestedEntry.dataOffset + entry.dataOffset == testCase.dataOffset)
+            #expect(entry.size == testCase.size)
+            #expect(entry.uncompressedSize == testCase.size)
+            #expect(entry.compressionMethod == 0)
+            #expect(!entry.isEncrypted)
+            #expect(entry.isPayload64ByteAligned)
+            #expect(entry.data == sourceData)
+            #expect(entry.data.dropFirst(100).elementsEqual(sourceData.dropFirst(100)))
+            try assertDataSlice(packageData, offset: testCase.dataOffset, equals: sourceData)
+            #expect(try archive.assetData(for: nestedPath) == sourceData)
+            #expect(try archive.data(for: nestedPath) == sourceData)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSingleUSDZFixturesResolveDefaultLayerData() throws {
         let cases = [
             (archive: "single_usd.usdz", layer: "test.usd", source: "single/test.usd"),
@@ -217,6 +283,10 @@ private func openSDFZipFixture(_ relativePath: String) throws -> Data {
     try openFixture(root: "testSdfZipFile.testenv", relativePath: relativePath)
 }
 
+private func openSDFUSDZResolverFixture(_ relativePath: String) throws -> Data {
+    try openFixture(root: "testSdfUsdzResolver", relativePath: relativePath)
+}
+
 private func openFixture(root: String, relativePath: String) throws -> Data {
     let url = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()
@@ -231,7 +301,7 @@ private struct SDFZipEntryCase {
     var path: String
     var dataOffset: Int
     var size: Int
-    var crc32: UInt32
+    var crc32: UInt32 = 0
     var normalizesLineEndings: Bool = false
 }
 
@@ -239,4 +309,31 @@ private extension Data {
     func normalizingCRLFLineEndings() -> Data {
         Data(String(decoding: self, as: UTF8.self).replacingOccurrences(of: "\r\n", with: "\n").utf8)
     }
+}
+
+private func assertSDFUSDZResolverEntry(
+    _ testCase: SDFZipEntryCase,
+    in archive: USDZArchive,
+    packageData: Data,
+    sourcePath: String
+) throws {
+    let entry = try #require(archive.entry(at: testCase.path))
+    let sourceData = try openSDFUSDZResolverFixture(sourcePath)
+    #expect(entry.dataOffset == testCase.dataOffset)
+    #expect(entry.size == testCase.size)
+    #expect(entry.uncompressedSize == testCase.size)
+    #expect(entry.compressionMethod == 0)
+    #expect(!entry.isEncrypted)
+    #expect(entry.isPayload64ByteAligned)
+    let entryData = try #require(archive.entryData(at: testCase.path))
+    #expect(entryData == sourceData)
+    #expect(entryData.dropFirst(100).elementsEqual(sourceData.dropFirst(100)))
+    try assertDataSlice(packageData, offset: testCase.dataOffset, equals: sourceData)
+    #expect(try archive.assetData(for: testCase.path) == sourceData)
+}
+
+private func assertDataSlice(_ data: Data, offset: Int, equals expectedData: Data) throws {
+    let start = data.index(data.startIndex, offsetBy: offset)
+    let end = data.index(start, offsetBy: expectedData.count)
+    #expect(Data(data[start..<end]) == expectedData)
 }
