@@ -1464,15 +1464,23 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func openUSDSDFParsingBadBoolValueFixtureThrowsTypedError() throws {
-        let data = try openUSDFixture("testSdfParsing.testenv/10_bad_value.usda")
+    func openUSDSDFParsingBadScalarValueFixturesThrowTypedErrors() throws {
+        let cases = [
+            ("testSdfParsing.testenv/10_bad_value.usda", "bool attribute", "one"),
+            ("testSdfParsing.testenv/12_bad_value.usda", "string attribute", "1.23"),
+            ("testSdfParsing.testenv/13_bad_value.usda", "int attribute", "\"this"),
+            ("testSdfParsing.testenv/14_bad_value.usda", "int attribute", "incorrect"),
+        ]
+        for (fixturePath, attributeDescription, invalidValue) in cases {
+            let data = try openUSDFixture(fixturePath)
 
-        let message = try usdImportFailureMessage {
-            _ = try USDAReader().readLayer(from: data)
+            let message = try usdImportFailureMessage {
+                _ = try USDAReader().readLayer(from: data)
+            }
+
+            #expect(message.contains(attributeDescription))
+            #expect(message.contains(invalidValue))
         }
-
-        #expect(message.contains("bool attribute"))
-        #expect(message.contains("one"))
     }
 
     @Test(.timeLimit(.minutes(1)))

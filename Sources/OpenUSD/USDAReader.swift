@@ -137,12 +137,12 @@ public struct USDAReader: USDSceneReader {
     private func validatePrimAttributeSyntax(in text: String) throws {
         let prims = try parseDirectPrims(in: text)
         for prim in prims {
-            try validateBoolAssignments(in: directAttributeText(from: prim.body))
+            try validateScalarAssignments(in: directAttributeText(from: prim.body))
             try validatePrimAttributeSyntax(in: prim.body)
         }
     }
 
-    private func validateBoolAssignments(in text: String) throws {
+    private func validateScalarAssignments(in text: String) throws {
         var cursor = text.startIndex
         while cursor < text.endIndex {
             let character = text[cursor]
@@ -154,17 +154,17 @@ public struct USDAReader: USDSceneReader {
                 try skipQuotedString(in: text, index: &cursor)
                 continue
             }
-            guard boolDeclarationKeyword(at: cursor, in: text) else {
+            guard let valueType = scalarAttributeType(at: cursor, in: text) else {
                 cursor = text.index(after: cursor)
                 continue
             }
-            try validateBoolAssignment(startingAt: cursor, in: text)
-            cursor = text.index(cursor, offsetBy: "bool".count)
+            try validateScalarAssignment(type: valueType, startingAt: cursor, in: text)
+            cursor = text.index(cursor, offsetBy: valueType.count)
         }
     }
 
-    private func validateBoolAssignment(startingAt boolIndex: String.Index, in text: String) throws {
-        var cursor = text.index(boolIndex, offsetBy: "bool".count)
+    private func validateScalarAssignment(type valueType: String, startingAt typeIndex: String.Index, in text: String) throws {
+        var cursor = text.index(typeIndex, offsetBy: valueType.count)
         skipWhitespace(in: text, index: &cursor)
         while cursor < text.endIndex {
             let character = text[cursor]
@@ -193,13 +193,35 @@ public struct USDAReader: USDSceneReader {
             cursor = text.index(after: cursor)
         }
         let value = String(text[valueStart..<cursor])
-        guard ["true", "false", "0", "1", "None"].contains(value) else {
-            throw USDImportError.invalidData("USDA bool attribute contains invalid value \(value).")
+        switch valueType {
+        case "bool":
+            guard ["true", "false", "0", "1", "None"].contains(value) else {
+                throw USDImportError.invalidData("USDA bool attribute contains invalid value \(value).")
+            }
+        case "int":
+            guard value == "None" || Int(value) != nil else {
+                throw USDImportError.invalidData("USDA int attribute contains invalid value \(value).")
+            }
+        case "string":
+            guard value == "None" || value.first == "\"" || value.first == "'" else {
+                throw USDImportError.invalidData("USDA string attribute contains invalid value \(value).")
+            }
+        default:
+            return
         }
     }
 
-    private func boolDeclarationKeyword(at index: String.Index, in text: String) -> Bool {
-        let keyword = "bool"
+    private func scalarAttributeType(at index: String.Index, in text: String) -> String? {
+        for keyword in ["bool", "int", "string"] {
+            guard scalarAttributeType(keyword, matchesAt: index, in: text) else {
+                continue
+            }
+            return keyword
+        }
+        return nil
+    }
+
+    private func scalarAttributeType(_ keyword: String, matchesAt index: String.Index, in text: String) -> Bool {
         guard text[index...].hasPrefix(keyword),
               let keywordEnd = text.index(index, offsetBy: keyword.count, limitedBy: text.endIndex) else {
             return false

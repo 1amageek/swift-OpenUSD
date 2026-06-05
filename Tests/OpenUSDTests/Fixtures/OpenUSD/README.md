@@ -27,6 +27,9 @@ Source paths:
 | `testSdfParsing.testenv/08_bad_file.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/08_bad_file.usda` |
 | `testSdfParsing.testenv/09_bad_type.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/09_bad_type.usda` |
 | `testSdfParsing.testenv/10_bad_value.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/10_bad_value.usda` |
+| `testSdfParsing.testenv/12_bad_value.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/12_bad_value.usda` |
+| `testSdfParsing.testenv/13_bad_value.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/13_bad_value.usda` |
+| `testSdfParsing.testenv/14_bad_value.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/14_bad_value.usda` |
 | `testSdfParsing.testenv/20_optionalsemicolons.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/20_optionalsemicolons.usda` |
 | `testSdfParsing.testenv/41_noEndingNewline.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/41_noEndingNewline.usda` |
 | `testSdfParsing.testenv/46_weirdStringContent.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/46_weirdStringContent.usda` |
