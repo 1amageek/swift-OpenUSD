@@ -1754,6 +1754,61 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func usdzReaderReadsSpecificLayerGraphsFromOpenUSDLayerPaths() throws {
+        let cases: [(fixture: String, rootPath: String, expectedRootPath: String, paths: [String])] = [
+            (
+                fixture: "testUsdUsdzFileFormat/anchored_refs.usdz",
+                rootPath: "sub/ref.usda",
+                expectedRootPath: "sub/ref.usda",
+                paths: [
+                    "sub/ref.usda",
+                ]
+            ),
+            (
+                fixture: "testUsdUsdzFileFormat/nested_anchored_refs.usdz",
+                rootPath: "anchored_refs.usdz",
+                expectedRootPath: "anchored_refs.usdz[root.usd]",
+                paths: [
+                    "anchored_refs.usdz[root.usd]",
+                    "anchored_refs.usdz[ref.usd]",
+                    "anchored_refs.usdz[sub/ref.usda]",
+                    "anchored_refs.usdz[sub/ref.usdc]",
+                ]
+            ),
+            (
+                fixture: "testUsdUsdzFileFormat/nested_anchored_refs.usdz",
+                rootPath: "anchored_refs.usdz[sub/ref.usda]",
+                expectedRootPath: "anchored_refs.usdz[sub/ref.usda]",
+                paths: [
+                    "anchored_refs.usdz[sub/ref.usda]",
+                ]
+            ),
+        ]
+
+        for testCase in cases {
+            let package = try openUSDFixture(testCase.fixture)
+
+            let graph = try USDZReader().readLayerGraph(from: package, at: testCase.rootPath)
+
+            #expect(graph.rootPath == testCase.expectedRootPath)
+            #expect(graph.paths == testCase.paths)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdzReaderMaterializesSpecificLayerPathScene() throws {
+        let package = makeUSDZFixture(entries: [
+            ("root.usda", Data("#usda 1.0\n".utf8)),
+            ("meshes/triangle.usda", makeUSDAMeshLayer(name: "Triangle")),
+        ], alignPayloads: true)
+
+        let scene = try USDZReader().read(from: package, at: "meshes/triangle.usda")
+
+        #expect(scene.meshes.map(\.name) == ["Triangle"])
+        #expect(scene.meshes.first?.faceVertexIndices == [0, 1, 2])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func usdzReaderRejectsUnalignedPayload() throws {
         let usda = Data("""
         #usda 1.0

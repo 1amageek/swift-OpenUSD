@@ -17,9 +17,25 @@ public struct USDZReader: USDSceneReader {
         return try readResolvedScene(defaultLayerPath: defaultLayerPath, in: archive)
     }
 
+    public func read(from data: Data, at rootPath: String) throws -> USDScene {
+        let archive = try readArchive(from: data)
+        let rootLayerPath = try rootLayerPath(rootPath, in: archive)
+        return try readResolvedScene(defaultLayerPath: rootLayerPath, in: archive)
+    }
+
     public func readLayerGraph(from data: Data) throws -> USDZLayerGraph {
         let archive = try readArchive(from: data)
         let defaultLayerPath = try defaultLayerPath(in: archive)
+        return try readLayerGraph(defaultLayerPath: defaultLayerPath, in: archive)
+    }
+
+    public func readLayerGraph(from data: Data, at rootPath: String) throws -> USDZLayerGraph {
+        let archive = try readArchive(from: data)
+        let rootLayerPath = try rootLayerPath(rootPath, in: archive)
+        return try readLayerGraph(defaultLayerPath: rootLayerPath, in: archive)
+    }
+
+    private func readLayerGraph(defaultLayerPath: String, in archive: USDZArchive) throws -> USDZLayerGraph {
         let layers = try readResolvedLayers(defaultLayerPath: defaultLayerPath, in: archive)
         return USDZLayerGraph(
             rootPath: defaultLayerPath,
@@ -61,6 +77,48 @@ public struct USDZReader: USDSceneReader {
             return "\(defaultLayer.path)[\(nestedDefaultLayer.path)]"
         }
         throw USDImportError.unsupportedFeature("USDZ default layer must be the first file and use a USD extension.")
+    }
+
+    private func rootLayerPath(_ rootPath: String, in archive: USDZArchive) throws -> String {
+        let layerPath = try USDZLayerPath.parse(rootPath)
+        guard !layerPath.entryPaths.isEmpty else {
+            throw USDImportError.invalidData("USDZ layer path is empty.")
+        }
+        return try rootLayerPath(entryPaths: layerPath.entryPaths, in: archive).stringValue
+    }
+
+    private func rootLayerPath(entryPaths: [String], in archive: USDZArchive) throws -> USDZLayerPath {
+        var currentArchive = archive
+        var resolvedEntryPaths: [String] = []
+        for (index, entryPath) in entryPaths.enumerated() {
+            guard let entry = currentArchive.entry(at: entryPath) else {
+                throw USDImportError.invalidData("USDZ package is missing entry \(entryPath).")
+            }
+
+            resolvedEntryPaths.append(entry.path)
+            let isLastEntry = index == entryPaths.count - 1
+            if isLastEntry {
+                if entry.isUSDLayer {
+                    return USDZLayerPath(entryPaths: resolvedEntryPaths)
+                }
+                guard entry.fileExtension == "usdz" else {
+                    throw USDImportError.unsupportedFeature("USDZ entry \(entry.path) is not a USD layer.")
+                }
+                let nestedArchive = try USDZArchive(data: entry.data)
+                let nestedDefaultLayerPath = try defaultLayerPath(in: nestedArchive)
+                let nestedDefaultEntryPaths = try USDZLayerPath.parse(nestedDefaultLayerPath).entryPaths
+                return USDZLayerPath(
+                    entryPaths: resolvedEntryPaths + nestedDefaultEntryPaths
+                )
+            }
+
+            guard entry.fileExtension == "usdz" else {
+                throw USDImportError.unsupportedFeature("USDZ entry \(entry.path) is not a nested USDZ package.")
+            }
+            currentArchive = try USDZArchive(data: entry.data)
+        }
+
+        throw USDImportError.invalidData("USDZ layer path is empty.")
     }
 
     private func readResolvedScene(defaultLayerPath: String, in archive: USDZArchive) throws -> USDScene {
