@@ -1167,6 +1167,34 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func generatedUSDATimeSampledMeshFixtureUsesRequestedSnapshot() throws {
+        let fixture = try generatedFixture("animated_mesh.usda")
+
+        let scene = try USDAReader().read(from: fixture, options: USDSceneReadingOptions(timeCode: 2))
+
+        let mesh = try #require(scene.meshes.first)
+        #expect(mesh.points == [
+            USDPoint3D(x: 0, y: 0, z: 1),
+            USDPoint3D(x: 1, y: 0, z: 1),
+            USDPoint3D(x: 0, y: 1, z: 1),
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func generatedUSDCTimeSampledMeshFixtureUsesRequestedSnapshot() throws {
+        let fixture = try generatedFixture("animated_mesh.usdc")
+
+        let scene = try USDCReader().read(from: fixture, options: USDSceneReadingOptions(timeCode: 2))
+
+        let mesh = try #require(scene.meshes.first)
+        #expect(mesh.points == [
+            USDPoint3D(x: 0, y: 0, z: 1),
+            USDPoint3D(x: 1, y: 0, z: 1),
+            USDPoint3D(x: 0, y: 1, z: 1),
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func generatedUSDCBlockedValueFixtureUsesFirstUnblockedSampleSnapshot() throws {
         let fixture = try generatedFixture("blocked_values_mesh.usdc")
 
@@ -1340,7 +1368,7 @@ struct OpenUSDTests {
                 USDCReference(
                     assetPath: "assets/ref.usda",
                     primPath: "/Scope.target",
-                    layerOffset: USDCLayerOffset(offset: 1.5, scale: 2)
+                    layerOffset: USDLayerOffset(offset: 1.5, scale: 2)
                 ),
             ]
         )))
@@ -1349,7 +1377,7 @@ struct OpenUSDTests {
                 USDCPayload(
                     assetPath: "assets/payload.usdc",
                     primPath: "/PayloadTarget",
-                    layerOffset: USDCLayerOffset(offset: -2, scale: 0.5)
+                    layerOffset: USDLayerOffset(offset: -2, scale: 0.5)
                 ),
             ]
         )))
@@ -1361,14 +1389,16 @@ struct OpenUSDTests {
             USDCompositionArc(
                 assetPath: "assets/ref.usda",
                 sitePrimPath: "/Scope",
-                targetPrimPath: "/Scope.target"
+                targetPrimPath: "/Scope.target",
+                layerOffset: USDLayerOffset(offset: 1.5, scale: 2)
             ),
         ])
         #expect(layer.composition.payloads == [
             USDCompositionArc(
                 assetPath: "assets/payload.usdc",
                 sitePrimPath: "/Scope",
-                targetPrimPath: "/PayloadTarget"
+                targetPrimPath: "/PayloadTarget",
+                layerOffset: USDLayerOffset(offset: -2, scale: 0.5)
             ),
             USDCompositionArc(
                 assetPath: "assets/single.usda",
@@ -1376,6 +1406,15 @@ struct OpenUSDTests {
                 targetPrimPath: "/Scope"
             ),
         ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdLayerOffsetMapsBetweenLayerAndStageTime() throws {
+        let offset = USDLayerOffset(offset: 10, scale: 2)
+
+        #expect(offset.stageTime(forLayerTime: 12) == 34)
+        #expect(try offset.layerTime(forStageTime: 34) == 12)
+        #expect(offset.concatenating(USDLayerOffset(offset: 3, scale: 4)) == USDLayerOffset(offset: 16, scale: 8))
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -1387,15 +1426,15 @@ struct OpenUSDTests {
             metersPerUnit = 1
             upAxis = "Z"
             subLayers = [
-                @./layers/base.usda@
+                @./layers/base.usda@ (offset = 10; scale = 0.5)
             ]
         )
 
         def "Scene" (
             references = [
-                @./refs/model.usda@</Model>
+                @./refs/model.usda@</Model> (offset = 24; scale = 2)
             ]
-            payload = @./payloads/heavy.usdc@</Payload>
+            payload = @./payloads/heavy.usdc@</Payload> (offset = -3; scale = 0.25)
         )
         {
         }
@@ -1406,19 +1445,27 @@ struct OpenUSDTests {
         #expect(layer.defaultPrim == "Scene")
         #expect(layer.metersPerUnit == 1)
         #expect(layer.upAxis == .z)
-        #expect(layer.composition.subLayerAssetPaths == ["./layers/base.usda"])
+        #expect(layer.composition.sublayerAssetPaths == ["./layers/base.usda"])
+        #expect(layer.composition.sublayers == [
+            USDSublayer(
+                assetPath: "./layers/base.usda",
+                layerOffset: USDLayerOffset(offset: 10, scale: 0.5)
+            ),
+        ])
         #expect(layer.composition.references == [
             USDCompositionArc(
                 assetPath: "./refs/model.usda",
                 sitePrimPath: "/Scene",
-                targetPrimPath: "/Model"
+                targetPrimPath: "/Model",
+                layerOffset: USDLayerOffset(offset: 24, scale: 2)
             ),
         ])
         #expect(layer.composition.payloads == [
             USDCompositionArc(
                 assetPath: "./payloads/heavy.usdc",
                 sitePrimPath: "/Scene",
-                targetPrimPath: "/Payload"
+                targetPrimPath: "/Payload",
+                layerOffset: USDLayerOffset(offset: -3, scale: 0.25)
             ),
         ])
     }
@@ -1738,6 +1785,58 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func usdzReaderAppliesReferenceLayerOffsetToTimeSamples() throws {
+        let root = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Scene"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def Xform "Scene" (
+            references = @./refs/animated.usda@</Triangle> (offset = 10; scale = 2)
+        )
+        {
+        }
+        """.utf8)
+        let animatedLayer = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Triangle"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def Mesh "Triangle"
+        {
+            point3f[] points.timeSamples = {
+                1: [(0, 0, 0), (1, 0, 0), (0, 1, 0)],
+                2: [(0, 0, 1), (1, 0, 1), (0, 1, 1)]
+            }
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            uniform token subdivisionScheme = "none"
+        }
+        """.utf8)
+        let package = makeUSDZFixture(entries: [
+            ("root.usda", root),
+            ("refs/animated.usda", animatedLayer),
+        ], alignPayloads: true)
+
+        let scene = try USDZReader().read(from: package, options: USDSceneReadingOptions(timeCode: 14))
+        let mesh = try #require(scene.meshes.first)
+
+        #expect(mesh.name == "Scene")
+        #expect(mesh.primPath == "/Scene")
+        #expect(mesh.points == [
+            USDPoint3D(x: 0, y: 0, z: 1),
+            USDPoint3D(x: 1, y: 0, z: 1),
+            USDPoint3D(x: 0, y: 1, z: 1),
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func usdzReaderIncludesReferenceTargetSubtreeMeshes() throws {
         let root = Data("""
         #usda 1.0
@@ -1911,7 +2010,7 @@ struct OpenUSDTests {
             "single_usda.usdz[test.usda]",
             "single_usdc.usdz[test.usdc]",
         ])
-        #expect(graph.layers.first?.composition.subLayerAssetPaths == [
+        #expect(graph.layers.first?.composition.sublayerAssetPaths == [
             "./single_usd.usdz",
             "./single_usda.usdz",
             "./single_usdc.usdz",
@@ -2434,7 +2533,7 @@ private func makeUSDCLayerCompositionArcFixture() -> Data {
             USDCEncodedReference(
                 assetPathStringIndex: 0,
                 primPathIndex: 2,
-                layerOffset: USDCLayerOffset(offset: 1.5, scale: 2)
+                layerOffset: USDLayerOffset(offset: 1.5, scale: 2)
             ),
         ],
         to: &valueData
@@ -2444,7 +2543,7 @@ private func makeUSDCLayerCompositionArcFixture() -> Data {
             USDCEncodedPayload(
                 assetPathStringIndex: 1,
                 primPathIndex: 3,
-                layerOffset: USDCLayerOffset(offset: -2, scale: 0.5)
+                layerOffset: USDLayerOffset(offset: -2, scale: 0.5)
             ),
         ],
         to: &valueData
@@ -2839,13 +2938,13 @@ private func appendUSDCListOperationItems(_ items: [UInt32], to data: inout Data
 private struct USDCEncodedReference {
     var assetPathStringIndex: UInt32
     var primPathIndex: UInt32
-    var layerOffset: USDCLayerOffset
+    var layerOffset: USDLayerOffset
 }
 
 private struct USDCEncodedPayload {
     var assetPathStringIndex: UInt32
     var primPathIndex: UInt32
-    var layerOffset: USDCLayerOffset
+    var layerOffset: USDLayerOffset
 }
 
 private func appendUSDCReferenceListOperation(

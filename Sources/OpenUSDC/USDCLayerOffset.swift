@@ -1,11 +1,4 @@
-public struct USDCLayerOffset: Sendable, Equatable {
-    public var offset: Double
-    public var scale: Double
+import OpenUSD
 
-    public init(offset: Double = 0, scale: Double = 1) {
-        self.offset = offset
-        self.scale = scale
-    }
-
-    public static let identity = USDCLayerOffset()
-}
+@available(*, deprecated, renamed: "USDLayerOffset")
+public typealias USDCLayerOffset = USDLayerOffset

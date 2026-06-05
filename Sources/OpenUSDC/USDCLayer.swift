@@ -43,7 +43,8 @@ public struct USDCLayer: Sendable, Equatable {
                         USDCompositionArc(
                             assetPath: $0.assetPath,
                             sitePrimPath: spec.path,
-                            targetPrimPath: $0.primPath
+                            targetPrimPath: $0.primPath,
+                            layerOffset: $0.layerOffset
                         )
                     })
                 case .payloadListOperation(let operation):
@@ -51,14 +52,16 @@ public struct USDCLayer: Sendable, Equatable {
                         USDCompositionArc(
                             assetPath: $0.assetPath,
                             sitePrimPath: spec.path,
-                            targetPrimPath: $0.primPath
+                            targetPrimPath: $0.primPath,
+                            layerOffset: $0.layerOffset
                         )
                     })
                 case .payload(let payload):
                     payloads.append(USDCompositionArc(
                         assetPath: payload.assetPath,
                         sitePrimPath: spec.path,
-                        targetPrimPath: payload.primPath
+                        targetPrimPath: payload.primPath,
+                        layerOffset: payload.layerOffset
                     ))
                 default:
                     break

@@ -119,8 +119,15 @@ struct USDCCrateValueDecoder {
     }
 
     func readFirstUnblockedTimeSampleValueRep(_ valueRep: USDCCrateValueRep) throws -> USDCCrateValueRep? {
+        try readTimeSampleValueRep(valueRep, at: nil)
+    }
+
+    func readTimeSampleValueRep(_ valueRep: USDCCrateValueRep, at timeCode: Double?) throws -> USDCCrateValueRep? {
         guard valueRep.type == .timeSamples, !valueRep.isArray, !valueRep.isInlined else {
             throw USDImportError.invalidData("USDC timeSamples field is malformed.")
+        }
+        if let timeCode, !timeCode.isFinite {
+            throw USDImportError.invalidData("USDC timeSamples requested timeCode must be finite.")
         }
         var cursor = try payloadOffset(valueRep, label: "timeSamples")
         cursor = try recursivePayloadEnd(start: cursor, label: "USDC timeSamples times")
@@ -135,18 +142,29 @@ struct USDCCrateValueDecoder {
         guard valueCount > 0 else {
             throw USDImportError.invalidData("USDC timeSamples contains no values.")
         }
-        let timeCount = try readDoubleVectorCount(timesRep)
-        guard timeCount == valueCount else {
+        let times = try readDoubleVectorValues(timesRep)
+        guard times.count == valueCount else {
             throw USDImportError.invalidData("USDC timeSamples times and values have different counts.")
         }
+        var firstUnblockedSampleRep: USDCCrateValueRep?
+        var exactSampleRep: USDCCrateValueRep?
         for index in 0..<valueCount {
             let sampleCursor = cursor + index * MemoryLayout<UInt64>.size
             let sampleRep = USDCCrateValueRep(rawValue: try crate.readFileUInt64(at: sampleCursor))
-            if !isBlockedValue(sampleRep) {
-                return sampleRep
+            guard !isBlockedValue(sampleRep) else {
+                continue
+            }
+            if firstUnblockedSampleRep == nil {
+                firstUnblockedSampleRep = sampleRep
+            }
+            if let timeCode, times[index] == timeCode {
+                exactSampleRep = sampleRep
             }
         }
-        return nil
+        if timeCode != nil {
+            return exactSampleRep
+        }
+        return firstUnblockedSampleRep
     }
 
     func isBlockedValue(_ valueRep: USDCCrateValueRep) -> Bool {
@@ -479,7 +497,7 @@ struct USDCCrateValueDecoder {
     private func readPayload(cursor: inout Int) throws -> USDCPayload {
         let assetPath = try readStringIndex(cursor: &cursor, label: "USDC payload asset path")
         let primPath = try readPathIndex(cursor: &cursor, label: "USDC payload prim path")
-        let layerOffset: USDCLayerOffset
+        let layerOffset: USDLayerOffset
         if crate.version >= USDCCrateVersion(major: 0, minor: 8, patch: 0) {
             layerOffset = try readLayerOffset(cursor: &cursor, label: "USDC payload layer offset")
         } else {
@@ -507,10 +525,10 @@ struct USDCCrateValueDecoder {
         return paths[pathIndex]
     }
 
-    private func readLayerOffset(cursor: inout Int, label: String) throws -> USDCLayerOffset {
+    private func readLayerOffset(cursor: inout Int, label: String) throws -> USDLayerOffset {
         let offset = try readFloat64(cursor: &cursor, label: "\(label) offset")
         let scale = try readFloat64(cursor: &cursor, label: "\(label) scale")
-        return USDCLayerOffset(offset: offset, scale: scale)
+        return USDLayerOffset(offset: offset, scale: scale)
     }
 
     private func readEmptyDictionary(cursor: inout Int, label: String) throws {
@@ -700,12 +718,19 @@ struct USDCCrateValueDecoder {
         return USDCMatrix4x4(values: values)
     }
 
-    private func readDoubleVectorCount(_ valueRep: USDCCrateValueRep) throws -> Int {
+    private func readDoubleVectorValues(_ valueRep: USDCCrateValueRep) throws -> [Double] {
         guard valueRep.type == .doubleVector, !valueRep.isArray, !valueRep.isInlined else {
             throw USDImportError.invalidData("USDC timeSamples references a malformed doubleVector.")
         }
-        let cursor = try payloadOffset(valueRep, label: "doubleVector")
-        return try checkedInt(try crate.readFileUInt64(at: cursor), label: "USDC doubleVector count")
+        var cursor = try payloadOffset(valueRep, label: "doubleVector")
+        let count = try checkedInt(try crate.readFileUInt64(at: cursor), label: "USDC doubleVector count")
+        cursor += MemoryLayout<UInt64>.size
+        var values: [Double] = []
+        values.reserveCapacity(count)
+        for _ in 0..<count {
+            values.append(try readFloat64(cursor: &cursor, label: "USDC doubleVector value"))
+        }
+        return values
     }
 
     private func recursivePayloadEnd(start: Int, label: String) throws -> Int {

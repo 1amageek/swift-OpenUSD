@@ -4,35 +4,56 @@ public struct USDAReader: USDSceneReader {
     public init() {}
 
     public func read(from data: Data) throws -> USDScene {
+        try read(from: data, options: .default)
+    }
+
+    public func read(from data: Data, options: USDSceneReadingOptions) throws -> USDScene {
         guard let text = String(data: data, encoding: .utf8) else {
             throw USDImportError.invalidData("USDA data is not UTF-8.")
         }
-        return try read(text)
+        return try read(from: text, options: options)
     }
 
     public func readLayer(from data: Data) throws -> USDALayer {
         guard let text = String(data: data, encoding: .utf8) else {
             throw USDImportError.invalidData("USDA data is not UTF-8.")
         }
-        return try readLayer(text)
+        return try readLayer(from: text)
     }
 
-    public func read(_ text: String) throws -> USDScene {
+    public func read(from text: String) throws -> USDScene {
+        try read(from: text, options: .default)
+    }
+
+    public func read(from text: String, options: USDSceneReadingOptions) throws -> USDScene {
         try validateSignature(in: text)
+        if let timeCode = options.timeCode, !timeCode.isFinite {
+            throw USDImportError.invalidData("USDA requested timeCode must be finite.")
+        }
         let metersPerUnit = try parseRequiredDouble(named: "metersPerUnit", in: text)
         guard metersPerUnit.isFinite, metersPerUnit > 0 else {
             throw USDImportError.invalidData("USDA metersPerUnit must be a positive finite value.")
         }
         let upAxis = try parseUpAxis(in: text)
         let defaultPrim = try parseOptionalString(named: "defaultPrim", in: text)
-        let meshes = try parseMeshes(in: text)
+        let meshes = try parseMeshes(in: text, options: options)
         guard !meshes.isEmpty else {
             throw USDImportError.invalidData("USDA scene contains no Mesh prims.")
         }
         return USDScene(defaultPrim: defaultPrim, metersPerUnit: metersPerUnit, upAxis: upAxis, meshes: meshes)
     }
 
-    public func readLayer(_ text: String) throws -> USDALayer {
+    @available(*, deprecated, renamed: "read(from:)")
+    public func read(_ text: String) throws -> USDScene {
+        try read(from: text)
+    }
+
+    @available(*, deprecated, renamed: "read(from:options:)")
+    public func read(_ text: String, options: USDSceneReadingOptions) throws -> USDScene {
+        try read(from: text, options: options)
+    }
+
+    public func readLayer(from text: String) throws -> USDALayer {
         try validateSignature(in: text)
         let metadataBody = try layerMetadataBody(in: text)
         let defaultPrim = try metadataBody.flatMap { try parseOptionalString(named: "defaultPrim", in: $0) }
@@ -57,6 +78,11 @@ public struct USDAReader: USDSceneReader {
             composition: try parseLayerComposition(in: text, metadataBody: metadataBody),
             primTransforms: try parsePrimTransforms(in: text)
         )
+    }
+
+    @available(*, deprecated, renamed: "readLayer(from:)")
+    public func readLayer(_ text: String) throws -> USDALayer {
+        try readLayer(from: text)
     }
 
     public func readComposition(from data: Data) throws -> USDLayerComposition {
@@ -96,7 +122,7 @@ public struct USDAReader: USDSceneReader {
     private func parseLayerComposition(in text: String, metadataBody: String?) throws -> USDLayerComposition {
         var composition = USDLayerComposition()
         if let metadataBody {
-            composition.subLayerAssetPaths = try parseAssetPaths(forField: "subLayers", in: metadataBody)
+            composition.sublayers = try parseSublayers(forField: "subLayers", in: metadataBody)
         }
         let prims = try parseDirectPrims(in: text)
         try appendCompositionArcs(from: prims, parentPrimPath: "", to: &composition)
@@ -125,8 +151,8 @@ public struct USDAReader: USDSceneReader {
         }
     }
 
-    private func parseMeshes(in text: String) throws -> [USDMesh] {
-        try parseMeshes(in: text, inheritedTransform: .identity, parentPrimPath: "")
+    private func parseMeshes(in text: String, options: USDSceneReadingOptions) throws -> [USDMesh] {
+        try parseMeshes(in: text, options: options, inheritedTransform: .identity, parentPrimPath: "")
     }
 
     private func parsePrimTransforms(in text: String) throws -> [String: USDTransformMatrix4x4] {
@@ -160,6 +186,7 @@ public struct USDAReader: USDSceneReader {
 
     private func parseMeshes(
         in text: String,
+        options: USDSceneReadingOptions,
         inheritedTransform: USDTransformMatrix4x4,
         parentPrimPath: String
     ) throws -> [USDMesh] {
@@ -177,11 +204,13 @@ public struct USDAReader: USDSceneReader {
                     prim: prim,
                     primPath: primPath,
                     directBody: directBody,
+                    options: options,
                     transform: primTransform
                 ))
             }
             meshes.append(contentsOf: try parseMeshes(
                 in: prim.body,
+                options: options,
                 inheritedTransform: primTransform,
                 parentPrimPath: primPath
             ))
@@ -193,9 +222,10 @@ public struct USDAReader: USDSceneReader {
         prim: USDAPrim,
         primPath: String,
         directBody: String,
+        options: USDSceneReadingOptions,
         transform: USDTransformMatrix4x4
     ) throws -> USDMesh {
-        let points = try parsePointArray(named: "points", in: directBody)
+        let points = try parsePointArray(named: "points", in: directBody, timeCode: options.timeCode)
         let transformedPoints = try points.map { try transform.transform($0) }
         let counts = try parseIntArray(named: "faceVertexCounts", in: directBody)
         let indices = try parseIntArray(named: "faceVertexIndices", in: directBody)
@@ -558,34 +588,48 @@ public struct USDAReader: USDSceneReader {
             USDCompositionArc(
                 assetPath: reference.assetPath,
                 sitePrimPath: sitePrimPath,
-                targetPrimPath: reference.primPath
+                targetPrimPath: reference.primPath,
+                layerOffset: reference.layerOffset
             )
         }
     }
 
-    private func parseAssetPaths(forField name: String, in text: String) throws -> [String] {
-        try parseAssetReferences(forField: name, in: text).map(\.assetPath)
+    private func parseSublayers(forField name: String, in text: String) throws -> [USDSublayer] {
+        try parseAssetReferences(forField: name, in: text).map { reference in
+            USDSublayer(assetPath: reference.assetPath, layerOffset: reference.layerOffset)
+        }
     }
 
     private func parseAssetReferences(
         forField name: String,
         in text: String
-    ) throws -> [(assetPath: String, primPath: String?)] {
+    ) throws -> [(assetPath: String, primPath: String?, layerOffset: USDLayerOffset)] {
         guard let body = try compositionFieldBody(named: name, in: text) else {
             return []
         }
-        let expression = try NSRegularExpression(pattern: "@([^@]*)@(?:<([^>]*)>)?")
+        let expression = try NSRegularExpression(pattern: "@([^@]*)@(?:<([^>]*)>)?(?:\\s*\\(([^)]*)\\))?")
         let range = NSRange(body.startIndex..<body.endIndex, in: body)
-        return expression.matches(in: body, range: range).compactMap { match in
+        return try expression.matches(in: body, range: range).compactMap { match in
             guard let assetPathRange = Range(match.range(at: 1), in: body) else {
                 return nil
             }
             let primPathRange = Range(match.range(at: 2), in: body)
+            let layerOffsetBodyRange = Range(match.range(at: 3), in: body)
             return (
                 assetPath: String(body[assetPathRange]),
-                primPath: primPathRange.map { String(body[$0]) }
+                primPath: primPathRange.map { String(body[$0]) },
+                layerOffset: try layerOffsetBodyRange.map { try parseLayerOffset(in: String(body[$0])) } ?? .identity
             )
         }
+    }
+
+    private func parseLayerOffset(in text: String) throws -> USDLayerOffset {
+        let offset = try parseOptionalDouble(named: "offset", in: text) ?? 0
+        let scale = try parseOptionalDouble(named: "scale", in: text) ?? 1
+        guard offset.isFinite, scale.isFinite else {
+            throw USDImportError.invalidData("USDA layer offset must contain finite values.")
+        }
+        return USDLayerOffset(offset: offset, scale: scale)
     }
 
     private func compositionFieldBody(named name: String, in text: String) throws -> String? {
@@ -674,6 +718,14 @@ public struct USDAReader: USDSceneReader {
     }
 
     private func parsePointArray(named name: String, in text: String) throws -> [USDPoint3D] {
+        try parsePointArray(named: name, in: text, timeCode: nil)
+    }
+
+    private func parsePointArray(named name: String, in text: String, timeCode: Double?) throws -> [USDPoint3D] {
+        if let timeSamplesBody = try optionalTimeSamplesBody(named: name, in: text),
+           let sampledPoints = try parsePointTimeSamples(named: name, in: timeSamplesBody, timeCode: timeCode) {
+            return sampledPoints
+        }
         let body = try bracketArrayBody(named: name, in: text)
         return try parsePointTuples(named: name, in: body)
     }
@@ -823,6 +875,47 @@ public struct USDAReader: USDSceneReader {
         }
     }
 
+    private func parsePointTimeSamples(named name: String, in body: String, timeCode: Double?) throws -> [USDPoint3D]? {
+        let entries = try parseTimeSampleEntries(in: body)
+        guard !entries.isEmpty else {
+            throw USDImportError.invalidData("USDA \(name).timeSamples contains no samples.")
+        }
+        var firstUnblockedSample: [USDPoint3D]?
+        var exactSample: [USDPoint3D]?
+        for entry in entries {
+            guard entry.value != "None" else {
+                continue
+            }
+            let sample = try parsePointTuples(named: "\(name).timeSamples", in: entry.value)
+            if firstUnblockedSample == nil {
+                firstUnblockedSample = sample
+            }
+            if let timeCode, entry.timeCode == timeCode {
+                exactSample = sample
+            }
+        }
+        if timeCode != nil {
+            return exactSample
+        }
+        return firstUnblockedSample
+    }
+
+    private func parseTimeSampleEntries(in body: String) throws -> [(timeCode: Double, value: String)] {
+        let expression = try NSRegularExpression(
+            pattern: "([-+]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][-+]?\\d+)?)\\s*:\\s*(None|\\[[^\\]]*\\])"
+        )
+        let range = NSRange(body.startIndex..<body.endIndex, in: body)
+        return try expression.matches(in: body, range: range).map { match in
+            guard let timeRange = Range(match.range(at: 1), in: body),
+                  let valueRange = Range(match.range(at: 2), in: body),
+                  let timeCode = Double(body[timeRange]),
+                  timeCode.isFinite else {
+                throw USDImportError.invalidData("USDA timeSamples entry is malformed.")
+            }
+            return (timeCode: timeCode, value: String(body[valueRange]))
+        }
+    }
+
     private func parseColorTuples(named name: String, in body: String) throws -> [USDColorRGB] {
         let expression = try NSRegularExpression(pattern: "\\(([^)]*)\\)")
         let range = NSRange(body.startIndex..<body.endIndex, in: body)
@@ -920,6 +1013,17 @@ public struct USDAReader: USDSceneReader {
         return try bracketArrayBody(after: nameRange.upperBound, named: name, in: text)
     }
 
+    private func optionalTimeSamplesBody(named name: String, in text: String) throws -> String? {
+        guard let nameRange = attributeNameRange(named: "\(name).timeSamples", in: text) else {
+            return nil
+        }
+        guard let openBrace = text[nameRange.upperBound...].firstIndex(of: "{") else {
+            throw USDImportError.invalidData("USDA \(name).timeSamples is missing an opening brace.")
+        }
+        let closeBrace = try matchingBrace(startingAt: openBrace, in: text)
+        return String(text[text.index(after: openBrace)..<closeBrace])
+    }
+
     private func bracketArrayBody(after index: String.Index, named name: String, in text: String) throws -> String {
         guard let openBracket = text[index...].firstIndex(of: "[") else {
             throw USDImportError.invalidData("USDA \(name) is missing an opening bracket.")
@@ -944,7 +1048,12 @@ public struct USDAReader: USDSceneReader {
                 hasValidTrailingBoundary = true
             } else {
                 let next = text[range.upperBound]
-                hasValidTrailingBoundary = next.isWhitespace || next == "=" || next == "[" || next == "("
+                hasValidTrailingBoundary = next.isWhitespace
+                    || next == "="
+                    || next == "["
+                    || next == "("
+                    || next == ","
+                    || next == ")"
             }
 
             if hasValidLeadingBoundary && hasValidTrailingBoundary {

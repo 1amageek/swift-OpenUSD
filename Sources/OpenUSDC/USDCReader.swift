@@ -19,9 +19,13 @@ public struct USDCReader: USDSceneReader {
     }
 
     public func read(from data: Data) throws -> USDScene {
+        try read(from: data, options: .default)
+    }
+
+    public func read(from data: Data, options: USDSceneReadingOptions) throws -> USDScene {
         let crate = try readCrate(from: data)
         try crate.requireStructuralSections()
-        return try USDCSceneMaterializer(crate: crate).readScene()
+        return try USDCSceneMaterializer(crate: crate, options: options).readScene()
     }
 }
 

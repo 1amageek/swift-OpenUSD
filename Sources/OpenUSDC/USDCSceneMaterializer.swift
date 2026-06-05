@@ -3,9 +3,11 @@ import Foundation
 
 struct USDCSceneMaterializer {
     private let crate: USDCCrateFile
+    private let options: USDSceneReadingOptions
 
-    init(crate: USDCCrateFile) {
+    init(crate: USDCCrateFile, options: USDSceneReadingOptions = .default) {
         self.crate = crate
+        self.options = options
     }
 
     func readScene() throws -> USDScene {
@@ -596,7 +598,7 @@ struct USDCSceneMaterializer {
             }
         }
         if let timeSamples = record.fields["timeSamples"] {
-            return try valueDecoder.readFirstUnblockedTimeSampleValueRep(timeSamples)
+            return try valueDecoder.readTimeSampleValueRep(timeSamples, at: options.timeCode)
         }
         return nil
     }
