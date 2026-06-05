@@ -29,6 +29,8 @@ public struct USDAReader: USDSceneReader {
         let text = try readerVisibleText(from: text)
         try validateSignature(in: text)
         try validateTopLevelSyntax(in: text)
+        let metadataBody = try layerMetadataBody(in: text)
+        try validateLayerMetadataStatements(in: metadataBody)
         try validatePrimAttributeSyntax(in: text)
         try validateUniqueSiblingPrimPaths(in: text, parentPrimPath: "")
         if let timeCode = options.timeCode, !timeCode.isFinite {
@@ -51,10 +53,11 @@ public struct USDAReader: USDSceneReader {
         let text = try readerVisibleText(from: text)
         try validateSignature(in: text)
         try validateTopLevelSyntax(in: text)
+        let metadataBody = try layerMetadataBody(in: text)
+        try validateLayerMetadataStatements(in: metadataBody)
         try validatePrimAttributeSyntax(in: text)
         let specs = try parseLayerSpecs(in: text)
         try validateUniqueSiblingPrimPaths(in: text, parentPrimPath: "")
-        let metadataBody = try layerMetadataBody(in: text)
         let defaultPrim = try metadataBody.flatMap { try parseOptionalString(named: "defaultPrim", in: $0) }
         let metersPerUnit = try metadataBody.flatMap { try parseOptionalDouble(named: "metersPerUnit", in: $0) }
         if let metersPerUnit, (!metersPerUnit.isFinite || metersPerUnit <= 0) {
@@ -770,6 +773,117 @@ public struct USDAReader: USDSceneReader {
         return String(text[text.index(after: cursor)..<metadataEnd])
     }
 
+    private func validateLayerMetadataStatements(in metadataBody: String?) throws {
+        guard let text = metadataBody else {
+            return
+        }
+        var cursor = text.startIndex
+        var lineContainsAssignment = false
+        while cursor < text.endIndex {
+            let character = text[cursor]
+            if character == "#" {
+                skipLineComment(in: text, index: &cursor)
+                continue
+            }
+            if character == "\"" || character == "'" {
+                try skipQuotedString(in: text, index: &cursor)
+                continue
+            }
+            if character == "@" {
+                try skipAssetPathLiteral(in: text, index: &cursor)
+                continue
+            }
+            if character.isNewline {
+                lineContainsAssignment = false
+                cursor = text.index(after: cursor)
+                continue
+            }
+            if character == ";" {
+                lineContainsAssignment = false
+                cursor = text.index(after: cursor)
+                continue
+            }
+            if isOpenLayerMetadataDelimiter(character) {
+                try skipLayerMetadataDelimitedValue(in: text, index: &cursor)
+                continue
+            }
+            if character == "=" {
+                guard !lineContainsAssignment else {
+                    throw USDImportError.invalidData(
+                        "USDA layer metadata contains multiple statements on one line without a semicolon."
+                    )
+                }
+                lineContainsAssignment = true
+                try validateLayerMetadataValueStartsOnSameLine(afterEqualsAt: cursor, in: text)
+            }
+            cursor = text.index(after: cursor)
+        }
+    }
+
+    private func validateLayerMetadataValueStartsOnSameLine(afterEqualsAt equalsIndex: String.Index, in text: String) throws {
+        var cursor = text.index(after: equalsIndex)
+        while cursor < text.endIndex, text[cursor].isWhitespace {
+            if text[cursor].isNewline {
+                throw USDImportError.invalidData("USDA layer metadata value cannot start on a new line after '='.")
+            }
+            cursor = text.index(after: cursor)
+        }
+        guard cursor < text.endIndex, text[cursor] != "#" && text[cursor] != ";" else {
+            throw USDImportError.invalidData("USDA layer metadata value is missing.")
+        }
+    }
+
+    private func skipLayerMetadataDelimitedValue(in text: String, index: inout String.Index) throws {
+        var expectedClosers: [Character] = []
+        while index < text.endIndex {
+            let character = text[index]
+            if character == "#" {
+                skipLineComment(in: text, index: &index)
+                continue
+            }
+            if character == "\"" || character == "'" {
+                try skipQuotedString(in: text, index: &index)
+                continue
+            }
+            if character == "@" {
+                try skipAssetPathLiteral(in: text, index: &index)
+                continue
+            }
+            if let close = layerMetadataCloseDelimiter(for: character) {
+                expectedClosers.append(close)
+                index = text.index(after: index)
+                continue
+            }
+            if let close = expectedClosers.last, character == close {
+                expectedClosers.removeLast()
+                index = text.index(after: index)
+                if expectedClosers.isEmpty {
+                    return
+                }
+                continue
+            }
+            index = text.index(after: index)
+        }
+        throw USDImportError.invalidData("USDA layer metadata value delimiter is unterminated.")
+    }
+
+    private func isOpenLayerMetadataDelimiter(_ character: Character) -> Bool {
+        layerMetadataCloseDelimiter(for: character) != nil
+    }
+
+    private func layerMetadataCloseDelimiter(for character: Character) -> Character? {
+        switch character {
+        case "[":
+            return "]"
+        case "{":
+            return "}"
+        case "(":
+            return ")"
+        default:
+            return nil
+        }
+    }
+
     private func parseLayerComposition(in text: String, metadataBody: String?) throws -> USDLayerComposition {
         var composition = USDLayerComposition()
         if let metadataBody {
@@ -1208,6 +1322,23 @@ public struct USDAReader: USDSceneReader {
         while index < text.endIndex, text[index] != "\n" {
             index = text.index(after: index)
         }
+    }
+
+    private func skipAssetPathLiteral(in text: String, index: inout String.Index) throws {
+        index = text.index(after: index)
+        while index < text.endIndex {
+            if text[index] == "@" {
+                let next = text.index(after: index)
+                if next < text.endIndex, text[next] == "@" {
+                    index = text.index(after: next)
+                    continue
+                }
+                index = next
+                return
+            }
+            index = text.index(after: index)
+        }
+        throw USDImportError.invalidData("USDA asset path is unterminated.")
     }
 
     private func parseRequiredDouble(named name: String, in text: String) throws -> Double {

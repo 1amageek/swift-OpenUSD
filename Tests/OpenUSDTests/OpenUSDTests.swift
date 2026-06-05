@@ -1515,6 +1515,25 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingBadLayerMetadataNewlineFixturesThrowTypedErrors() throws {
+        let cases = [
+            ("testSdfParsing.testenv/21_bad_newline1.usda", "layer metadata", "semicolon"),
+            ("testSdfParsing.testenv/23_bad_newline3.usda", "layer metadata", "new line"),
+        ]
+
+        for (fixturePath, expectedSubject, expectedDetail) in cases {
+            let data = try openUSDFixture(fixturePath)
+
+            let message = try usdImportFailureMessage {
+                _ = try USDAReader().readLayer(from: data)
+            }
+
+            #expect(message.contains(expectedSubject))
+            #expect(message.contains(expectedDetail))
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingBadPropertyDeclarationNewlineFixturesThrowTypedErrors() throws {
         let cases = [
             ("testSdfParsing.testenv/24_bad_newline4.usda", "property declaration", "lines"),
@@ -1985,6 +2004,49 @@ struct OpenUSDTests {
             sitePrimPath: "/TestMixed3",
             targetPrimPath: nil
         )))
+        let additionalReferences = [
+            USDCompositionArc(
+                assetPath: "///test/layer.usda",
+                sitePrimPath: "/TestFile2",
+                targetPrimPath: nil
+            ),
+            USDCompositionArc(
+                assetPath: "///test/layer2.usda",
+                sitePrimPath: "/TestFile2",
+                targetPrimPath: nil
+            ),
+            USDCompositionArc(
+                assetPath: "///test1/layer1.usda",
+                sitePrimPath: "/TestFile3",
+                targetPrimPath: nil,
+                layerOffset: USDLayerOffset(offset: 0.1, scale: 0.2)
+            ),
+            USDCompositionArc(
+                assetPath: "///test/layer.usda",
+                sitePrimPath: "/TestSubrootPrim1",
+                targetPrimPath: "/Prim/Child"
+            ),
+            USDCompositionArc(
+                assetPath: "///test/layer2.usda",
+                sitePrimPath: "/TestSubrootPrim2",
+                targetPrimPath: "/Prim2/Child"
+            ),
+            USDCompositionArc(
+                assetPath: "///test/layer.usda",
+                sitePrimPath: "/TestSubrootPrim3",
+                targetPrimPath: "/Prim/Child",
+                layerOffset: USDLayerOffset(offset: 11, scale: 22)
+            ),
+            USDCompositionArc(
+                assetPath: "///test1/layer1.usda",
+                sitePrimPath: "/TestSubrootPrim3",
+                targetPrimPath: "/Prim2/Child",
+                layerOffset: USDLayerOffset(offset: 0.1, scale: 0.2)
+            ),
+        ]
+        for expected in additionalReferences {
+            #expect(references.contains(expected))
+        }
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -2053,6 +2115,49 @@ struct OpenUSDTests {
             sitePrimPath: "/TestMixed3",
             targetPrimPath: nil
         )))
+        let additionalPayloads = [
+            USDCompositionArc(
+                assetPath: "///test/layer.usda",
+                sitePrimPath: "/TestFile2",
+                targetPrimPath: nil
+            ),
+            USDCompositionArc(
+                assetPath: "///test/layer2.usda",
+                sitePrimPath: "/TestFile2",
+                targetPrimPath: nil
+            ),
+            USDCompositionArc(
+                assetPath: "///test1/layer1.usda",
+                sitePrimPath: "/TestFile3",
+                targetPrimPath: nil,
+                layerOffset: USDLayerOffset(offset: 0.1, scale: 0.2)
+            ),
+            USDCompositionArc(
+                assetPath: "///test/layer.usda",
+                sitePrimPath: "/TestSubrootPrim1",
+                targetPrimPath: "/Prim/Child"
+            ),
+            USDCompositionArc(
+                assetPath: "///test/layer2.usda",
+                sitePrimPath: "/TestSubrootPrim2",
+                targetPrimPath: "/Prim2/Child"
+            ),
+            USDCompositionArc(
+                assetPath: "///test/layer.usda",
+                sitePrimPath: "/TestSubrootPrim3",
+                targetPrimPath: "/Prim/Child",
+                layerOffset: USDLayerOffset(offset: 11, scale: 22)
+            ),
+            USDCompositionArc(
+                assetPath: "///test1/layer1.usda",
+                sitePrimPath: "/TestSubrootPrim3",
+                targetPrimPath: "/Prim2/Child",
+                layerOffset: USDLayerOffset(offset: 0.1, scale: 0.2)
+            ),
+        ]
+        for expected in additionalPayloads {
+            #expect(payloads.contains(expected))
+        }
     }
 
     @Test(.timeLimit(.minutes(1)))
