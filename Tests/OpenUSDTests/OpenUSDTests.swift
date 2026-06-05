@@ -1455,6 +1455,27 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingUTF8IdentifiersFixtureReadsDefaultPrimAndTransforms() throws {
+        let data = try openUSDFixture("testSdfParsing.testenv/217_utf8_identifiers.usda")
+
+        let layer = try USDAReader().readLayer(from: data)
+        let rootPath = "/_Süßigkeiten"
+        let childPath = "\(rootPath)/ⅈ573"
+        let rootTransform = try #require(layer.primTransforms[rootPath])
+        let childTransform = try #require(layer.primTransforms[childPath])
+        let origin = USDPoint3D(x: 0, y: 0, z: 0)
+        let translatedOrigin = USDPoint3D(x: 4, y: 5, z: 6)
+
+        #expect(layer.defaultPrim == "_Süßigkeiten")
+        #expect(layer.metersPerUnit == nil)
+        #expect(layer.upAxis == nil)
+        #expect(layer.composition.isEmpty)
+        #expect(layer.primTransforms.keys.sorted() == [rootPath, childPath])
+        #expect(try rootTransform.transform(origin) == translatedOrigin)
+        #expect(try childTransform.transform(origin) == translatedOrigin)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingReferencesFixtureReadsSupportedExternalArcs() throws {
         let data = try openUSDFixture("testSdfParsing.testenv/132_references.usda")
 
