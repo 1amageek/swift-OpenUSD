@@ -47,6 +47,9 @@ Source paths:
 | `testSdfParsing.testenv/41_noEndingNewline.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/41_noEndingNewline.usda` |
 | `testSdfParsing.testenv/46_weirdStringContent.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/46_weirdStringContent.usda` |
 | `testSdfParsing.testenv/53_bad_typeName.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/53_bad_typeName.usda` |
+| `testSdfParsing.testenv/57_bad_relListEditing.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/57_bad_relListEditing.usda` |
+| `testSdfParsing.testenv/58_bad_relListEditing.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/58_bad_relListEditing.usda` |
+| `testSdfParsing.testenv/59_bad_connectListEditing.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/59_bad_connectListEditing.usda` |
 | `testSdfParsing.testenv/61_bad_primName.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/61_bad_primName.usda` |
 | `testSdfParsing.testenv/64_bad_boolPrimInstantiate.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/64_bad_boolPrimInstantiate.usda` |
 | `testSdfParsing.testenv/66_bad_attrVariability.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/66_bad_attrVariability.usda` |
@@ -79,6 +82,8 @@ Source paths:
 | `testSdfParsing.testenv/153_bad_payloads.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/153_bad_payloads.usda` |
 | `testSdfParsing.testenv/154_relationship_noLoadHint.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/154_relationship_noLoadHint.usda` |
 | `testSdfParsing.testenv/155_bad_relationship_noLoadHint.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/155_bad_relationship_noLoadHint.usda` |
+| `testSdfParsing.testenv/176_empty_lists.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/176_empty_lists.usda` |
+| `testSdfParsing.testenv/177_bad_empty_lists.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/177_bad_empty_lists.usda` |
 | `testSdfParsing.testenv/179_bad_shaped_attr_dimensions1.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/179_bad_shaped_attr_dimensions1.usda` |
 | `testSdfParsing.testenv/185_namespaced_properties.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/185_namespaced_properties.usda` |
 | `testSdfParsing.testenv/187_displayName_metadata.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/187_displayName_metadata.usda` |

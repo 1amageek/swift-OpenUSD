@@ -1416,6 +1416,7 @@ struct OpenUSDTests {
         let overviewCamera = try #require(layer.spec(at: "/overview_cam"))
         #expect(overviewCamera.specifier == .def)
         #expect(overviewCamera.typeName == "Camera")
+        #expect(overviewCamera.fieldNames.contains("properties"))
         let camX = try #require(layer.spec(at: "/overview_cam.camx"))
         #expect(camX.specType == .attribute)
         #expect(camX.typeName == "double")
@@ -1423,6 +1424,7 @@ struct OpenUSDTests {
         let head = try #require(layer.spec(at: "/overview_cam/Head"))
         #expect(head.specifier == .def)
         #expect(head.typeName == "Scope")
+        #expect(head.fieldNames.contains("properties"))
         let aspect = try #require(layer.spec(at: "/overview_cam/Head.aspect"))
         #expect(aspect.specType == .attribute)
         #expect(aspect.typeName == "double")
@@ -1433,6 +1435,7 @@ struct OpenUSDTests {
         let typelessOver = try #require(layer.spec(at: "/TestOverWithoutTypename"))
         #expect(typelessOver.specifier == .over)
         #expect(typelessOver.typeName == nil)
+        #expect(!typelessOver.fieldNames.contains("properties"))
         #expect(layer.primTransforms.keys.sorted() == [
             "/TestOver",
             "/TestOverWithoutTypename",
@@ -1802,12 +1805,60 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingEmptyTargetListsFixtureReadsLayer() throws {
+        let layer = try USDAReader().readLayer(from: openUSDFixture("testSdfParsing.testenv/176_empty_lists.usda"))
+
+        #expect(layer.prims.map(\.path) == ["/Foo"])
+        #expect(layer.composition.isEmpty)
+
+        let foo = try #require(layer.spec(at: "/Foo"))
+        #expect(foo.specifier == .over)
+        #expect(foo.typeName == "Prim")
+        #expect(foo.fieldNames.contains("properties"))
+
+        let x1 = try #require(layer.spec(at: "/Foo.x1"))
+        #expect(x1.specType == .attribute)
+        #expect(x1.typeName == "double")
+        #expect(x1.fieldNames.contains("connectionPaths"))
+        #expect(layer.spec(at: "/Foo.x1[]") == nil)
+
+        let x5 = try #require(layer.spec(at: "/Foo.x5"))
+        #expect(x5.specType == .relationship)
+        #expect(x5.fieldNames.contains("targetPaths"))
+        #expect(layer.spec(at: "/Foo.x5[]") == nil)
+        #expect(layer.specs.allSatisfy { $0.specType != .connection && $0.specType != .relationshipTarget })
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingBadTargetListEditFixturesThrowTypedErrors() throws {
+        let cases = [
+            ("testSdfParsing.testenv/57_bad_relListEditing.usda", "relationship", "invalid target syntax"),
+            ("testSdfParsing.testenv/58_bad_relListEditing.usda", "list-edit", "None"),
+            ("testSdfParsing.testenv/59_bad_connectListEditing.usda", "list-edit", "None"),
+            ("testSdfParsing.testenv/177_bad_empty_lists.usda", "add list-edit", "empty target list"),
+        ]
+
+        for (fixturePath, expectedSubject, expectedDetail) in cases {
+            let message = try usdImportFailureMessage {
+                _ = try USDAReader().readLayer(from: openUSDFixture(fixturePath))
+            }
+
+            #expect(message.contains(expectedSubject))
+            #expect(message.contains(expectedDetail))
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingNamespacedPropertySpecsReadLayer() throws {
         let data = try openUSDFixture("testSdfParsing.testenv/185_namespaced_properties.usda")
 
         let layer = try USDAReader().readLayer(from: data)
 
         #expect(layer.prims.map(\.path).sorted() == ["/Prim", "/Prim/Child"])
+        let prim = try #require(layer.spec(at: "/Prim"))
+        #expect(prim.fieldNames.contains("properties"))
+        let child = try #require(layer.spec(at: "/Prim/Child"))
+        #expect(!child.fieldNames.contains("properties"))
         let fooBaz = try #require(layer.spec(at: "/Prim.foo:baz"))
         #expect(fooBaz.specType == .attribute)
         #expect(fooBaz.typeName == "double")

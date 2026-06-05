@@ -247,6 +247,7 @@ public struct USDAReader: USDSceneReader {
         var valueCursor = cursor
         try skipPropertyDeclarationWhitespace(in: text, index: &valueCursor)
         try validatePropertyValueShape(
+            qualifiers: qualifiers,
             typeName: authoredTypeName,
             isArrayType: isArrayType,
             afterTypeName: valueCursor,
@@ -255,6 +256,7 @@ public struct USDAReader: USDSceneReader {
     }
 
     private func validatePropertyValueShape(
+        qualifiers: [String],
         typeName: String,
         isArrayType: Bool,
         afterTypeName cursor: String.Index,
@@ -290,14 +292,19 @@ public struct USDAReader: USDSceneReader {
             return
         }
         if text[cursor...].hasPrefix("None") {
+            if qualifiers.contains(where: isListEditQualifier) {
+                throw USDImportError.invalidData("USDA \(propertyName) list-edit cannot use None.")
+            }
             return
         }
         if propertyName.hasSuffix(".connect") {
             try validateRelationshipTargetValue(named: propertyName, startingAt: cursor, in: text)
+            try validateTargetListEditValue(qualifiers: qualifiers, propertyName: propertyName, startingAt: cursor, in: text)
             return
         }
         if typeName == "rel" {
             try validateRelationshipTargetValue(named: propertyName, startingAt: cursor, in: text)
+            try validateTargetListEditValue(qualifiers: qualifiers, propertyName: propertyName, startingAt: cursor, in: text)
             return
         }
         if isArrayType {
@@ -315,6 +322,43 @@ public struct USDAReader: USDSceneReader {
         } else if text[cursor] == "[" {
             throw USDImportError.invalidData("USDA \(typeName) attribute cannot use a shaped list value.")
         }
+    }
+
+    private func validateTargetListEditValue(
+        qualifiers: [String],
+        propertyName: String,
+        startingAt cursor: String.Index,
+        in text: String
+    ) throws {
+        guard qualifiers.contains("add"), cursor < text.endIndex, text[cursor] == "[" else {
+            return
+        }
+        let targetCount = try countAngleTargetPaths(inBracketListStartingAt: cursor, in: text)
+        guard targetCount > 0 else {
+            throw USDImportError.invalidData("USDA \(propertyName) add list-edit cannot use an empty target list.")
+        }
+    }
+
+    private func countAngleTargetPaths(inBracketListStartingAt openBracket: String.Index, in text: String) throws -> Int {
+        let closeBracket = try matchingBracket(startingAt: openBracket, in: text)
+        var cursor = text.index(after: openBracket)
+        var count = 0
+        while cursor < closeBracket {
+            let character = text[cursor]
+            if character == "#" {
+                skipLineComment(in: text, index: &cursor)
+                continue
+            }
+            if character == "\"" || character == "'" {
+                try skipQuotedString(in: text, index: &cursor)
+                continue
+            }
+            if character == "<" {
+                count += 1
+            }
+            cursor = text.index(after: cursor)
+        }
+        return count
     }
 
     private func validatePropertyOrderListEdit(
@@ -963,9 +1007,14 @@ public struct USDAReader: USDSceneReader {
         var specs: [USDLayerSpec] = []
         for prim in prims {
             let path = primPath(for: prim, parentPrimPath: parentPrimPath)
+            let directBody = try directAttributeText(from: prim.body)
+            let propertySpecs = try parsePropertySpecs(in: directBody, parentPrimPath: path)
             var fieldNames = ["specifier"]
             if prim.typeName != nil {
                 fieldNames.append("typeName")
+            }
+            if !propertySpecs.isEmpty {
+                fieldNames.append("properties")
             }
             specs.append(USDLayerSpec(
                 path: path,
@@ -974,8 +1023,7 @@ public struct USDAReader: USDSceneReader {
                 typeName: prim.typeName,
                 fieldNames: fieldNames
             ))
-            let directBody = try directAttributeText(from: prim.body)
-            specs.append(contentsOf: try parsePropertySpecs(in: directBody, parentPrimPath: path))
+            specs.append(contentsOf: propertySpecs)
             specs.append(contentsOf: try parseLayerSpecs(
                 from: parseDirectPrims(in: prim.body),
                 parentPrimPath: path
