@@ -1515,6 +1515,25 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingBadPropertyDeclarationNewlineFixturesThrowTypedErrors() throws {
+        let cases = [
+            ("testSdfParsing.testenv/24_bad_newline4.usda", "property declaration", "lines"),
+            ("testSdfParsing.testenv/26_bad_newline6.usda", "property value", "new line"),
+        ]
+
+        for (fixturePath, expectedSubject, expectedDetail) in cases {
+            let data = try openUSDFixture(fixturePath)
+
+            let message = try usdImportFailureMessage {
+                _ = try USDAReader().readLayer(from: data)
+            }
+
+            #expect(message.contains(expectedSubject))
+            #expect(message.contains(expectedDetail))
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingDuplicatePrimFixtureThrowsTypedError() throws {
         let data = try openUSDFixture("testSdfParsing.testenv/90_bad_dupePrim.usda")
 

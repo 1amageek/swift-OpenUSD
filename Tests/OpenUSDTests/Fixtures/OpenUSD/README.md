@@ -36,6 +36,8 @@ Source paths:
 | `testSdfParsing.testenv/19_bad_relationshipaccess.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/19_bad_relationshipaccess.usda` |
 | `testSdfParsing.testenv/20_optionalsemicolons.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/20_optionalsemicolons.usda` |
 | `testSdfParsing.testenv/22_bad_newline2.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/22_bad_newline2.usda` |
+| `testSdfParsing.testenv/24_bad_newline4.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/24_bad_newline4.usda` |
+| `testSdfParsing.testenv/26_bad_newline6.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/26_bad_newline6.usda` |
 | `testSdfParsing.testenv/30_bad_specifier.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/30_bad_specifier.usda` |
 | `testSdfParsing.testenv/32_relationship_syntax.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/32_relationship_syntax.usda` |
 | `testSdfParsing.testenv/33_bad_relationship_duplicate_target.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/33_bad_relationship_duplicate_target.usda` |

@@ -236,10 +236,12 @@ public struct USDAReader: USDSceneReader {
         guard isValidUSDIdentifier(baseTypeName) else {
             throw USDImportError.invalidData("USDA property type name \(baseTypeName) is not a valid identifier.")
         }
+        var valueCursor = cursor
+        try skipPropertyDeclarationWhitespace(in: text, index: &valueCursor)
         try validatePropertyValueShape(
             typeName: authoredTypeName,
             isArrayType: isArrayType,
-            afterTypeName: cursor,
+            afterTypeName: valueCursor,
             in: text
         )
     }
@@ -271,7 +273,7 @@ public struct USDAReader: USDSceneReader {
             return
         }
         cursor = text.index(after: cursor)
-        skipWhitespace(in: text, index: &cursor)
+        try skipPropertyValueStartWhitespace(in: text, index: &cursor)
         guard cursor < text.endIndex else {
             return
         }
@@ -1150,6 +1152,24 @@ public struct USDAReader: USDSceneReader {
 
     private func skipWhitespace(in text: String, index: inout String.Index) {
         while index < text.endIndex, text[index].isWhitespace {
+            index = text.index(after: index)
+        }
+    }
+
+    private func skipPropertyDeclarationWhitespace(in text: String, index: inout String.Index) throws {
+        while index < text.endIndex, text[index].isWhitespace {
+            if text[index].isNewline {
+                throw USDImportError.invalidData("USDA property declaration cannot split type and name across lines.")
+            }
+            index = text.index(after: index)
+        }
+    }
+
+    private func skipPropertyValueStartWhitespace(in text: String, index: inout String.Index) throws {
+        while index < text.endIndex, text[index].isWhitespace {
+            if text[index].isNewline {
+                throw USDImportError.invalidData("USDA property value cannot start on a new line after '='.")
+            }
             index = text.index(after: index)
         }
     }
