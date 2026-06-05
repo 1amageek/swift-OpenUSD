@@ -1590,6 +1590,20 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingRelationshipSyntaxFixtureReadsLayer() throws {
+        let data = try openUSDFixture("testSdfParsing.testenv/32_relationship_syntax.usda")
+
+        let layer = try USDAReader().readLayer(from: data)
+
+        #expect(layer.prims.map(\.path).sorted() == [
+            "/customFoo",
+            "/customFoo/Scope",
+            "/foo",
+            "/foo/Scope",
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingNoEndingNewlineFixtureReadsLayer() throws {
         let data = try openUSDFixture("testSdfParsing.testenv/41_noEndingNewline.usda")
 
@@ -1676,6 +1690,23 @@ struct OpenUSDTests {
         let layer = try USDAReader().readLayer(from: data)
 
         #expect(layer.prims.map(\.path).sorted() == ["/RefComp", "/RefComp2", "/RefComp3"])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingMetadataSyntaxFixturesReadLayers() throws {
+        let testCases: [(fixturePath: String, primPaths: [String])] = [
+            ("testSdfParsing.testenv/104_uniformAttributes.usda", ["/bool_tests"]),
+            ("testSdfParsing.testenv/113_displayName_metadata.usda", ["/Rig", "/Rig/Leg", "/RightLeg"]),
+            ("testSdfParsing.testenv/115_symmetricPeer_metadata.usda", ["/test"]),
+            ("testSdfParsing.testenv/127_varyingRelationship.usda", ["/Sphere"]),
+            ("testSdfParsing.testenv/187_displayName_metadata.usda", ["/Rig", "/Rig/Leg"]),
+        ]
+
+        for testCase in testCases {
+            let layer = try USDAReader().readLayer(from: openUSDFixture(testCase.fixturePath))
+
+            #expect(layer.prims.map(\.path).sorted() == testCase.primPaths.sorted())
+        }
     }
 
     @Test(.timeLimit(.minutes(1)))
