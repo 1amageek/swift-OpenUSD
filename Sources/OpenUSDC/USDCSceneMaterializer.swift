@@ -26,6 +26,7 @@ struct USDCSceneMaterializer {
             fieldSetIndexes: fieldSetIndexes,
             tokens: tokens
         )
+        try validatePrimChildren(in: specsByPath, valueDecoder: valueDecoder)
 
         let rootFields = specsByPath["/"]?.fields ?? [:]
         let defaultPrim = try rootFields["defaultPrim"].map { try valueDecoder.readStringLike($0) }
@@ -66,6 +67,7 @@ struct USDCSceneMaterializer {
             fieldSetIndexes: fieldSetIndexes,
             tokens: tokens
         )
+        try validatePrimChildren(in: specsByPath, valueDecoder: valueDecoder)
         var primTransforms: [String: USDTransformMatrix4x4] = [:]
         for path in specsByPath.keys.sorted() where path != "/" {
             guard specsByPath[path]?.specType == .prim else {
@@ -109,6 +111,22 @@ struct USDCSceneMaterializer {
             records[path] = USDCSpecRecord(specType: spec.specType, fields: fieldReps)
         }
         return records
+    }
+
+    private func validatePrimChildren(
+        in specsByPath: [String: USDCSpecRecord],
+        valueDecoder: USDCCrateValueDecoder
+    ) throws {
+        try USDCPrimChildrenValidator.validate(
+            specsByPath.map { path, record in
+                USDCPrimChildrenValidationRecord(
+                    path: path,
+                    specType: record.specType,
+                    fields: record.fields
+                )
+            },
+            valueDecoder: valueDecoder
+        )
     }
 
     private func fieldIndexesForSpec(_ spec: USDCCrateSpec, fieldSetIndexes: [UInt32]) throws -> [UInt32] {

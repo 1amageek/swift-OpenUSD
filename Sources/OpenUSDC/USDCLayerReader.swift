@@ -23,6 +23,16 @@ struct USDCLayerReader {
             tokens: tokens,
             valueDecoder: valueDecoder
         )
+        try USDCPrimChildrenValidator.validate(
+            records.map {
+                USDCPrimChildrenValidationRecord(
+                    path: $0.path,
+                    specType: $0.specType,
+                    fields: $0.fields
+                )
+            },
+            valueDecoder: valueDecoder
+        )
 
         let rootFields = records.first { $0.path == "/" }?.fields ?? [:]
         let defaultPrim = try rootFields["defaultPrim"].map { try valueDecoder.readStringLike($0) }

@@ -1424,6 +1424,40 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFUSDCInvalidPrimChildrenFixtureThrowsTypedError() throws {
+        let data = try openUSDFixture("testSdfUsdcInvalidPrimChildren.testenv/root.usdc")
+
+        let layerMessage = try usdImportFailureMessage {
+            _ = try USDCReader().readLayer(from: data)
+        }
+        let sceneMessage = try usdImportFailureMessage {
+            _ = try USDCReader().read(from: data)
+        }
+
+        #expect(layerMessage.contains("primChildren"))
+        #expect(layerMessage.contains("invalid"))
+        #expect(sceneMessage.contains("primChildren"))
+        #expect(sceneMessage.contains("invalid"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFUSDCDuplicatePrimChildrenFixtureThrowsTypedError() throws {
+        let data = try openUSDFixture("testSdfUsdcInvalidPrimChildren.testenv/duplicate_prim_children.usdc")
+
+        let layerMessage = try usdImportFailureMessage {
+            _ = try USDCReader().readLayer(from: data)
+        }
+        let sceneMessage = try usdImportFailureMessage {
+            _ = try USDCReader().read(from: data)
+        }
+
+        #expect(layerMessage.contains("primChildren"))
+        #expect(layerMessage.contains("duplicate child Child1"))
+        #expect(sceneMessage.contains("primChildren"))
+        #expect(sceneMessage.contains("duplicate child Child1"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func usdcLayerReaderPreservesTokenVectorFieldValues() throws {
         let fixture = makeUSDCLayerTokenVectorFixture()
 
