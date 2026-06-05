@@ -30,6 +30,7 @@ public struct USDAReader: USDSceneReader {
         try validateSignature(in: text)
         try validateTopLevelSyntax(in: text)
         try validatePrimAttributeSyntax(in: text)
+        try validateUniqueSiblingPrimPaths(in: text, parentPrimPath: "")
         if let timeCode = options.timeCode, !timeCode.isFinite {
             throw USDImportError.invalidData("USDA requested timeCode must be finite.")
         }
@@ -51,6 +52,8 @@ public struct USDAReader: USDSceneReader {
         try validateSignature(in: text)
         try validateTopLevelSyntax(in: text)
         try validatePrimAttributeSyntax(in: text)
+        let specs = try parseLayerSpecs(in: text)
+        try validateUniqueSiblingPrimPaths(in: text, parentPrimPath: "")
         let metadataBody = try layerMetadataBody(in: text)
         let defaultPrim = try metadataBody.flatMap { try parseOptionalString(named: "defaultPrim", in: $0) }
         let metersPerUnit = try metadataBody.flatMap { try parseOptionalDouble(named: "metersPerUnit", in: $0) }
@@ -72,7 +75,7 @@ public struct USDAReader: USDSceneReader {
             metersPerUnit: metersPerUnit,
             upAxis: upAxis,
             composition: try parseLayerComposition(in: text, metadataBody: metadataBody),
-            specs: try parseLayerSpecs(in: text),
+            specs: specs,
             primTransforms: try parsePrimTransforms(in: text)
         )
     }
@@ -139,6 +142,24 @@ public struct USDAReader: USDSceneReader {
         for prim in prims {
             try validateScalarAssignments(in: directAttributeText(from: prim.body))
             try validatePrimAttributeSyntax(in: prim.body)
+        }
+    }
+
+    private func validateUniqueSiblingPrimPaths(
+        in text: String,
+        parentPrimPath: String
+    ) throws {
+        var seenPaths: Set<String> = []
+        let prims = try parseDirectPrims(in: text)
+        for prim in prims {
+            let path = primPath(for: prim, parentPrimPath: parentPrimPath)
+            guard seenPaths.insert(path).inserted else {
+                throw USDImportError.invalidData("USDA contains duplicate prim path \(path).")
+            }
+            try validateUniqueSiblingPrimPaths(
+                in: prim.body,
+                parentPrimPath: path
+            )
         }
     }
 
@@ -533,6 +554,7 @@ public struct USDAReader: USDSceneReader {
 
     private func nextDirectPrimDeclaration(in text: String, from startIndex: String.Index) throws -> String.Index? {
         var index = startIndex
+        var braceDepth = 0
         var bracketDepth = 0
         var parenthesisDepth = 0
         while index < text.endIndex {
@@ -545,7 +567,11 @@ public struct USDAReader: USDSceneReader {
                 try skipQuotedString(in: text, index: &index)
                 continue
             }
-            if character == "[" {
+            if character == "{" {
+                braceDepth += 1
+            } else if character == "}" {
+                braceDepth = max(0, braceDepth - 1)
+            } else if character == "[" {
                 bracketDepth += 1
             } else if character == "]" {
                 bracketDepth = max(0, bracketDepth - 1)
@@ -553,7 +579,8 @@ public struct USDAReader: USDSceneReader {
                 parenthesisDepth += 1
             } else if character == ")" {
                 parenthesisDepth = max(0, parenthesisDepth - 1)
-            } else if bracketDepth == 0,
+            } else if braceDepth == 0,
+                      bracketDepth == 0,
                       parenthesisDepth == 0,
                       primDeclarationKeyword(at: index, in: text) != nil {
                 return index

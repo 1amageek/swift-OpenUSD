@@ -1496,6 +1496,23 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingDuplicatePrimFixtureThrowsTypedError() throws {
+        let data = try openUSDFixture("testSdfParsing.testenv/90_bad_dupePrim.usda")
+
+        let layerMessage = try usdImportFailureMessage {
+            _ = try USDAReader().readLayer(from: data)
+        }
+        let sceneMessage = try usdImportFailureMessage {
+            _ = try USDAReader().read(from: data)
+        }
+
+        #expect(layerMessage.contains("duplicate prim path"))
+        #expect(layerMessage.contains("/A"))
+        #expect(sceneMessage.contains("duplicate prim path"))
+        #expect(sceneMessage.contains("/A"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingEndTokenFixtureIgnoresTrailingGarbage() throws {
         let data = try openUSDFixture("testSdfParsing.testenv/07_end.usda")
 
