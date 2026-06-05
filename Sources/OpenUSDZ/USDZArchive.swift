@@ -25,7 +25,7 @@ public struct USDZArchive: Sendable, Equatable {
         entries.first { $0.path == path }
     }
 
-    public func data(forLayerPath path: String) throws -> Data {
+    public func data(for path: String) throws -> Data {
         try data(for: USDZLayerPath.parse(path))
     }
 

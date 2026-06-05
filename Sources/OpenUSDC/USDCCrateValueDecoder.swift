@@ -62,16 +62,16 @@ struct USDCCrateValueDecoder {
             return .assetPath(try readAssetPath(valueRep))
         case .pathVector:
             return .pathVector(try readPathVectorValue(valueRep))
-        case .tokenListOp:
-            return .tokenListOp(try readTokenListOp(valueRep))
-        case .stringListOp:
-            return .stringListOp(try readStringListOp(valueRep))
-        case .pathListOp:
-            return .pathListOp(try readPathListOp(valueRep))
-        case .referenceListOp:
-            return .referenceListOp(try readReferenceListOp(valueRep))
-        case .payloadListOp:
-            return .payloadListOp(try readPayloadListOp(valueRep))
+        case .tokenListOperation:
+            return .tokenListOperation(try readTokenListOperation(valueRep))
+        case .stringListOperation:
+            return .stringListOperation(try readStringListOperation(valueRep))
+        case .pathListOperation:
+            return .pathListOperation(try readPathListOperation(valueRep))
+        case .referenceListOperation:
+            return .referenceListOperation(try readReferenceListOperation(valueRep))
+        case .payloadListOperation:
+            return .payloadListOperation(try readPayloadListOperation(valueRep))
         case .payload:
             return .payload(try readPayloadValue(valueRep))
         case .double:
@@ -203,16 +203,16 @@ struct USDCCrateValueDecoder {
             return .assetPath(try readAssetPath(valueRep))
         case .pathVector:
             return .pathVector(try readPathVectorValue(valueRep))
-        case .tokenListOp:
-            return .tokenListOp(try readTokenListOp(valueRep))
-        case .stringListOp:
-            return .stringListOp(try readStringListOp(valueRep))
-        case .pathListOp:
-            return .pathListOp(try readPathListOp(valueRep))
-        case .referenceListOp:
-            return .referenceListOp(try readReferenceListOp(valueRep))
-        case .payloadListOp:
-            return .payloadListOp(try readPayloadListOp(valueRep))
+        case .tokenListOperation:
+            return .tokenListOperation(try readTokenListOperation(valueRep))
+        case .stringListOperation:
+            return .stringListOperation(try readStringListOperation(valueRep))
+        case .pathListOperation:
+            return .pathListOperation(try readPathListOperation(valueRep))
+        case .referenceListOperation:
+            return .referenceListOperation(try readReferenceListOperation(valueRep))
+        case .payloadListOperation:
+            return .payloadListOperation(try readPayloadListOperation(valueRep))
         case .payload:
             return .payload(try readPayloadValue(valueRep))
         case .float:
@@ -411,45 +411,45 @@ struct USDCCrateValueDecoder {
         return values
     }
 
-    private func readTokenListOp(_ valueRep: USDCCrateValueRep) throws -> USDCListOp<String> {
-        try readIndexedStringListOp(
+    private func readTokenListOperation(_ valueRep: USDCCrateValueRep) throws -> USDCListOperation<String> {
+        try readIndexedStringListOperation(
             valueRep,
-            expectedType: .tokenListOp,
-            label: "token listOp",
+            expectedType: .tokenListOperation,
+            label: "token list operation",
             values: tokens,
-            missingValueMessage: "USDC token listOp references a token outside TOKENS."
+            missingValueMessage: "USDC token list operation references a token outside TOKENS."
         )
     }
 
-    private func readStringListOp(_ valueRep: USDCCrateValueRep) throws -> USDCListOp<String> {
-        try readIndexedStringListOp(
+    private func readStringListOperation(_ valueRep: USDCCrateValueRep) throws -> USDCListOperation<String> {
+        try readIndexedStringListOperation(
             valueRep,
-            expectedType: .stringListOp,
-            label: "string listOp",
+            expectedType: .stringListOperation,
+            label: "string list operation",
             values: strings,
-            missingValueMessage: "USDC string listOp references a string outside STRINGS."
+            missingValueMessage: "USDC string list operation references a string outside STRINGS."
         )
     }
 
-    private func readPathListOp(_ valueRep: USDCCrateValueRep) throws -> USDCListOp<String> {
+    private func readPathListOperation(_ valueRep: USDCCrateValueRep) throws -> USDCListOperation<String> {
         let paths = try crate.readPaths()
-        return try readIndexedStringListOp(
+        return try readIndexedStringListOperation(
             valueRep,
-            expectedType: .pathListOp,
-            label: "path listOp",
+            expectedType: .pathListOperation,
+            label: "path list operation",
             values: paths,
-            missingValueMessage: "USDC path listOp references a path outside PATHS."
+            missingValueMessage: "USDC path list operation references a path outside PATHS."
         )
     }
 
-    private func readReferenceListOp(_ valueRep: USDCCrateValueRep) throws -> USDCListOp<USDCReference> {
-        try readListOp(valueRep, expectedType: .referenceListOp, label: "reference listOp") { cursor in
+    private func readReferenceListOperation(_ valueRep: USDCCrateValueRep) throws -> USDCListOperation<USDCReference> {
+        try readListOperation(valueRep, expectedType: .referenceListOperation, label: "reference list operation") { cursor in
             try readReference(cursor: &cursor)
         }
     }
 
-    private func readPayloadListOp(_ valueRep: USDCCrateValueRep) throws -> USDCListOp<USDCPayload> {
-        try readListOp(valueRep, expectedType: .payloadListOp, label: "payload listOp") { cursor in
+    private func readPayloadListOperation(_ valueRep: USDCCrateValueRep) throws -> USDCListOperation<USDCPayload> {
+        try readListOperation(valueRep, expectedType: .payloadListOperation, label: "payload list operation") { cursor in
             try readPayload(cursor: &cursor)
         }
     }
@@ -521,14 +521,14 @@ struct USDCCrateValueDecoder {
         }
     }
 
-    private func readIndexedStringListOp(
+    private func readIndexedStringListOperation(
         _ valueRep: USDCCrateValueRep,
         expectedType: USDCCrateValueType,
         label: String,
         values: [String],
         missingValueMessage: String
-    ) throws -> USDCListOp<String> {
-        try readListOp(valueRep, expectedType: expectedType, label: label) { cursor in
+    ) throws -> USDCListOperation<String> {
+        try readListOperation(valueRep, expectedType: expectedType, label: label) { cursor in
             let index = try checkedInt(
                 UInt64(try crate.readFileUInt32(at: cursor)),
                 label: "USDC \(label) item index"
@@ -541,12 +541,12 @@ struct USDCCrateValueDecoder {
         }
     }
 
-    private func readListOp<Item: Sendable & Equatable>(
+    private func readListOperation<Item: Sendable & Equatable>(
         _ valueRep: USDCCrateValueRep,
         expectedType: USDCCrateValueType,
         label: String,
         readItem: (inout Int) throws -> Item
-    ) throws -> USDCListOp<Item> {
+    ) throws -> USDCListOperation<Item> {
         guard valueRep.type == expectedType, !valueRep.isArray else {
             throw USDImportError.invalidData("USDC \(label) value is malformed.")
         }
@@ -559,35 +559,35 @@ struct USDCCrateValueDecoder {
         var cursor = try payloadOffset(valueRep, label: label)
         let header = try crate.readFileBytes(at: cursor, byteCount: 1)[0]
         cursor += 1
-        guard header & ~USDCListOpHeader.allKnownBits == 0 else {
+        guard header & ~USDCListOperationHeader.allKnownBits == 0 else {
             throw USDImportError.invalidData("USDC \(label) header contains unknown bits.")
         }
 
-        var listOp = USDCListOp<Item>(
-            isExplicit: header & USDCListOpHeader.isExplicitBit != 0
+        var listOperation = USDCListOperation<Item>(
+            isExplicit: header & USDCListOperationHeader.isExplicitBit != 0
         )
-        if header & USDCListOpHeader.hasExplicitItemsBit != 0 {
-            listOp.explicitItems = try readListOpItems(cursor: &cursor, label: label, readItem: readItem)
+        if header & USDCListOperationHeader.hasExplicitItemsBit != 0 {
+            listOperation.explicitItems = try readListOperationItems(cursor: &cursor, label: label, readItem: readItem)
         }
-        if header & USDCListOpHeader.hasAddedItemsBit != 0 {
-            listOp.addedItems = try readListOpItems(cursor: &cursor, label: label, readItem: readItem)
+        if header & USDCListOperationHeader.hasAddedItemsBit != 0 {
+            listOperation.addedItems = try readListOperationItems(cursor: &cursor, label: label, readItem: readItem)
         }
-        if header & USDCListOpHeader.hasPrependedItemsBit != 0 {
-            listOp.prependedItems = try readListOpItems(cursor: &cursor, label: label, readItem: readItem)
+        if header & USDCListOperationHeader.hasPrependedItemsBit != 0 {
+            listOperation.prependedItems = try readListOperationItems(cursor: &cursor, label: label, readItem: readItem)
         }
-        if header & USDCListOpHeader.hasAppendedItemsBit != 0 {
-            listOp.appendedItems = try readListOpItems(cursor: &cursor, label: label, readItem: readItem)
+        if header & USDCListOperationHeader.hasAppendedItemsBit != 0 {
+            listOperation.appendedItems = try readListOperationItems(cursor: &cursor, label: label, readItem: readItem)
         }
-        if header & USDCListOpHeader.hasDeletedItemsBit != 0 {
-            listOp.deletedItems = try readListOpItems(cursor: &cursor, label: label, readItem: readItem)
+        if header & USDCListOperationHeader.hasDeletedItemsBit != 0 {
+            listOperation.deletedItems = try readListOperationItems(cursor: &cursor, label: label, readItem: readItem)
         }
-        if header & USDCListOpHeader.hasOrderedItemsBit != 0 {
-            listOp.orderedItems = try readListOpItems(cursor: &cursor, label: label, readItem: readItem)
+        if header & USDCListOperationHeader.hasOrderedItemsBit != 0 {
+            listOperation.orderedItems = try readListOperationItems(cursor: &cursor, label: label, readItem: readItem)
         }
-        return listOp
+        return listOperation
     }
 
-    private func readListOpItems<Item>(
+    private func readListOperationItems<Item>(
         cursor: inout Int,
         label: String,
         readItem: (inout Int) throws -> Item
@@ -1123,7 +1123,7 @@ struct USDCCrateValueDecoder {
     }
 }
 
-private enum USDCListOpHeader {
+private enum USDCListOperationHeader {
     static let isExplicitBit: UInt8 = 1 << 0
     static let hasExplicitItemsBit: UInt8 = 1 << 1
     static let hasAddedItemsBit: UInt8 = 1 << 2

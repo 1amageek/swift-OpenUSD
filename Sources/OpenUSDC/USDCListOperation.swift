@@ -1,4 +1,4 @@
-public struct USDCListOp<Item: Sendable & Equatable>: Sendable, Equatable {
+public struct USDCListOperation<Item: Sendable & Equatable>: Sendable, Equatable {
     public var isExplicit: Bool
     public var explicitItems: [Item]
     public var addedItems: [Item]

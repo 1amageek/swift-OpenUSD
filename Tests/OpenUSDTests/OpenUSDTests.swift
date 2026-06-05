@@ -1227,15 +1227,15 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func usdcLayerReaderPreservesListOpFieldValues() throws {
-        let fixture = makeUSDCLayerListOpFixture()
+    func usdcLayerReaderPreservesListOperationFieldValues() throws {
+        let fixture = makeUSDCLayerListOperationFixture()
 
         let layer = try USDCReader().readLayer(from: fixture)
 
         #expect(layer.specs.map(\.path) == ["/", "/Scope"])
         let scope = try #require(layer.spec(at: "/Scope"))
         #expect(scope.specType == .prim)
-        #expect(scope.fields["tokenListOp"] == .tokenListOp(USDCListOp(
+        #expect(scope.fields["tokenListOperation"] == .tokenListOperation(USDCListOperation(
             isExplicit: true,
             explicitItems: ["tokenExplicit"],
             addedItems: ["tokenAdded"],
@@ -1244,11 +1244,11 @@ struct OpenUSDTests {
             deletedItems: ["tokenDeleted"],
             orderedItems: ["tokenOrdered"]
         )))
-        #expect(scope.fields["stringListOp"] == .stringListOp(USDCListOp(
+        #expect(scope.fields["stringListOperation"] == .stringListOperation(USDCListOperation(
             isExplicit: true,
             addedItems: ["stringAdded"]
         )))
-        #expect(scope.fields["pathListOp"] == .pathListOp(USDCListOp(
+        #expect(scope.fields["pathListOperation"] == .pathListOperation(USDCListOperation(
             prependedItems: ["/"],
             appendedItems: ["/Scope.target"],
             deletedItems: ["/Scope"],
@@ -1265,7 +1265,7 @@ struct OpenUSDTests {
         #expect(layer.specs.map(\.path) == ["/", "/Scope"])
         let scope = try #require(layer.spec(at: "/Scope"))
         #expect(scope.specType == .prim)
-        #expect(scope.fields["references"] == .referenceListOp(USDCListOp(
+        #expect(scope.fields["references"] == .referenceListOperation(USDCListOperation(
             addedItems: [
                 USDCReference(
                     assetPath: "assets/ref.usda",
@@ -1274,7 +1274,7 @@ struct OpenUSDTests {
                 ),
             ]
         )))
-        #expect(scope.fields["payload"] == .payloadListOp(USDCListOp(
+        #expect(scope.fields["payload"] == .payloadListOperation(USDCListOperation(
             prependedItems: [
                 USDCPayload(
                     assetPath: "assets/payload.usdc",
@@ -1633,15 +1633,15 @@ private func makeUSDCLayerAssetPathAndPathVectorFixture() -> Data {
     ])
 }
 
-private func makeUSDCLayerListOpFixture() -> Data {
+private func makeUSDCLayerListOperationFixture() -> Data {
     let version = USDCCrateVersion(major: 0, minor: 8, patch: 0)
     let tokens = [
         "specifier",
         "Scope",
         "target",
-        "tokenListOp",
-        "stringListOp",
-        "pathListOp",
+        "tokenListOperation",
+        "stringListOperation",
+        "pathListOperation",
         "tokenExplicit",
         "tokenAdded",
         "tokenPrepended",
@@ -1651,7 +1651,7 @@ private func makeUSDCLayerListOpFixture() -> Data {
         "stringAdded",
     ]
     var valueData = Data()
-    let tokenListOpOffset = appendUSDCIndexedListOp(
+    let tokenListOperationOffset = appendUSDCIndexedListOperation(
         isExplicit: true,
         explicitItems: [6],
         addedItems: [7],
@@ -1661,12 +1661,12 @@ private func makeUSDCLayerListOpFixture() -> Data {
         orderedItems: [11],
         to: &valueData
     )
-    let stringListOpOffset = appendUSDCIndexedListOp(
+    let stringListOperationOffset = appendUSDCIndexedListOperation(
         isExplicit: true,
         addedItems: [0],
         to: &valueData
     )
-    let pathListOpOffset = appendUSDCIndexedListOp(
+    let pathListOperationOffset = appendUSDCIndexedListOperation(
         prependedItems: [0],
         appendedItems: [2],
         deletedItems: [1],
@@ -1680,15 +1680,15 @@ private func makeUSDCLayerListOpFixture() -> Data {
         ),
         USDCCrateField(
             tokenIndex: 3,
-            valueRep: USDCCrateValueRep(type: .tokenListOp, isInlined: false, isArray: false, payload: tokenListOpOffset)
+            valueRep: USDCCrateValueRep(type: .tokenListOperation, isInlined: false, isArray: false, payload: tokenListOperationOffset)
         ),
         USDCCrateField(
             tokenIndex: 4,
-            valueRep: USDCCrateValueRep(type: .stringListOp, isInlined: false, isArray: false, payload: stringListOpOffset)
+            valueRep: USDCCrateValueRep(type: .stringListOperation, isInlined: false, isArray: false, payload: stringListOperationOffset)
         ),
         USDCCrateField(
             tokenIndex: 5,
-            valueRep: USDCCrateValueRep(type: .pathListOp, isInlined: false, isArray: false, payload: pathListOpOffset)
+            valueRep: USDCCrateValueRep(type: .pathListOperation, isInlined: false, isArray: false, payload: pathListOperationOffset)
         ),
     ]
     let specs = [
@@ -1729,7 +1729,7 @@ private func makeUSDCLayerCompositionArcFixture() -> Data {
         "assets/single.usda",
     ]
     var valueData = Data()
-    let referenceListOpOffset = appendUSDCReferenceListOp(
+    let referenceListOperationOffset = appendUSDCReferenceListOperation(
         addedItems: [
             USDCEncodedReference(
                 assetPathStringIndex: 0,
@@ -1739,7 +1739,7 @@ private func makeUSDCLayerCompositionArcFixture() -> Data {
         ],
         to: &valueData
     )
-    let payloadListOpOffset = appendUSDCPayloadListOp(
+    let payloadListOperationOffset = appendUSDCPayloadListOperation(
         prependedItems: [
             USDCEncodedPayload(
                 assetPathStringIndex: 1,
@@ -1764,11 +1764,11 @@ private func makeUSDCLayerCompositionArcFixture() -> Data {
         ),
         USDCCrateField(
             tokenIndex: 3,
-            valueRep: USDCCrateValueRep(type: .referenceListOp, isInlined: false, isArray: false, payload: referenceListOpOffset)
+            valueRep: USDCCrateValueRep(type: .referenceListOperation, isInlined: false, isArray: false, payload: referenceListOperationOffset)
         ),
         USDCCrateField(
             tokenIndex: 4,
-            valueRep: USDCCrateValueRep(type: .payloadListOp, isInlined: false, isArray: false, payload: payloadListOpOffset)
+            valueRep: USDCCrateValueRep(type: .payloadListOperation, isInlined: false, isArray: false, payload: payloadListOperationOffset)
         ),
         USDCCrateField(
             tokenIndex: 5,
@@ -2033,7 +2033,7 @@ private func appendUSDCPathVector(_ pathIndexes: [UInt32], to data: inout Data) 
     return offset
 }
 
-private func appendUSDCIndexedListOp(
+private func appendUSDCIndexedListOperation(
     isExplicit: Bool = false,
     explicitItems: [UInt32] = [],
     addedItems: [UInt32] = [],
@@ -2064,16 +2064,16 @@ private func appendUSDCIndexedListOp(
         header |= 1 << 6
     }
     data.append(header)
-    appendUSDCListOpItems(explicitItems, to: &data)
-    appendUSDCListOpItems(addedItems, to: &data)
-    appendUSDCListOpItems(prependedItems, to: &data)
-    appendUSDCListOpItems(appendedItems, to: &data)
-    appendUSDCListOpItems(deletedItems, to: &data)
-    appendUSDCListOpItems(orderedItems, to: &data)
+    appendUSDCListOperationItems(explicitItems, to: &data)
+    appendUSDCListOperationItems(addedItems, to: &data)
+    appendUSDCListOperationItems(prependedItems, to: &data)
+    appendUSDCListOperationItems(appendedItems, to: &data)
+    appendUSDCListOperationItems(deletedItems, to: &data)
+    appendUSDCListOperationItems(orderedItems, to: &data)
     return offset
 }
 
-private func appendUSDCListOpItems(_ items: [UInt32], to data: inout Data) {
+private func appendUSDCListOperationItems(_ items: [UInt32], to data: inout Data) {
     guard !items.isEmpty else {
         return
     }
@@ -2095,7 +2095,7 @@ private struct USDCEncodedPayload {
     var layerOffset: USDCLayerOffset
 }
 
-private func appendUSDCReferenceListOp(
+private func appendUSDCReferenceListOperation(
     explicitItems: [USDCEncodedReference] = [],
     addedItems: [USDCEncodedReference] = [],
     prependedItems: [USDCEncodedReference] = [],
@@ -2104,7 +2104,7 @@ private func appendUSDCReferenceListOp(
     orderedItems: [USDCEncodedReference] = [],
     to data: inout Data
 ) -> UInt64 {
-    appendUSDCListOp(
+    appendUSDCListOperation(
         explicitItems: explicitItems,
         addedItems: addedItems,
         prependedItems: prependedItems,
@@ -2121,7 +2121,7 @@ private func appendUSDCReferenceListOp(
     }
 }
 
-private func appendUSDCPayloadListOp(
+private func appendUSDCPayloadListOperation(
     explicitItems: [USDCEncodedPayload] = [],
     addedItems: [USDCEncodedPayload] = [],
     prependedItems: [USDCEncodedPayload] = [],
@@ -2130,7 +2130,7 @@ private func appendUSDCPayloadListOp(
     orderedItems: [USDCEncodedPayload] = [],
     to data: inout Data
 ) -> UInt64 {
-    appendUSDCListOp(
+    appendUSDCListOperation(
         explicitItems: explicitItems,
         addedItems: addedItems,
         prependedItems: prependedItems,
@@ -2143,7 +2143,7 @@ private func appendUSDCPayloadListOp(
     }
 }
 
-private func appendUSDCListOp<Item>(
+private func appendUSDCListOperation<Item>(
     isExplicit: Bool = false,
     explicitItems: [Item] = [],
     addedItems: [Item] = [],
@@ -2175,16 +2175,16 @@ private func appendUSDCListOp<Item>(
         header |= 1 << 6
     }
     data.append(header)
-    appendUSDCListOpItems(explicitItems, to: &data, appendItem: appendItem)
-    appendUSDCListOpItems(addedItems, to: &data, appendItem: appendItem)
-    appendUSDCListOpItems(prependedItems, to: &data, appendItem: appendItem)
-    appendUSDCListOpItems(appendedItems, to: &data, appendItem: appendItem)
-    appendUSDCListOpItems(deletedItems, to: &data, appendItem: appendItem)
-    appendUSDCListOpItems(orderedItems, to: &data, appendItem: appendItem)
+    appendUSDCListOperationItems(explicitItems, to: &data, appendItem: appendItem)
+    appendUSDCListOperationItems(addedItems, to: &data, appendItem: appendItem)
+    appendUSDCListOperationItems(prependedItems, to: &data, appendItem: appendItem)
+    appendUSDCListOperationItems(appendedItems, to: &data, appendItem: appendItem)
+    appendUSDCListOperationItems(deletedItems, to: &data, appendItem: appendItem)
+    appendUSDCListOperationItems(orderedItems, to: &data, appendItem: appendItem)
     return offset
 }
 
-private func appendUSDCListOpItems<Item>(
+private func appendUSDCListOperationItems<Item>(
     _ items: [Item],
     to data: inout Data,
     appendItem: (Item, inout Data) -> Void

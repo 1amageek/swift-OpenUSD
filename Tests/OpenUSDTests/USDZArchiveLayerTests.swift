@@ -17,7 +17,7 @@ struct USDZArchiveLayerTests {
             let archive = try openUSDZArchive(testCase.archive)
 
             #expect(archive.defaultLayer?.path == testCase.layer)
-            #expect(try archive.data(forLayerPath: testCase.layer) == openUSDZFixture(testCase.source))
+            #expect(try archive.data(for: testCase.layer) == openUSDZFixture(testCase.source))
         }
     }
 
@@ -26,10 +26,10 @@ struct USDZArchiveLayerTests {
         let archive = try openUSDZArchive("anchored_refs.usdz")
 
         #expect(archive.entries.map(\.path) == ["root.usd", "ref.usd", "sub/ref.usdc", "sub/ref.usda"])
-        #expect(try archive.data(forLayerPath: "root.usd") == openUSDZFixture("anchored_refs/root.usd"))
-        #expect(try archive.data(forLayerPath: "ref.usd") == openUSDZFixture("anchored_refs/ref.usd"))
-        #expect(try archive.data(forLayerPath: "sub/ref.usdc") == openUSDZFixture("anchored_refs/sub/ref.usdc"))
-        #expect(try archive.data(forLayerPath: "sub/ref.usda") == openUSDZFixture("anchored_refs/sub/ref.usda"))
+        #expect(try archive.data(for: "root.usd") == openUSDZFixture("anchored_refs/root.usd"))
+        #expect(try archive.data(for: "ref.usd") == openUSDZFixture("anchored_refs/ref.usd"))
+        #expect(try archive.data(for: "sub/ref.usdc") == openUSDZFixture("anchored_refs/sub/ref.usdc"))
+        #expect(try archive.data(for: "sub/ref.usda") == openUSDZFixture("anchored_refs/sub/ref.usda"))
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -38,11 +38,11 @@ struct USDZArchiveLayerTests {
 
         #expect(archive.entries.map(\.path) == ["anchored_refs.usdz"])
         #expect(
-            try archive.data(forLayerPath: "anchored_refs.usdz[root.usd]")
+            try archive.data(for: "anchored_refs.usdz[root.usd]")
                 == openUSDZFixture("anchored_refs/root.usd")
         )
         #expect(
-            try archive.data(forLayerPath: "anchored_refs.usdz[sub/ref.usdc]")
+            try archive.data(for: "anchored_refs.usdz[sub/ref.usdc]")
                 == openUSDZFixture("anchored_refs/sub/ref.usdc")
         )
     }
@@ -52,13 +52,13 @@ struct USDZArchiveLayerTests {
         let archive = try openUSDZArchive("anchored_refs.usdz")
 
         #expect(throws: USDImportError.self) {
-            _ = try archive.data(forLayerPath: "missing.usd")
+            _ = try archive.data(for: "missing.usd")
         }
         #expect(throws: USDImportError.self) {
-            _ = try archive.data(forLayerPath: "root.usd[child.usd]")
+            _ = try archive.data(for: "root.usd[child.usd]")
         }
         #expect(throws: USDImportError.self) {
-            _ = try archive.data(forLayerPath: "root.usd[child.usd")
+            _ = try archive.data(for: "root.usd[child.usd")
         }
     }
 }
