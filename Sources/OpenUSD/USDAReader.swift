@@ -276,12 +276,54 @@ public struct USDAReader: USDSceneReader {
         if text[cursor...].hasPrefix("None") {
             return
         }
+        if typeName == "rel" {
+            try validateRelationshipTargetValue(named: propertyName, startingAt: cursor, in: text)
+            return
+        }
         if isArrayType {
             guard text[cursor] == "[" || (propertyName.hasSuffix(".timeSamples") && text[cursor] == "{") else {
                 throw USDImportError.invalidData("USDA \(typeName) attribute must use a shaped list value.")
             }
         } else if text[cursor] == "[" {
             throw USDImportError.invalidData("USDA \(typeName) attribute cannot use a shaped list value.")
+        }
+    }
+
+    private func validateRelationshipTargetValue(
+        named propertyName: String,
+        startingAt cursor: String.Index,
+        in text: String
+    ) throws {
+        guard text[cursor] == "[" else {
+            return
+        }
+        let closeBracket = try matchingBracket(startingAt: cursor, in: text)
+        var listCursor = text.index(after: cursor)
+        var targets: Set<String> = []
+        while listCursor < closeBracket {
+            skipWhitespaceAndLineComments(in: text, index: &listCursor)
+            guard listCursor < closeBracket else {
+                break
+            }
+            if text[listCursor] == "," {
+                listCursor = text.index(after: listCursor)
+                continue
+            }
+            guard text[listCursor] == "<" else {
+                throw USDImportError.invalidData("USDA relationship \(propertyName) target list contains invalid target syntax.")
+            }
+            let targetStart = listCursor
+            while listCursor < closeBracket, text[listCursor] != ">" {
+                listCursor = text.index(after: listCursor)
+            }
+            guard listCursor < closeBracket else {
+                throw USDImportError.invalidData("USDA relationship \(propertyName) target list contains unterminated target path.")
+            }
+            listCursor = text.index(after: listCursor)
+            let target = String(text[targetStart..<listCursor])
+            guard targets.insert(target).inserted else {
+                throw USDImportError.invalidData("USDA relationship \(propertyName) contains duplicate target \(target).")
+            }
         }
     }
 

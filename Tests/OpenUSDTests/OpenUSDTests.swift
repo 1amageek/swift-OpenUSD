@@ -1513,6 +1513,18 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingDuplicateRelationshipTargetFixtureThrowsTypedError() throws {
+        let data = try openUSDFixture("testSdfParsing.testenv/33_bad_relationship_duplicate_target.usda")
+
+        let message = try usdImportFailureMessage {
+            _ = try USDAReader().readLayer(from: data)
+        }
+
+        #expect(message.contains("duplicate target"))
+        #expect(message.contains("<Foo/Bar>"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingBadValueTypeFixturesThrowTypedErrors() throws {
         for fixturePath in [
             "testSdfParsing.testenv/91_bad_valueType.usda",
