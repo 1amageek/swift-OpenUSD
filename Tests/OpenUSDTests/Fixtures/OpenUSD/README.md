@@ -34,7 +34,11 @@ Source paths:
 | `testSdfParsing.testenv/22_bad_newline2.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/22_bad_newline2.usda` |
 | `testSdfParsing.testenv/41_noEndingNewline.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/41_noEndingNewline.usda` |
 | `testSdfParsing.testenv/46_weirdStringContent.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/46_weirdStringContent.usda` |
+| `testSdfParsing.testenv/80_bad_hidden.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/80_bad_hidden.usda` |
 | `testSdfParsing.testenv/90_bad_dupePrim.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/90_bad_dupePrim.usda` |
+| `testSdfParsing.testenv/93_hidden.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/93_hidden.usda` |
+| `testSdfParsing.testenv/94_bad_hiddenAttr.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/94_bad_hiddenAttr.usda` |
+| `testSdfParsing.testenv/95_bad_hiddenRel.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/95_bad_hiddenRel.usda` |
 | `testSdfParsing.testenv/132_references.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/132_references.usda` |
 | `testSdfParsing.testenv/133_bad_reference.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/133_bad_reference.usda` |
 | `testSdfParsing.testenv/152_payloads.usda` | `pxr/usd/sdf/testenv/testSdfParsing.testenv/152_payloads.usda` |

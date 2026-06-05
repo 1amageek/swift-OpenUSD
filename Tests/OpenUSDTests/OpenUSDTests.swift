@@ -1627,6 +1627,33 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingHiddenMetadataFixtureReadsLayer() throws {
+        let data = try openUSDFixture("testSdfParsing.testenv/93_hidden.usda")
+
+        let layer = try USDAReader().readLayer(from: data)
+
+        #expect(layer.prims.map(\.path).sorted() == ["/RefComp", "/RefComp2", "/RefComp3"])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingBadHiddenMetadataFixturesThrowTypedErrors() throws {
+        for fixturePath in [
+            "testSdfParsing.testenv/80_bad_hidden.usda",
+            "testSdfParsing.testenv/94_bad_hiddenAttr.usda",
+            "testSdfParsing.testenv/95_bad_hiddenRel.usda",
+        ] {
+            let data = try openUSDFixture(fixturePath)
+
+            let message = try usdImportFailureMessage {
+                _ = try USDAReader().readLayer(from: data)
+            }
+
+            #expect(message.contains("hidden metadata"))
+            #expect(message.contains("bad"))
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingReferencesFixtureReadsSupportedExternalArcs() throws {
         let data = try openUSDFixture("testSdfParsing.testenv/132_references.usda")
 
