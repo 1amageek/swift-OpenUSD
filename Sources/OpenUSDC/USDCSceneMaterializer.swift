@@ -53,6 +53,13 @@ struct USDCSceneMaterializer {
     }
 
     func readPrimTransforms() throws -> [String: USDTransformMatrix4x4] {
+        try readPrimTransformInfo().primTransforms
+    }
+
+    func readPrimTransformInfo() throws -> (
+        primTransforms: [String: USDTransformMatrix4x4],
+        resetXformStackPrimPaths: Set<String>
+    ) {
         let tokens = try crate.readTokens()
         let strings = try crate.readStrings()
         let paths = try crate.readPaths()
@@ -69,9 +76,18 @@ struct USDCSceneMaterializer {
         )
         try validatePrimChildren(in: specsByPath, valueDecoder: valueDecoder)
         var primTransforms: [String: USDTransformMatrix4x4] = [:]
+        var resetXformStackPrimPaths: Set<String> = []
         for path in specsByPath.keys.sorted() where path != "/" {
             guard specsByPath[path]?.specType == .prim else {
                 continue
+            }
+            let localTransform = try localTransform(
+                forPrimPath: path,
+                specsByPath: specsByPath,
+                valueDecoder: valueDecoder
+            )
+            if localTransform.resetsParentStack {
+                resetXformStackPrimPaths.insert(path)
             }
             primTransforms[path] = try worldTransform(
                 forPrimPath: path,
@@ -79,7 +95,7 @@ struct USDCSceneMaterializer {
                 valueDecoder: valueDecoder
             ).usdTransformMatrix
         }
-        return primTransforms
+        return (primTransforms, resetXformStackPrimPaths)
     }
 
     private func buildSpecsByPath(
@@ -198,6 +214,11 @@ struct USDCSceneMaterializer {
                 attributeRecords: attributeRecords,
                 valueDecoder: valueDecoder
             )
+            try USDMesh.validateTopology(
+                pointCount: transformedPoints.count,
+                faceVertexCounts: faceVertexCounts,
+                faceVertexIndices: faceVertexIndices
+            )
             let orientation = try optionalOrientation(
                 attributeRecords: attributeRecords,
                 valueDecoder: valueDecoder
@@ -236,6 +257,7 @@ struct USDCSceneMaterializer {
             if let extent, extent.count != 2 {
                 throw USDImportError.invalidData("USDC Mesh extent must contain exactly two points.")
             }
+            let transformedExtent = try transformedExtent(extent, applying: transform)
             meshes.append(USDMesh(
                 name: primName(from: meshPath),
                 primPath: meshPath,
@@ -249,10 +271,47 @@ struct USDCSceneMaterializer {
                 textureCoordinates: textureCoordinates,
                 displayColor: displayColor,
                 displayOpacity: displayOpacity,
-                extent: extent
+                extent: transformedExtent
             ))
         }
         return meshes
+    }
+
+    private func transformedExtent(
+        _ extent: [USDPoint3D]?,
+        applying transform: USDCMatrix4x4
+    ) throws -> [USDPoint3D]? {
+        guard let extent else {
+            return nil
+        }
+        let minimum = extent[0]
+        let maximum = extent[1]
+        let corners = [
+            USDPoint3D(x: minimum.x, y: minimum.y, z: minimum.z),
+            USDPoint3D(x: maximum.x, y: minimum.y, z: minimum.z),
+            USDPoint3D(x: minimum.x, y: maximum.y, z: minimum.z),
+            USDPoint3D(x: minimum.x, y: minimum.y, z: maximum.z),
+            USDPoint3D(x: maximum.x, y: maximum.y, z: minimum.z),
+            USDPoint3D(x: maximum.x, y: minimum.y, z: maximum.z),
+            USDPoint3D(x: minimum.x, y: maximum.y, z: maximum.z),
+            USDPoint3D(x: maximum.x, y: maximum.y, z: maximum.z),
+        ]
+        let transformedCorners = try corners.map { try transform.transform($0) }
+        let xs = transformedCorners.map(\.x)
+        let ys = transformedCorners.map(\.y)
+        let zs = transformedCorners.map(\.z)
+        guard let minX = xs.min(),
+              let minY = ys.min(),
+              let minZ = zs.min(),
+              let maxX = xs.max(),
+              let maxY = ys.max(),
+              let maxZ = zs.max() else {
+            return nil
+        }
+        return [
+            USDPoint3D(x: minX, y: minY, z: minZ),
+            USDPoint3D(x: maxX, y: maxY, z: maxZ),
+        ]
     }
 
     private func worldTransform(
@@ -269,7 +328,7 @@ struct USDCSceneMaterializer {
                     specsByPath: specsByPath,
                     valueDecoder: valueDecoder
                 )
-                transform = transform.concatenating(localTransform.matrix)
+                transform = try transform.validatedConcatenating(localTransform.matrix)
                 if localTransform.resetsParentStack {
                     break
                 }
@@ -306,7 +365,7 @@ struct USDCSceneMaterializer {
                 valueDecoder: valueDecoder
             )
             let effectiveTransform = orderedOp.isInverted ? try opTransform.inverted() : opTransform
-            transform = transform.concatenating(effectiveTransform)
+            transform = try transform.validatedConcatenating(effectiveTransform)
         }
         return USDCLocalTransform(matrix: transform, resetsParentStack: resetsParentStack)
     }
@@ -428,14 +487,19 @@ struct USDCSceneMaterializer {
         record: USDCSpecRecord,
         valueDecoder: USDCCrateValueDecoder
     ) throws -> [USDPoint3D]? {
-        if let timeSamples = record.fields["timeSamples"],
-           options.timeCode != nil,
-           let points = try valueDecoder.readPointTimeSampleArray(
-               timeSamples,
-               at: options.timeCode,
-               interpolation: options.timeSampleInterpolation
-           ) {
-            return points
+        if let timeSamples = record.fields["timeSamples"] {
+            switch try valueDecoder.readPointTimeSampleArray(
+                timeSamples,
+                at: options.timeCode,
+                interpolation: options.timeSampleInterpolation
+            ) {
+            case .value(let points):
+                return points
+            case .blocked:
+                return nil
+            case .unresolved:
+                break
+            }
         }
         guard let defaultValue = try resolvedValueRep(record: record, valueDecoder: valueDecoder) else {
             return nil
@@ -464,11 +528,11 @@ struct USDCSceneMaterializer {
     ) throws -> [Int] {
         guard
             let record = attributeRecords[name],
-            let defaultValue = try resolvedValueRep(record: record, valueDecoder: valueDecoder)
+            let valueRep = try resolvedIntArrayValueRep(record: record, valueDecoder: valueDecoder)
         else {
             throw USDImportError.missingRequiredField(name)
         }
-        let values = try valueDecoder.readIntArray(defaultValue)
+        let values = try valueDecoder.readIntArray(valueRep)
         guard !values.isEmpty else {
             throw USDImportError.invalidData("USDC Mesh \(name) is empty.")
         }
@@ -482,11 +546,21 @@ struct USDCSceneMaterializer {
     ) throws -> [Int]? {
         guard
             let record = attributeRecords[name],
-            let defaultValue = try resolvedValueRep(record: record, valueDecoder: valueDecoder)
+            let valueRep = try resolvedIntArrayValueRep(record: record, valueDecoder: valueDecoder)
         else {
             return nil
         }
-        return try valueDecoder.readIntArray(defaultValue)
+        return try valueDecoder.readIntArray(valueRep)
+    }
+
+    private func resolvedIntArrayValueRep(
+        record: USDCSpecRecord,
+        valueDecoder: USDCCrateValueDecoder
+    ) throws -> USDCCrateValueRep? {
+        if let timeSamples = record.fields["timeSamples"], options.timeCode != nil {
+            return try valueDecoder.readTimeSampleValueRep(timeSamples, at: options.timeCode)
+        }
+        return try resolvedValueRep(record: record, valueDecoder: valueDecoder)
     }
 
     private func optionalDoubleArray(
@@ -626,10 +700,7 @@ struct USDCSceneMaterializer {
         valueDecoder: USDCCrateValueDecoder
     ) throws -> USDCCrateValueRep? {
         if let defaultValue = record.fields["default"] {
-            if valueDecoder.isValueBlock(defaultValue) {
-                return nil
-            }
-            if !valueDecoder.isAnimationBlock(defaultValue) {
+            if !valueDecoder.isBlockedValue(defaultValue) {
                 return defaultValue
             }
         }

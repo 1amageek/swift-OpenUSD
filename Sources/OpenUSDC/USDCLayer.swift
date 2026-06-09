@@ -6,19 +6,22 @@ public struct USDCLayer: Sendable, Equatable {
     public var upAxis: USDUpAxis?
     public var specs: [USDCLayerSpec]
     public var primTransforms: [String: USDTransformMatrix4x4]
+    public var resetXformStackPrimPaths: Set<String>
 
     public init(
         defaultPrim: String? = nil,
         metersPerUnit: Double? = nil,
         upAxis: USDUpAxis? = nil,
         specs: [USDCLayerSpec] = [],
-        primTransforms: [String: USDTransformMatrix4x4] = [:]
+        primTransforms: [String: USDTransformMatrix4x4] = [:],
+        resetXformStackPrimPaths: Set<String> = []
     ) {
         self.defaultPrim = defaultPrim
         self.metersPerUnit = metersPerUnit
         self.upAxis = upAxis
         self.specs = specs
         self.primTransforms = primTransforms
+        self.resetXformStackPrimPaths = resetXformStackPrimPaths
     }
 
     public var prims: [USDCLayerSpec] {
@@ -43,20 +46,20 @@ public struct USDCLayer: Sendable, Equatable {
                 }
                 switch field {
                 case .referenceListOperation(let operation):
-                    references.append(contentsOf: operation.positiveItems.map {
+                    references.append(contentsOf: operation.effectiveItems.map {
                         USDCompositionArc(
                             assetPath: $0.assetPath,
                             sitePrimPath: spec.path,
-                            targetPrimPath: $0.primPath,
+                            targetPrimPath: compositionTargetPrimPath(from: $0.primPath),
                             layerOffset: $0.layerOffset
                         )
                     })
                 case .payloadListOperation(let operation):
-                    payloads.append(contentsOf: operation.positiveItems.map {
+                    payloads.append(contentsOf: operation.effectiveItems.map {
                         USDCompositionArc(
                             assetPath: $0.assetPath,
                             sitePrimPath: spec.path,
-                            targetPrimPath: $0.primPath,
+                            targetPrimPath: compositionTargetPrimPath(from: $0.primPath),
                             layerOffset: $0.layerOffset
                         )
                     })
@@ -64,7 +67,7 @@ public struct USDCLayer: Sendable, Equatable {
                     payloads.append(USDCompositionArc(
                         assetPath: payload.assetPath,
                         sitePrimPath: spec.path,
-                        targetPrimPath: payload.primPath,
+                        targetPrimPath: compositionTargetPrimPath(from: payload.primPath),
                         layerOffset: payload.layerOffset
                     ))
                 default:
@@ -92,10 +95,43 @@ public struct USDCLayer: Sendable, Equatable {
             )
         }
     }
+
+    private func compositionTargetPrimPath(from path: String) -> String? {
+        path.isEmpty || path == "/" ? nil : path
+    }
 }
 
 private extension USDCListOperation {
-    var positiveItems: [Item] {
-        explicitItems + addedItems + prependedItems + appendedItems
+    var effectiveItems: [Item] {
+        var items: [Item] = []
+        if isExplicit {
+            appendUnique(explicitItems, to: &items)
+        } else {
+            // Effective composition arcs are this op applied to an empty base list.
+            appendUnique(prependedItems, to: &items)
+            appendUnique(addedItems, to: &items)
+            appendUnique(appendedItems, to: &items)
+        }
+        guard !orderedItems.isEmpty else {
+            return items
+        }
+        var ordered: [Item] = []
+        for orderedItem in orderedItems {
+            guard let item = items.first(where: { $0 == orderedItem }) else {
+                continue
+            }
+            appendUnique([item], to: &ordered)
+        }
+        appendUnique(items, to: &ordered)
+        return ordered
+    }
+
+    private func appendUnique(_ newItems: [Item], to items: inout [Item]) {
+        for item in newItems {
+            guard !items.contains(item) else {
+                continue
+            }
+            items.append(item)
+        }
     }
 }

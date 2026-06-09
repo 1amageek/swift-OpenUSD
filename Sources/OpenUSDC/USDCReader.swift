@@ -14,7 +14,9 @@ public struct USDCReader: USDSceneReader {
         let crate = try readCrate(from: data)
         try crate.requireStructuralSections()
         var layer = try USDCLayerReader(crate: crate).readLayer()
-        layer.primTransforms = try USDCSceneMaterializer(crate: crate).readPrimTransforms()
+        let transformInfo = try USDCSceneMaterializer(crate: crate).readPrimTransformInfo()
+        layer.primTransforms = transformInfo.primTransforms
+        layer.resetXformStackPrimPaths = transformInfo.resetXformStackPrimPaths
         return layer
     }
 

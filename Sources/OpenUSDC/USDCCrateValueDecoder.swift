@@ -6,6 +6,12 @@ private struct USDCTimeSampleValueRep {
     var valueRep: USDCCrateValueRep?
 }
 
+enum USDCPointTimeSampleResolution {
+    case value([USDPoint3D])
+    case blocked
+    case unresolved
+}
+
 struct USDCCrateValueDecoder {
     private let crate: USDCCrateFile
     private let tokens: [String]
@@ -214,19 +220,22 @@ struct USDCCrateValueDecoder {
         _ valueRep: USDCCrateValueRep,
         at timeCode: Double?,
         interpolation: USDTimeSampleInterpolation
-    ) throws -> [USDPoint3D]? {
+    ) throws -> USDCPointTimeSampleResolution {
         let samples = try readTimeSampleValueReps(valueRep, at: timeCode)
         guard let timeCode else {
             guard let firstSample = samples.first(where: { $0.valueRep != nil })?.valueRep else {
-                return nil
+                return .unresolved
             }
-            return try readPointArray(firstSample)
+            return .value(try readPointArray(firstSample))
         }
         var lowerSample: USDCTimeSampleValueRep?
         var upperSample: USDCTimeSampleValueRep?
         for sample in samples {
             if sample.timeCode == timeCode {
-                return try sample.valueRep.map { try readPointArray($0) }
+                guard let valueRep = sample.valueRep else {
+                    return .blocked
+                }
+                return .value(try readPointArray(valueRep))
             }
             guard sample.valueRep != nil else {
                 continue
@@ -241,36 +250,36 @@ struct USDCCrateValueDecoder {
         switch interpolation {
         case .held:
             guard let sampleRep = lowerSample?.valueRep ?? upperSample?.valueRep else {
-                return nil
+                return .unresolved
             }
-            return try readPointArray(sampleRep)
+            return .value(try readPointArray(sampleRep))
         case .linear:
             guard let lowerSample, let lowerRep = lowerSample.valueRep else {
                 guard let upperRep = upperSample?.valueRep else {
-                    return nil
+                    return .unresolved
                 }
-                return try readPointArray(upperRep)
+                return .value(try readPointArray(upperRep))
             }
             guard let upperSample, let upperRep = upperSample.valueRep else {
-                return try readPointArray(lowerRep)
+                return .value(try readPointArray(lowerRep))
             }
             let lowerPoints = try readPointArray(lowerRep)
             let upperPoints = try readPointArray(upperRep)
             guard upperSample.timeCode > lowerSample.timeCode,
                   lowerPoints.count == upperPoints.count else {
-                return lowerPoints
+                return .value(lowerPoints)
             }
             let fraction = (timeCode - lowerSample.timeCode) / (upperSample.timeCode - lowerSample.timeCode)
             guard fraction.isFinite else {
-                return lowerPoints
+                return .value(lowerPoints)
             }
-            return zip(lowerPoints, upperPoints).map { lower, upper in
+            return .value(zip(lowerPoints, upperPoints).map { lower, upper in
                 USDPoint3D(
                     x: lower.x + (upper.x - lower.x) * fraction,
                     y: lower.y + (upper.y - lower.y) * fraction,
                     z: lower.z + (upper.z - lower.z) * fraction
                 )
-            }
+            })
         }
     }
 

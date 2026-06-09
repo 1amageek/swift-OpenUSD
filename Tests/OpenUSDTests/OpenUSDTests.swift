@@ -182,6 +182,173 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func usdaReaderUsesDefaultMetersPerUnitWhenLayerMetadataOmitsIt() throws {
+        let data = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Triangle"
+            upAxis = "Z"
+        )
+
+        def Mesh "Triangle"
+        {
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+        }
+        """.utf8)
+
+        let scene = try USDAReader().read(from: data)
+
+        #expect(scene.metersPerUnit == 1)
+        #expect(scene.upAxis == .z)
+        #expect(scene.meshes.map(\.name) == ["Triangle"])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaReaderUsesLayerMetadataUpAxisOnly() throws {
+        let data = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Triangle"
+        )
+
+        def Mesh "Triangle"
+        {
+            token upAxis = "sideways"
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+        }
+        """.utf8)
+
+        let scene = try USDAReader().read(from: data)
+
+        #expect(scene.upAxis == .y)
+        #expect(scene.meshes.map(\.name) == ["Triangle"])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaReaderDoesNotStealNextAssignmentFromDefaultlessOptionalAttribute() throws {
+        let data = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Triangle"
+        )
+
+        def Mesh "Triangle"
+        {
+            uniform token subdivisionScheme
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+        }
+        """.utf8)
+
+        let scene = try USDAReader().read(from: data)
+        let mesh = try #require(scene.meshes.first)
+
+        #expect(mesh.subdivisionScheme == nil)
+        #expect(mesh.points.count == 3)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaReaderSkipsNonDefMeshPrimsWhenMaterializingScene() throws {
+        let data = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Root"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        over Mesh "Override"
+        {
+            point3f[] points = [(9, 9, 9), (10, 9, 9), (9, 10, 9)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+        }
+
+        class Mesh "Template"
+        {
+            point3f[] points = [(8, 8, 8), (9, 8, 8), (8, 9, 8)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+        }
+
+        def Mesh "Triangle"
+        {
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+        }
+        """.utf8)
+
+        let scene = try USDAReader().read(from: data)
+
+        #expect(scene.meshes.map(\.name) == ["Triangle"])
+        #expect(scene.meshes.map(\.primPath) == ["/Triangle"])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaReaderIgnoresAttributeNamesInsideCommentsAndStrings() throws {
+        let data = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Triangle"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def Mesh "Triangle"
+        {
+            string note = "points = [(9, 9, 9), (10, 9, 9), (9, 10, 9)]"
+            # int[] faceVertexCounts = [4]
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+        }
+        """.utf8)
+
+        let scene = try USDAReader().read(from: data)
+        let mesh = try #require(scene.meshes.first)
+
+        #expect(mesh.points == [
+            USDPoint3D(x: 0, y: 0, z: 0),
+            USDPoint3D(x: 1, y: 0, z: 0),
+            USDPoint3D(x: 0, y: 1, z: 0),
+        ])
+        #expect(mesh.faceVertexCounts == [3])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaReaderDoesNotReadMeshFieldsFromNestedMetadata() throws {
+        let data = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Triangle"
+        )
+
+        def Mesh "Triangle"
+        {
+            string note = "metadata" (
+                customData = {
+                    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+                }
+            )
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+        }
+        """.utf8)
+
+        let message = try usdImportFailureMessage {
+            _ = try USDAReader().read(from: data)
+        }
+
+        #expect(message.contains("points"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func usdaLayerReaderPreservesPrimWorldTransforms() throws {
         let data = Data("""
         #usda 1.0
@@ -210,6 +377,21 @@ struct OpenUSDTests {
 
         #expect(try sceneTransform.transform(USDPoint3D(x: 0, y: 0, z: 0)) == USDPoint3D(x: 10, y: 20, z: 30))
         #expect(try instanceTransform.transform(USDPoint3D(x: 0, y: 0, z: 0)) == USDPoint3D(x: 11, y: 22, z: 33))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func transformMatrixReportsInvalidValueCountAsTypedError() throws {
+        let matrix = USDTransformMatrix4x4(values: [1])
+
+        #expect(throws: USDImportError.self) {
+            _ = try matrix.transform(USDPoint3D(x: 0, y: 0, z: 0))
+        }
+        #expect(throws: USDImportError.self) {
+            _ = try matrix.transformNormal(USDPoint3D(x: 0, y: 0, z: 1))
+        }
+        #expect(throws: USDImportError.self) {
+            _ = try matrix.validatedConcatenating(.identity)
+        }
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -401,6 +583,161 @@ struct OpenUSDTests {
         #expect(mesh.faceVertexCounts == [3])
         #expect(mesh.faceVertexIndices == [0, 1, 2])
         #expect(mesh.subdivisionScheme == "none")
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdcReaderTransformsAuthoredExtentWithMeshPoints() throws {
+        let fixture = makeUSDCMeshSceneFixture(compressedXformOpOrder: true, includeExtent: true)
+
+        let scene = try USDCReader().read(from: fixture)
+        let mesh = try #require(scene.meshes.first)
+
+        #expect(mesh.points == [
+            USDPoint3D(x: 2, y: 3, z: 4),
+            USDPoint3D(x: 3, y: 3, z: 4),
+            USDPoint3D(x: 2, y: 4, z: 4),
+        ])
+        #expect(mesh.extent == [
+            USDPoint3D(x: 2, y: 3, z: 4),
+            USDPoint3D(x: 3, y: 4, z: 4),
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaReaderTransformsAuthoredExtentWithMeshPoints() throws {
+        let data = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Root"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def Xform "Root"
+        {
+            double3 xformOp:translate = (2, 3, 4)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+
+            def Mesh "Triangle"
+            {
+                point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+                int[] faceVertexCounts = [3]
+                int[] faceVertexIndices = [0, 1, 2]
+                point3f[] extent = [(0, 0, 0), (1, 1, 0)]
+            }
+        }
+        """.utf8)
+
+        let scene = try USDAReader().read(from: data)
+        let mesh = try #require(scene.meshes.first)
+
+        #expect(mesh.points == [
+            USDPoint3D(x: 2, y: 3, z: 4),
+            USDPoint3D(x: 3, y: 3, z: 4),
+            USDPoint3D(x: 2, y: 4, z: 4),
+        ])
+        #expect(mesh.extent == [
+            USDPoint3D(x: 2, y: 3, z: 4),
+            USDPoint3D(x: 3, y: 4, z: 4),
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaReaderReadsTimeSampledExtentWithoutDefaultValue() throws {
+        let data = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Triangle"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def Mesh "Triangle"
+        {
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            point3f[] extent.timeSamples = {
+                1: [(0, 0, 0), (1, 1, 0)],
+                2: [(0, 0, 2), (1, 1, 2)]
+            }
+        }
+        """.utf8)
+
+        let firstScene = try USDAReader().read(from: data)
+        let secondScene = try USDAReader().read(from: data, options: USDReadingOptions(timeCode: 2))
+
+        #expect(firstScene.meshes.first?.extent == [
+            USDPoint3D(x: 0, y: 0, z: 0),
+            USDPoint3D(x: 1, y: 1, z: 0),
+        ])
+        #expect(secondScene.meshes.first?.extent == [
+            USDPoint3D(x: 0, y: 0, z: 2),
+            USDPoint3D(x: 1, y: 1, z: 2),
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdcReaderReadsTimeSampledExtentWithoutDefaultValue() throws {
+        let fixture = makeUSDCMeshSceneFixture(extentTimeSamples: [
+            (timeCode: 1, points: [
+                USDPoint3D(x: 0, y: 0, z: 0),
+                USDPoint3D(x: 1, y: 1, z: 0),
+            ]),
+            (timeCode: 2, points: [
+                USDPoint3D(x: 0, y: 0, z: 2),
+                USDPoint3D(x: 1, y: 1, z: 2),
+            ]),
+        ])
+
+        let firstScene = try USDCReader().read(from: fixture)
+        let secondScene = try USDCReader().read(from: fixture, options: USDReadingOptions(timeCode: 2))
+
+        #expect(firstScene.meshes.first?.extent == [
+            USDPoint3D(x: 0, y: 0, z: 0),
+            USDPoint3D(x: 1, y: 1, z: 0),
+        ])
+        #expect(secondScene.meshes.first?.extent == [
+            USDPoint3D(x: 0, y: 0, z: 2),
+            USDPoint3D(x: 1, y: 1, z: 2),
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaReaderIgnoresClosingDelimitersInsideArrayComments() throws {
+        let data = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Triangle"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def Mesh "Triangle"
+        {
+            point3f[] points = [
+                (0, 0, 0), # ] must not close the points array
+                (1, 0, 0),
+                (0, 1, 0)
+            ]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [
+                0, # ] must not close the index array
+                1,
+                2
+            ]
+        }
+        """.utf8)
+
+        let scene = try USDAReader().read(from: data)
+        let mesh = try #require(scene.meshes.first)
+
+        #expect(mesh.points == [
+            USDPoint3D(x: 0, y: 0, z: 0),
+            USDPoint3D(x: 1, y: 0, z: 0),
+            USDPoint3D(x: 0, y: 1, z: 0),
+        ])
+        #expect(mesh.faceVertexIndices == [0, 1, 2])
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -998,6 +1335,48 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func usdaReaderTransformsNormalsWithFullInverseMatrix() throws {
+        let data = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Root"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def Xform "Root"
+        {
+            matrix4d xformOp:transform = (
+                (1, 0.5, 0, 0),
+                (2, 3, 0, 0),
+                (1, 0, 4, 0),
+                (0, 0, 0, 1)
+            )
+            uniform token[] xformOpOrder = ["xformOp:transform"]
+
+            def Mesh "Triangle"
+            {
+                point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+                normal3f[] normals = [(1, 1, 1), (1, 1, 1), (1, 1, 1)] (
+                    interpolation = "vertex"
+                )
+                int[] faceVertexCounts = [3]
+                int[] faceVertexIndices = [0, 1, 2]
+            }
+        }
+        """.utf8)
+
+        let scene = try USDAReader().read(from: data)
+        let mesh = try #require(scene.meshes.first)
+
+        expectPointsApproximatelyEqual(mesh.normals, [
+            USDPoint3D(x: 0.927477791813676, y: -0.37099111672547056, z: -0.0463738895906838),
+            USDPoint3D(x: 0.927477791813676, y: -0.37099111672547056, z: -0.0463738895906838),
+            USDPoint3D(x: 0.927477791813676, y: -0.37099111672547056, z: -0.0463738895906838),
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func generatedUSDACombinedRotationFixtureAppliesPackedEulerRotation() throws {
         let fixture = try generatedFixture("combined_rotation_mesh.usda")
 
@@ -1212,6 +1591,23 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func generatedUSDCTimeSampledMeshFixtureCanUseHeldInterpolation() throws {
+        let fixture = try generatedFixture("animated_mesh.usdc")
+
+        let scene = try USDCReader().read(
+            from: fixture,
+            options: USDReadingOptions(timeCode: 1.5, timeSampleInterpolation: .held)
+        )
+
+        let mesh = try #require(scene.meshes.first)
+        #expect(mesh.points == [
+            USDPoint3D(x: 0, y: 0, z: 0),
+            USDPoint3D(x: 1, y: 0, z: 0),
+            USDPoint3D(x: 0, y: 1, z: 0),
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func generatedUSDCTimeSampledMeshFixtureUsesRequestedSnapshot() throws {
         let fixture = try generatedFixture("animated_mesh.usdc")
 
@@ -1263,6 +1659,244 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func generatedUSDABlockedValueFixtureUsesFirstUnblockedSampleSnapshot() throws {
+        let fixture = try generatedFixture("blocked_values_mesh.usda")
+
+        let scene = try USDAReader().read(from: fixture)
+
+        let mesh = try #require(scene.meshes.first)
+        #expect(mesh.points == [
+            USDPoint3D(x: 0, y: 0, z: 2),
+            USDPoint3D(x: 1, y: 0, z: 2),
+            USDPoint3D(x: 0, y: 1, z: 2),
+        ])
+        #expect(mesh.subdivisionScheme == nil)
+        #expect(mesh.effectiveSubdivisionScheme == "catmullClark")
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaReaderTreatsExactBlockedPointTimeSampleAsMissingRequiredField() throws {
+        let data = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Triangle"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def Mesh "Triangle"
+        {
+            point3f[] points = [(9, 9, 9), (10, 9, 9), (9, 10, 9)]
+            point3f[] points.timeSamples = {
+                1: None,
+                2: [(0, 0, 2), (1, 0, 2), (0, 1, 2)]
+            }
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+        }
+        """.utf8)
+
+        do {
+            _ = try USDAReader().read(from: data, options: USDReadingOptions(timeCode: 1))
+            Issue.record("Expected blocked points to be reported as a missing required field.")
+        } catch USDImportError.missingRequiredField(let field) {
+            #expect(field == "points")
+        } catch {
+            Issue.record("Expected missingRequiredField(\"points\"), got \(error).")
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaReaderTreatsRequiredMeshArrayNoneAsMissingField() throws {
+        let cases: [(field: String, layerBody: String)] = [
+            (
+                field: "points",
+                layerBody: """
+                point3f[] points = None
+                int[] faceVertexCounts = [3]
+                int[] faceVertexIndices = [0, 1, 2]
+                """
+            ),
+            (
+                field: "faceVertexCounts",
+                layerBody: """
+                point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+                int[] faceVertexCounts = None
+                int[] faceVertexIndices = [0, 1, 2]
+                """
+            ),
+            (
+                field: "faceVertexIndices",
+                layerBody: """
+                point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+                int[] faceVertexCounts = [3]
+                int[] faceVertexIndices = None
+                """
+            ),
+        ]
+
+        for testCase in cases {
+            let data = Data("""
+            #usda 1.0
+            (
+                defaultPrim = "Triangle"
+                metersPerUnit = 1
+                upAxis = "Z"
+            )
+
+            def Mesh "Triangle"
+            {
+            \(testCase.layerBody)
+            }
+            """.utf8)
+
+            do {
+                _ = try USDAReader().read(from: data)
+                Issue.record("Expected \(testCase.field) to be reported as a missing required field.")
+            } catch USDImportError.missingRequiredField(let field) {
+                #expect(field == testCase.field)
+            } catch {
+                Issue.record("Expected missingRequiredField(\"\(testCase.field)\"), got \(error).")
+            }
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaReaderRejectsMalformedPointTimeSampleEntries() throws {
+        let timeSamplesBodies = [
+            """
+            1: Nonee,
+            2: [(0, 0, 2), (1, 0, 2), (0, 1, 2)]
+            """,
+            """
+            1: [(0, 0, 1), (1, 0, 1), (0, 1, 1)],
+            garbage
+            """,
+            """
+            1: [(0, 0, 1), garbage, (1, 0, 1), (0, 1, 1)],
+            2: [(0, 0, 2), (1, 0, 2), (0, 1, 2)]
+            """,
+            """
+            1: [(0, 0, 1), (1, 0, 1), (0, 1, 1)],
+            1: [(0, 0, 2), (1, 0, 2), (0, 1, 2)]
+            """,
+            """
+            1:
+            """,
+        ]
+
+        for timeSamplesBody in timeSamplesBodies {
+            let data = Data("""
+            #usda 1.0
+            (
+                defaultPrim = "Triangle"
+                metersPerUnit = 1
+                upAxis = "Z"
+            )
+
+            def Mesh "Triangle"
+            {
+                point3f[] points = [(9, 9, 9), (10, 9, 9), (9, 10, 9)]
+                point3f[] points.timeSamples = {
+            \(timeSamplesBody)
+                }
+                int[] faceVertexCounts = [3]
+                int[] faceVertexIndices = [0, 1, 2]
+            }
+            """.utf8)
+
+            do {
+                _ = try USDAReader().read(from: data, options: USDReadingOptions(timeCode: 1))
+                Issue.record("Expected malformed timeSamples to fail.")
+            } catch USDImportError.invalidData {
+            } catch {
+                Issue.record("Expected USDImportError.invalidData, got \(error).")
+            }
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaReaderRejectsMalformedNumericTupleContent() throws {
+        let cases: [(label: String, meshBody: String)] = [
+            (
+                label: "points",
+                meshBody: """
+                    point3f[] points = [(0, 0, 0), garbage, (1, 0, 0), (0, 1, 0)]
+                    int[] faceVertexCounts = [3]
+                    int[] faceVertexIndices = [0, 1, 2]
+                """
+            ),
+            (
+                label: "texture coordinates",
+                meshBody: """
+                    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+                    int[] faceVertexCounts = [3]
+                    int[] faceVertexIndices = [0, 1, 2]
+                    texCoord2f[] primvars:st = [(0, 0), garbage, (1, 0), (0, 1)]
+                    int[] primvars:st:indices = [0, 1, 2]
+                """
+            ),
+            (
+                label: "display color",
+                meshBody: """
+                    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+                    int[] faceVertexCounts = [3]
+                    int[] faceVertexIndices = [0, 1, 2]
+                    color3f[] primvars:displayColor = [(1, 0, 0), garbage]
+                """
+            ),
+            (
+                label: "transform tuple",
+                meshBody: """
+                    double3 xformOp:translate = (1, garbage, 2, 3)
+                    uniform token[] xformOpOrder = ["xformOp:translate"]
+                    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+                    int[] faceVertexCounts = [3]
+                    int[] faceVertexIndices = [0, 1, 2]
+                """
+            ),
+        ]
+
+        for testCase in cases {
+            let data = Data("""
+            #usda 1.0
+            (
+                defaultPrim = "Triangle"
+                metersPerUnit = 1
+                upAxis = "Z"
+            )
+
+            def Mesh "Triangle"
+            {
+            \(testCase.meshBody)
+            }
+            """.utf8)
+
+            do {
+                _ = try USDAReader().read(from: data)
+                Issue.record("Expected malformed \(testCase.label) tuple content to fail.")
+            } catch USDImportError.invalidData {
+            } catch {
+                Issue.record("Expected USDImportError.invalidData for \(testCase.label), got \(error).")
+            }
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdcReaderTreatsExactBlockedPointTimeSampleAsMissingRequiredField() throws {
+        let fixture = try generatedFixture("blocked_values_mesh.usdc")
+
+        do {
+            _ = try USDCReader().read(from: fixture, options: USDReadingOptions(timeCode: 1))
+            Issue.record("Expected blocked points to be reported as a missing required field.")
+        } catch USDImportError.missingRequiredField(let field) {
+            #expect(field == "points")
+        } catch {
+            Issue.record("Expected missingRequiredField(\"points\"), got \(error).")
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func generatedUSDCBlockedRequiredDefaultFixtureReportsMissingField() throws {
         let fixture = try generatedFixture("blocked_required_default_mesh.usdc")
 
@@ -1273,6 +1907,130 @@ struct OpenUSDTests {
             #expect(field == "points")
         } catch {
             Issue.record("Expected missingRequiredField(\"points\"), got \(error).")
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdcReaderTreatsExactBlockedTopologyTimeSamplesAsMissingRequiredFields() throws {
+        for field in ["faceVertexCounts", "faceVertexIndices"] {
+            let fixture = makeUSDCMeshSceneFixture(blockedTopologyTimeSampleField: field)
+
+            do {
+                _ = try USDCReader().read(from: fixture, options: USDReadingOptions(timeCode: 1))
+                Issue.record("Expected blocked \(field) to be reported as a missing required field.")
+            } catch USDImportError.missingRequiredField(let missingField) {
+                #expect(missingField == field)
+            } catch {
+                Issue.record("Expected missingRequiredField(\"\(field)\"), got \(error).")
+            }
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdcReaderUsesRequestedTimeSampledTopologyWhenDefaultAlsoExists() throws {
+        let countsFixture = makeUSDCMeshSceneFixture(
+            faceVertexCounts: [3],
+            faceVertexIndices: [0, 1, 2],
+            sampledTopologyTimeSampleField: "faceVertexCounts",
+            sampledTopologyTimeSampleValues: [1, 2]
+        )
+        let countsScene = try USDCReader().read(from: countsFixture, options: USDReadingOptions(timeCode: 1))
+        let countsMesh = try #require(countsScene.meshes.first)
+        #expect(countsMesh.faceVertexCounts == [1, 2])
+        #expect(countsMesh.faceVertexIndices == [0, 1, 2])
+
+        let indicesFixture = makeUSDCMeshSceneFixture(
+            faceVertexCounts: [3],
+            faceVertexIndices: [0, 1, 2],
+            sampledTopologyTimeSampleField: "faceVertexIndices",
+            sampledTopologyTimeSampleValues: [2, 1, 0]
+        )
+        let indicesScene = try USDCReader().read(from: indicesFixture, options: USDReadingOptions(timeCode: 1))
+        let indicesMesh = try #require(indicesScene.meshes.first)
+        #expect(indicesMesh.faceVertexCounts == [3])
+        #expect(indicesMesh.faceVertexIndices == [2, 1, 0])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdcReaderUsesTimeSamplesWhenTopologyDefaultIsValueBlocked() throws {
+        let countsFixture = makeUSDCMeshSceneFixture(
+            faceVertexCounts: [3],
+            faceVertexIndices: [0, 1, 2],
+            sampledTopologyTimeSampleField: "faceVertexCounts",
+            sampledTopologyTimeSampleValues: [1, 2],
+            valueBlockedTopologyDefaultField: "faceVertexCounts"
+        )
+        let countsScene = try USDCReader().read(from: countsFixture)
+        let countsMesh = try #require(countsScene.meshes.first)
+        #expect(countsMesh.faceVertexCounts == [1, 2])
+        #expect(countsMesh.faceVertexIndices == [0, 1, 2])
+
+        let indicesFixture = makeUSDCMeshSceneFixture(
+            faceVertexCounts: [3],
+            faceVertexIndices: [0, 1, 2],
+            sampledTopologyTimeSampleField: "faceVertexIndices",
+            sampledTopologyTimeSampleValues: [2, 1, 0],
+            valueBlockedTopologyDefaultField: "faceVertexIndices"
+        )
+        let indicesScene = try USDCReader().read(from: indicesFixture)
+        let indicesMesh = try #require(indicesScene.meshes.first)
+        #expect(indicesMesh.faceVertexCounts == [3])
+        #expect(indicesMesh.faceVertexIndices == [2, 1, 0])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaReaderRejectsInvalidMeshTopology() throws {
+        let cases: [(counts: [Int], indices: [Int], expectedMessage: String)] = [
+            (counts: [4], indices: [0, 1, 2], expectedMessage: "does not match"),
+            (counts: [3], indices: [0, 1, 3], expectedMessage: "outside"),
+            (counts: [3], indices: [0, 1, -1], expectedMessage: "outside"),
+            (counts: [0], indices: [0], expectedMessage: "non-positive"),
+        ]
+
+        for testCase in cases {
+            let countsLiteral = testCase.counts.map(String.init).joined(separator: ", ")
+            let indicesLiteral = testCase.indices.map(String.init).joined(separator: ", ")
+            let data = Data("""
+            #usda 1.0
+            (
+                defaultPrim = "Triangle"
+                metersPerUnit = 1
+                upAxis = "Z"
+            )
+
+            def Mesh "Triangle"
+            {
+                point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+                int[] faceVertexCounts = [\(countsLiteral)]
+                int[] faceVertexIndices = [\(indicesLiteral)]
+            }
+            """.utf8)
+
+            let message = try usdImportFailureMessage {
+                _ = try USDAReader().read(from: data)
+            }
+            #expect(message.contains(testCase.expectedMessage))
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdcReaderRejectsInvalidMeshTopology() throws {
+        let cases: [(counts: [Int32], indices: [Int32], expectedMessage: String)] = [
+            (counts: [4], indices: [0, 1, 2], expectedMessage: "does not match"),
+            (counts: [3], indices: [0, 1, 3], expectedMessage: "outside"),
+            (counts: [3], indices: [0, 1, -1], expectedMessage: "outside"),
+            (counts: [0], indices: [0], expectedMessage: "non-positive"),
+        ]
+
+        for testCase in cases {
+            let fixture = makeUSDCMeshSceneFixture(
+                faceVertexCounts: testCase.counts,
+                faceVertexIndices: testCase.indices
+            )
+            let message = try usdImportFailureMessage {
+                _ = try USDCReader().read(from: fixture)
+            }
+            #expect(message.contains(testCase.expectedMessage))
         }
     }
 
@@ -1288,6 +2046,24 @@ struct OpenUSDTests {
         #expect(scene.defaultPrim == "Triangle")
         #expect(scene.upAxis == .z)
         #expect(scene.meshes.first?.faceVertexIndices == [0, 1, 2])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdzReaderSkipsUSDCNonDefMeshLayersWhenBuildingLayerGraph() throws {
+        for payload in [UInt64(1), UInt64(2)] {
+            let fixture = makeUSDCMeshSceneFixture(meshSpecifierPayload: payload)
+            let package = makeUSDZFixture(entries: [
+                ("scene.usdc", fixture),
+            ], alignPayloads: true)
+
+            let graph = try USDZReader().readLayerGraph(from: package)
+            let layer = try #require(graph.layers.first)
+
+            #expect(graph.rootPath == "scene.usdc")
+            #expect(layer.path == "scene.usdc")
+            #expect(layer.defaultPrim == "Triangle")
+            #expect(layer.hasScene == false)
+        }
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -1525,6 +2301,23 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func usdaReaderRejectsUnexpectedTokenBeforePrimBody() throws {
+        let data = Data("""
+        #usda 1.0
+
+        def Mesh "Cube" unexpectedToken {
+        }
+        """.utf8)
+
+        let message = try usdImportFailureMessage {
+            _ = try USDAReader().readLayer(from: data)
+        }
+
+        #expect(message.contains("prim declaration"))
+        #expect(message.contains("unexpected token"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingBadLayerMetadataNewlineFixturesThrowTypedErrors() throws {
         let cases = [
             ("testSdfParsing.testenv/21_bad_newline1.usda", "layer metadata", "semicolon"),
@@ -1560,6 +2353,186 @@ struct OpenUSDTests {
             #expect(message.contains(expectedSubject))
             #expect(message.contains(expectedDetail))
         }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaReaderRejectsMissingPropertyName() throws {
+        let data = Data("""
+        #usda 1.0
+
+        def Scope "Root" {
+            double = 1
+        }
+        """.utf8)
+
+        let message = try usdImportFailureMessage {
+            _ = try USDAReader().readLayer(from: data)
+        }
+
+        #expect(message.contains("property declaration"))
+        #expect(message.contains("property name"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaReaderRejectsInvalidPropertyName() throws {
+        let data = Data("""
+        #usda 1.0
+
+        def Scope "Root" {
+            double 1bad = 1
+        }
+        """.utf8)
+
+        let message = try usdImportFailureMessage {
+            _ = try USDAReader().readLayer(from: data)
+        }
+
+        #expect(message.contains("property name"))
+        #expect(message.contains("valid identifier"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaReaderRejectsInvalidRelationshipTargetValue() throws {
+        let data = Data("""
+        #usda 1.0
+
+        def Scope "Root" {
+            rel bad = "notATarget"
+        }
+        """.utf8)
+
+        let message = try usdImportFailureMessage {
+            _ = try USDAReader().readLayer(from: data)
+        }
+
+        #expect(message.contains("relationship"))
+        #expect(message.contains("invalid target syntax"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaReaderRejectsInvalidRelationshipTargetPath() throws {
+        let data = Data("""
+        #usda 1.0
+
+        def Scope "Root" {
+            rel bad = <bad path>
+        }
+        """.utf8)
+
+        let message = try usdImportFailureMessage {
+            _ = try USDAReader().readLayer(from: data)
+        }
+
+        #expect(message.contains("relationship"))
+        #expect(message.contains("invalid path characters"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaReaderRejectsRelationshipTargetTrailingGarbage() throws {
+        let data = Data("""
+        #usda 1.0
+
+        def Scope "Root" {
+            rel bad = </Target> garbage
+        }
+        """.utf8)
+
+        let message = try usdImportFailureMessage {
+            _ = try USDAReader().readLayer(from: data)
+        }
+
+        #expect(message.contains("relationship"))
+        #expect(message.contains("trailing content"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaReaderRejectsRelationshipNonePrefixValue() throws {
+        let data = Data("""
+        #usda 1.0
+
+        def Scope "Root" {
+            rel bad = Nonegarbage
+        }
+        """.utf8)
+
+        let message = try usdImportFailureMessage {
+            _ = try USDAReader().readLayer(from: data)
+        }
+
+        #expect(message.contains("relationship"))
+        #expect(message.contains("invalid target syntax"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaReaderRejectsConnectionNonePrefixValue() throws {
+        let data = Data("""
+        #usda 1.0
+
+        def Scope "Root" {
+            double output.connect = Nonee
+        }
+        """.utf8)
+
+        let message = try usdImportFailureMessage {
+            _ = try USDAReader().readLayer(from: data)
+        }
+
+        #expect(message.contains("relationship"))
+        #expect(message.contains("invalid target syntax"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaReaderRejectsInvalidNumericScalarValue() throws {
+        let data = Data("""
+        #usda 1.0
+
+        def Scope "Root" {
+            double radius = nope
+        }
+        """.utf8)
+
+        let message = try usdImportFailureMessage {
+            _ = try USDAReader().readLayer(from: data)
+        }
+
+        #expect(message.contains("double attribute"))
+        #expect(message.contains("nope"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaReaderRejectsScalarValueTrailingGarbage() throws {
+        let data = Data("""
+        #usda 1.0
+
+        def Scope "Root" {
+            double radius = 1 garbage
+        }
+        """.utf8)
+
+        let message = try usdImportFailureMessage {
+            _ = try USDAReader().readLayer(from: data)
+        }
+
+        #expect(message.contains("double attribute"))
+        #expect(message.contains("trailing content"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaReaderRejectsArrayNonePrefixValue() throws {
+        let data = Data("""
+        #usda 1.0
+
+        def Scope "Root" {
+            float[] weights = Nonebad
+        }
+        """.utf8)
+
+        let message = try usdImportFailureMessage {
+            _ = try USDAReader().readLayer(from: data)
+        }
+
+        #expect(message.contains("float[] attribute"))
+        #expect(message.contains("shaped list"))
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -2372,6 +3345,200 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func usdaLayerReaderAppliesCompositionArcListEdits() throws {
+        let data = Data("""
+        #usda 1.0
+
+        def "Scope" (
+            references = [
+                @./a.usda@</A>,
+                @./b.usda@</B>
+            ]
+            delete references = @./a.usda@</A>
+            prepend references = [
+                @./c.usda@</C>
+            ]
+            append references = [
+                @./b.usda@</B>,
+                @./d.usda@</D>
+            ]
+            reorder references = [
+                @./d.usda@</D>,
+                @./c.usda@</C>
+            ]
+            payload = [
+                @./p1.usda@</P1>,
+                @./p2.usda@</P2>
+            ]
+            delete payload = @./p2.usda@</P2>
+            append payload = [
+                @./p3.usda@</P3>
+            ]
+        )
+        {
+        }
+        """.utf8)
+
+        let layer = try USDAReader().readLayer(from: data)
+
+        #expect(layer.composition.references == [
+            USDCompositionArc(assetPath: "./d.usda", sitePrimPath: "/Scope", targetPrimPath: "/D"),
+            USDCompositionArc(assetPath: "./c.usda", sitePrimPath: "/Scope", targetPrimPath: "/C"),
+            USDCompositionArc(assetPath: "./b.usda", sitePrimPath: "/Scope", targetPrimPath: "/B"),
+        ])
+        #expect(layer.composition.payloads == [
+            USDCompositionArc(assetPath: "./p1.usda", sitePrimPath: "/Scope", targetPrimPath: "/P1"),
+            USDCompositionArc(assetPath: "./p3.usda", sitePrimPath: "/Scope", targetPrimPath: "/P3"),
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaLayerReaderIgnoresCompositionReferencesInsideCommentsAndStrings() throws {
+        let data = Data("""
+        #usda 1.0
+
+        def "Scope" (
+            references = [
+                @./real.usda@</Real>, # @./comment.usda@</Comment>
+            ]
+            customData = {
+                string note = "@./string.usda@</String>"
+            }
+        )
+        {
+        }
+        """.utf8)
+
+        let layer = try USDAReader().readLayer(from: data)
+
+        #expect(layer.composition.references == [
+            USDCompositionArc(assetPath: "./real.usda", sitePrimPath: "/Scope", targetPrimPath: "/Real"),
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaLayerReaderRejectsUnexpectedCompositionReferenceContent() throws {
+        let data = Data("""
+        #usda 1.0
+
+        def "Scope" (
+            references = [
+                @./real.usda@</Real>,
+                garbage
+            ]
+        )
+        {
+        }
+        """.utf8)
+
+        let message = try usdImportFailureMessage {
+            _ = try USDAReader().readLayer(from: data)
+        }
+
+        #expect(message.contains("composition arc list"))
+        #expect(message.contains("unexpected content"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaLayerReaderReadsSemicolonTerminatedCompositionReference() throws {
+        let data = Data("""
+        #usda 1.0
+
+        def "Scope" (
+            references = @./real.usda@</Real>;
+        )
+        {
+        }
+        """.utf8)
+
+        let layer = try USDAReader().readLayer(from: data)
+
+        #expect(layer.composition.references == [
+            USDCompositionArc(assetPath: "./real.usda", sitePrimPath: "/Scope", targetPrimPath: "/Real"),
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaLayerReaderRejectsInvalidCompositionTargetPrimPath() throws {
+        let data = Data("""
+        #usda 1.0
+
+        def "Scope" (
+            references = @./real.usda@<bad path>
+        )
+        {
+        }
+        """.utf8)
+
+        let message = try usdImportFailureMessage {
+            _ = try USDAReader().readLayer(from: data)
+        }
+
+        #expect(message.contains("composition arc prim path"))
+        #expect(message.contains("invalid path characters"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaLayerReaderTreatsAssetLiteralsAsOpaqueDuringValidation() throws {
+        let data = Data("""
+        #usda 1.0
+
+        def "Scope"
+        {
+            asset source = @hidden = maybe@
+            asset[] files = [
+                @foo[bar]@,
+                @def Mesh "NotADeclaration" {}@
+            ]
+        }
+        """.utf8)
+
+        let layer = try USDAReader().readLayer(from: data)
+
+        #expect(layer.spec(at: "/Scope") != nil)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaLayerReaderTreatsEndTokenInsideAssetLiteralAsOpaque() throws {
+        let data = Data("""
+        #usda 1.0
+
+        def "Scope"
+        {
+            asset source = @/__END__.usd@
+        }
+        """.utf8)
+
+        let layer = try USDAReader().readLayer(from: data)
+
+        #expect(layer.spec(at: "/Scope") != nil)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaLayerReaderIgnoresCompositionListEditsInsideNestedMetadata() throws {
+        let data = Data("""
+        #usda 1.0
+
+        def "Scope" (
+            customData = {
+                asset marker = @add references = ./ignored.usda@
+                string text = "reorder payload = @./ignored.usda@"
+            }
+            references = @./real.usda@</Real>
+        )
+        {
+        }
+        """.utf8)
+
+        let layer = try USDAReader().readLayer(from: data)
+
+        #expect(layer.composition.references == [
+            USDCompositionArc(assetPath: "./real.usda", sitePrimPath: "/Scope", targetPrimPath: "/Real"),
+        ])
+        #expect(layer.composition.payloads.isEmpty)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func openUSDSDFParsingPayloadsFixtureReadsSupportedExternalArcs() throws {
         let data = try openUSDFixture("testSdfParsing.testenv/152_payloads.usda")
 
@@ -2714,6 +3881,23 @@ struct OpenUSDTests {
                     assetPath: "assets/second.usda",
                     primPath: "/Scope.target"
                 ),
+            ],
+            deletedItems: [
+                USDCReference(
+                    assetPath: "assets/second.usda",
+                    primPath: "/Scope.target"
+                ),
+            ],
+            orderedItems: [
+                USDCReference(
+                    assetPath: "assets/ref.usda",
+                    primPath: "/Scope.target",
+                    layerOffset: USDLayerOffset(offset: 1.5, scale: 2),
+                    customData: [
+                        "displayName": .string("friendlyRef"),
+                        "referencePurpose": .string("render"),
+                    ]
+                ),
             ]
         )))
         #expect(scope.fields["payload"] == .payloadListOperation(USDCListOperation(
@@ -2994,6 +4178,67 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func usdzReaderResolvesSameLayerPrimOnlyReferences() throws {
+        let usda = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Scene"
+        )
+
+        def Xform "Scene"
+        {
+            def "Instance" (
+                references = </Source>
+            )
+            {
+            }
+        }
+
+        def Mesh "Source"
+        {
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+        }
+        """.utf8)
+        let package = makeUSDZFixture(entries: [
+            ("scene.usda", usda),
+        ], alignPayloads: true)
+
+        let scene = try USDZReader().read(from: package)
+
+        #expect(scene.meshes.compactMap(\.primPath).sorted() == ["/Scene/Instance", "/Source"])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdzReaderReadsUSDAWhitespaceSeparatedMeshDeclaration() throws {
+        let usda = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Scene"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def    Mesh "Triangle"
+        {
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+        }
+        """.utf8)
+        let package = makeUSDZFixture(entries: [
+            ("scene.usda", usda),
+        ], alignPayloads: true)
+
+        let scene = try USDZReader().read(from: package)
+
+        #expect(scene.defaultPrim == "Scene")
+        #expect(scene.meshes.map(\.name) == ["Triangle"])
+        #expect(scene.meshes.first?.faceVertexIndices == [0, 1, 2])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func usdzReaderTraversesUSDASubLayers() throws {
         let root = Data("""
         #usda 1.0
@@ -3238,6 +4483,222 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func usdzReaderPreservesHeldInterpolationThroughReferenceLayerOffset() throws {
+        let root = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Scene"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def Xform "Scene" (
+            references = @./refs/animated.usda@</Triangle> (offset = 10; scale = 2)
+        )
+        {
+        }
+        """.utf8)
+        let animatedLayer = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Triangle"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def Mesh "Triangle"
+        {
+            point3f[] points.timeSamples = {
+                1: [(0, 0, 0), (1, 0, 0), (0, 1, 0)],
+                2: [(0, 0, 1), (1, 0, 1), (0, 1, 1)]
+            }
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            uniform token subdivisionScheme = "none"
+        }
+        """.utf8)
+        let package = makeUSDZFixture(entries: [
+            ("root.usda", root),
+            ("refs/animated.usda", animatedLayer),
+        ], alignPayloads: true)
+
+        let scene = try USDZReader().read(
+            from: package,
+            options: USDReadingOptions(timeCode: 13, timeSampleInterpolation: .held)
+        )
+        let mesh = try #require(scene.meshes.first)
+
+        #expect(mesh.name == "Scene")
+        #expect(mesh.primPath == "/Scene")
+        #expect(mesh.points == [
+            USDPoint3D(x: 0, y: 0, z: 0),
+            USDPoint3D(x: 1, y: 0, z: 0),
+            USDPoint3D(x: 0, y: 1, z: 0),
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdzReaderDropsSourceAncestorTransformForSubrootReferences() throws {
+        let root = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Scene"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def Xform "Scene" (
+            references = @./refs/model.usda@</Model/Geom>
+        )
+        {
+            double3 xformOp:translate = (10, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+        """.utf8)
+        let referencedLayer = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Model"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def Xform "Model"
+        {
+            double3 xformOp:translate = (100, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+
+            def Xform "Geom"
+            {
+                double3 xformOp:translate = (0, 5, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate"]
+
+                def Mesh "Child"
+                {
+                    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+                    int[] faceVertexCounts = [3]
+                    int[] faceVertexIndices = [0, 1, 2]
+                    uniform token subdivisionScheme = "none"
+                }
+            }
+        }
+        """.utf8)
+        let package = makeUSDZFixture(entries: [
+            ("root.usda", root),
+            ("refs/model.usda", referencedLayer),
+        ], alignPayloads: true)
+
+        let scene = try USDZReader().read(from: package)
+        let mesh = try #require(scene.meshes.first)
+
+        #expect(mesh.name == "Child")
+        #expect(mesh.primPath == "/Scene/Child")
+        expectPointsApproximatelyEqual(mesh.points, [
+            USDPoint3D(x: 10, y: 5, z: 0),
+            USDPoint3D(x: 11, y: 5, z: 0),
+            USDPoint3D(x: 10, y: 6, z: 0),
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdzReaderSubrootReferenceHonorsResetXformStackAtTarget() throws {
+        let root = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Scene"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def Xform "Scene" (
+            references = @./refs/model.usda@</Model/Geom>
+        )
+        {
+            double3 xformOp:translate = (10, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+        """.utf8)
+        let referencedLayer = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Model"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def Xform "Model"
+        {
+            double3 xformOp:translate = (100, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+
+            def Xform "Geom"
+            {
+                double3 xformOp:translate = (0, 5, 0)
+                uniform token[] xformOpOrder = ["!resetXformStack!", "xformOp:translate"]
+
+                def Mesh "Child"
+                {
+                    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+                    int[] faceVertexCounts = [3]
+                    int[] faceVertexIndices = [0, 1, 2]
+                    uniform token subdivisionScheme = "none"
+                }
+            }
+        }
+        """.utf8)
+        let package = makeUSDZFixture(entries: [
+            ("root.usda", root),
+            ("refs/model.usda", referencedLayer),
+        ], alignPayloads: true)
+
+        let scene = try USDZReader().read(from: package)
+        let mesh = try #require(scene.meshes.first)
+
+        #expect(mesh.name == "Child")
+        #expect(mesh.primPath == "/Scene/Child")
+        expectPointsApproximatelyEqual(mesh.points, [
+            USDPoint3D(x: 10, y: 5, z: 0),
+            USDPoint3D(x: 11, y: 5, z: 0),
+            USDPoint3D(x: 10, y: 6, z: 0),
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdzReaderUSDCSubrootReferenceHonorsResetXformStackAtTarget() throws {
+        let root = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Scene"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def Xform "Scene" (
+            references = @./refs/model.usdc@</Model/Geom>
+        )
+        {
+            double3 xformOp:translate = (10, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+        """.utf8)
+        let package = makeUSDZFixture(entries: [
+            ("root.usda", root),
+            ("refs/model.usdc", makeUSDCResetSubrootMeshLayerFixture()),
+        ], alignPayloads: true)
+
+        let scene = try USDZReader().read(from: package)
+        let mesh = try #require(scene.meshes.first)
+
+        #expect(mesh.name == "Scene")
+        #expect(mesh.primPath == "/Scene")
+        expectPointsApproximatelyEqual(mesh.points, [
+            USDPoint3D(x: 10, y: 5, z: 0),
+            USDPoint3D(x: 11, y: 5, z: 0),
+            USDPoint3D(x: 10, y: 6, z: 0),
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func usdzReaderIncludesReferenceTargetSubtreeMeshes() throws {
         let root = Data("""
         #usda 1.0
@@ -3384,6 +4845,189 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func usdzReaderUsesDefaultPrimForExplicitEmptyReferenceTarget() throws {
+        let root = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Scene"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def "Scene" (
+            references = @./refs/meshes.usda@<>
+        )
+        {
+        }
+        """.utf8)
+        let referencedLayer = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Keep"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def Mesh "Keep"
+        {
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            uniform token subdivisionScheme = "none"
+        }
+
+        def Mesh "Drop"
+        {
+            point3f[] points = [(0, 0, 1), (1, 0, 1), (0, 1, 1)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            uniform token subdivisionScheme = "none"
+        }
+        """.utf8)
+        let package = makeUSDZFixture(entries: [
+            ("root.usda", root),
+            ("refs/meshes.usda", referencedLayer),
+        ], alignPayloads: true)
+
+        let scene = try USDZReader().read(from: package)
+
+        #expect(scene.meshes.map(\.name) == ["Scene"])
+        #expect(scene.meshes.map(\.primPath) == ["/Scene"])
+        #expect(scene.meshes.first?.points == [
+            USDPoint3D(x: 0, y: 0, z: 0),
+            USDPoint3D(x: 1, y: 0, z: 0),
+            USDPoint3D(x: 0, y: 1, z: 0),
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdzReaderDoesNotMaterializeReferenceWithoutDefaultPrimTarget() throws {
+        let root = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Scene"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def Mesh "Scene" (
+            references = @./refs/meshes.usda@<>
+        )
+        {
+            point3f[] points = [(10, 0, 0), (11, 0, 0), (10, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            uniform token subdivisionScheme = "none"
+        }
+        """.utf8)
+        let referencedLayer = Data("""
+        #usda 1.0
+        (
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def Mesh "LeakedA"
+        {
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            uniform token subdivisionScheme = "none"
+        }
+
+        def Mesh "LeakedB"
+        {
+            point3f[] points = [(0, 0, 1), (1, 0, 1), (0, 1, 1)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            uniform token subdivisionScheme = "none"
+        }
+        """.utf8)
+        let package = makeUSDZFixture(entries: [
+            ("root.usda", root),
+            ("refs/meshes.usda", referencedLayer),
+        ], alignPayloads: true)
+
+        let scene = try USDZReader().read(from: package)
+
+        #expect(scene.meshes.map(\.name) == ["Scene"])
+        #expect(scene.meshes.map(\.primPath) == ["/Scene"])
+        #expect(scene.meshes.first?.points == [
+            USDPoint3D(x: 10, y: 0, z: 0),
+            USDPoint3D(x: 11, y: 0, z: 0),
+            USDPoint3D(x: 10, y: 1, z: 0),
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdzReaderRejectsReferenceCycleWithLayerOffset() throws {
+        let root = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Loop"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def Mesh "Loop" (
+            references = @./root.usda@</Loop> (offset = 1; scale = 1)
+        )
+        {
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            uniform token subdivisionScheme = "none"
+        }
+        """.utf8)
+        let package = makeUSDZFixture(entries: [
+            ("root.usda", root),
+        ], alignPayloads: true)
+
+        do {
+            _ = try USDZReader().read(from: package)
+            Issue.record("Expected reference cycle to fail.")
+        } catch USDImportError.invalidData(let message) {
+            #expect(message.contains("cycle"))
+        } catch {
+            Issue.record("Expected USDImportError.invalidData, got \(error).")
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdzReaderRejectsPayloadCycleWithLayerOffset() throws {
+        let root = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Loop"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def Mesh "Loop" (
+            payload = @./root.usda@</Loop> (offset = 1; scale = 1)
+        )
+        {
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            uniform token subdivisionScheme = "none"
+        }
+        """.utf8)
+        let package = makeUSDZFixture(entries: [
+            ("root.usda", root),
+        ], alignPayloads: true)
+
+        do {
+            _ = try USDZReader().read(from: package)
+            Issue.record("Expected payload cycle to fail.")
+        } catch USDImportError.invalidData(let message) {
+            #expect(message.contains("cycle"))
+        } catch {
+            Issue.record("Expected USDImportError.invalidData, got \(error).")
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func usdzReaderTraversesUSDCReferences() throws {
         let package = makeUSDZFixture(entries: [
             ("root.usdc", makeUSDCReferenceLayerFixture(assetPath: "assets/ref.usda")),
@@ -3396,6 +5040,83 @@ struct OpenUSDTests {
         #expect(scene.meshes.map(\.name) == ["Scope"])
         #expect(scene.meshes.map(\.primPath) == ["/Scope"])
         #expect(scene.meshes.first?.points.count == 3)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdzReaderUsesUSDCDefaultPrimForEmptyReferenceTarget() throws {
+        let referencedLayer = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Keep"
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def Mesh "Keep"
+        {
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            uniform token subdivisionScheme = "none"
+        }
+
+        def Mesh "Drop"
+        {
+            point3f[] points = [(0, 0, 1), (1, 0, 1), (0, 1, 1)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            uniform token subdivisionScheme = "none"
+        }
+        """.utf8)
+        let package = makeUSDZFixture(entries: [
+            ("root.usdc", makeUSDCReferenceLayerFixture(assetPath: "assets/meshes.usda", primPathIndex: 0)),
+            ("assets/meshes.usda", referencedLayer),
+        ], alignPayloads: true)
+
+        let scene = try USDZReader().read(from: package)
+
+        #expect(scene.meshes.map(\.name) == ["Scope"])
+        #expect(scene.meshes.map(\.primPath) == ["/Scope"])
+        #expect(scene.meshes.first?.points == [
+            USDPoint3D(x: 0, y: 0, z: 0),
+            USDPoint3D(x: 1, y: 0, z: 0),
+            USDPoint3D(x: 0, y: 1, z: 0),
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdzReaderDoesNotMaterializeUSDCReferenceWithoutDefaultPrimTarget() throws {
+        let referencedLayer = Data("""
+        #usda 1.0
+        (
+            metersPerUnit = 1
+            upAxis = "Z"
+        )
+
+        def Mesh "LeakedA"
+        {
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            uniform token subdivisionScheme = "none"
+        }
+
+        def Mesh "LeakedB"
+        {
+            point3f[] points = [(0, 0, 1), (1, 0, 1), (0, 1, 1)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            uniform token subdivisionScheme = "none"
+        }
+        """.utf8)
+        let package = makeUSDZFixture(entries: [
+            ("root.usdc", makeUSDCReferenceLayerFixture(assetPath: "assets/meshes.usda", primPathIndex: 0)),
+            ("assets/meshes.usda", referencedLayer),
+        ], alignPayloads: true)
+
+        #expect(throws: USDImportError.self) {
+            _ = try USDZReader().read(from: package)
+        }
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -4199,6 +5920,32 @@ private func makeUSDCLayerCompositionArcFixture() -> Data {
                 layerOffset: .identity
             ),
         ],
+        deletedItems: [
+            USDCEncodedReference(
+                assetPathStringIndex: 7,
+                primPathIndex: 2,
+                layerOffset: .identity
+            ),
+        ],
+        orderedItems: [
+            USDCEncodedReference(
+                assetPathStringIndex: 0,
+                primPathIndex: 2,
+                layerOffset: USDLayerOffset(offset: 1.5, scale: 2),
+                customData: [
+                    USDCEncodedDictionaryEntry(
+                        keyStringIndex: 3,
+                        valueRep: USDCCrateValueRep(type: .string, isInlined: true, isArray: false, payload: 4)
+                    ),
+                    USDCEncodedDictionaryEntry(
+                        keyStringIndex: 5,
+                        valueRep: USDCCrateValueRep(type: .string, isInlined: false, isArray: false, payload: 0),
+                        nestedPayload: littleEndianData(UInt32(6)),
+                        usesNestedPayloadOffset: true
+                    ),
+                ]
+            ),
+        ],
         to: &valueData
     )
     let payloadListOperationOffset = appendUSDCPayloadListOperation(
@@ -4260,7 +6007,7 @@ private func makeUSDCLayerCompositionArcFixture() -> Data {
     ])
 }
 
-private func makeUSDCReferenceLayerFixture(assetPath: String) -> Data {
+private func makeUSDCReferenceLayerFixture(assetPath: String, primPathIndex: UInt32 = 2) -> Data {
     let version = USDCCrateVersion(major: 0, minor: 8, patch: 0)
     let tokens = [
         "specifier",
@@ -4274,7 +6021,7 @@ private func makeUSDCReferenceLayerFixture(assetPath: String) -> Data {
         addedItems: [
             USDCEncodedReference(
                 assetPathStringIndex: 0,
-                primPathIndex: 2,
+                primPathIndex: primPathIndex,
                 layerOffset: .identity
             ),
         ],
@@ -4313,9 +6060,145 @@ private func makeUSDCReferenceLayerFixture(assetPath: String) -> Data {
     ])
 }
 
+private func makeUSDCResetSubrootMeshLayerFixture() -> Data {
+    let version = USDCCrateVersion(major: 0, minor: 8, patch: 0)
+    let tokens = [
+        "defaultPrim",
+        "Model",
+        "Geom",
+        "metersPerUnit",
+        "upAxis",
+        "Z",
+        "specifier",
+        "typeName",
+        "Mesh",
+        "faceVertexCounts",
+        "faceVertexIndices",
+        "points",
+        "subdivisionScheme",
+        "default",
+        "none",
+        "xformOp:translate",
+        "xformOpOrder",
+        "!resetXformStack!",
+    ]
+    var valueData = Data()
+    let faceVertexCountsOffset = appendUSDCIntArray([3], to: &valueData)
+    let faceVertexIndicesOffset = appendUSDCIntArray([0, 1, 2], to: &valueData)
+    let pointsOffset = appendUSDCVec3fArray([
+        USDPoint3D(x: 0, y: 0, z: 0),
+        USDPoint3D(x: 1, y: 0, z: 0),
+        USDPoint3D(x: 0, y: 1, z: 0),
+    ], to: &valueData)
+    let modelTranslateOffset = appendUSDCVec3dScalar(USDPoint3D(x: 100, y: 0, z: 0), to: &valueData)
+    let modelXformOpOrderOffset = appendUSDCTokenArray([15], compressed: false, to: &valueData)
+    let geomTranslateOffset = appendUSDCVec3dScalar(USDPoint3D(x: 0, y: 5, z: 0), to: &valueData)
+    let geomXformOpOrderOffset = appendUSDCTokenArray([17, 15], compressed: false, to: &valueData)
+
+    let fields = [
+        USDCCrateField(
+            tokenIndex: 0,
+            valueRep: USDCCrateValueRep(type: .token, isInlined: true, isArray: false, payload: 1)
+        ),
+        USDCCrateField(
+            tokenIndex: 3,
+            valueRep: USDCCrateValueRep(type: .double, isInlined: true, isArray: false, payload: UInt64(Float32(1).bitPattern))
+        ),
+        USDCCrateField(
+            tokenIndex: 4,
+            valueRep: USDCCrateValueRep(type: .token, isInlined: true, isArray: false, payload: 5)
+        ),
+        USDCCrateField(
+            tokenIndex: 6,
+            valueRep: USDCCrateValueRep(type: .specifier, isInlined: true, isArray: false, payload: 0)
+        ),
+        USDCCrateField(
+            tokenIndex: 7,
+            valueRep: USDCCrateValueRep(type: .token, isInlined: true, isArray: false, payload: 8)
+        ),
+        USDCCrateField(
+            tokenIndex: 13,
+            valueRep: USDCCrateValueRep(type: .int, isInlined: false, isArray: true, payload: faceVertexCountsOffset)
+        ),
+        USDCCrateField(
+            tokenIndex: 13,
+            valueRep: USDCCrateValueRep(type: .int, isInlined: false, isArray: true, payload: faceVertexIndicesOffset)
+        ),
+        USDCCrateField(
+            tokenIndex: 13,
+            valueRep: USDCCrateValueRep(type: .vec3f, isInlined: false, isArray: true, payload: pointsOffset)
+        ),
+        USDCCrateField(
+            tokenIndex: 13,
+            valueRep: USDCCrateValueRep(type: .token, isInlined: true, isArray: false, payload: 14)
+        ),
+        USDCCrateField(
+            tokenIndex: 13,
+            valueRep: USDCCrateValueRep(type: .vec3d, isInlined: false, isArray: false, payload: modelTranslateOffset)
+        ),
+        USDCCrateField(
+            tokenIndex: 13,
+            valueRep: USDCCrateValueRep(type: .token, isInlined: false, isArray: true, payload: modelXformOpOrderOffset)
+        ),
+        USDCCrateField(
+            tokenIndex: 13,
+            valueRep: USDCCrateValueRep(type: .vec3d, isInlined: false, isArray: false, payload: geomTranslateOffset)
+        ),
+        USDCCrateField(
+            tokenIndex: 13,
+            valueRep: USDCCrateValueRep(type: .token, isInlined: false, isArray: true, payload: geomXformOpOrderOffset)
+        ),
+    ]
+
+    var fieldSetIndexes: [UInt32] = []
+    func appendFieldSet(_ indexes: [UInt32]) -> UInt32 {
+        let fieldSetIndex = UInt32(fieldSetIndexes.count)
+        fieldSetIndexes.append(contentsOf: indexes)
+        fieldSetIndexes.append(UInt32.max)
+        return fieldSetIndex
+    }
+
+    let specs = [
+        USDCCrateSpec(pathIndex: 0, fieldSetIndex: appendFieldSet([0, 1, 2]), specType: .pseudoRoot),
+        USDCCrateSpec(pathIndex: 1, fieldSetIndex: appendFieldSet([3]), specType: .prim),
+        USDCCrateSpec(pathIndex: 2, fieldSetIndex: appendFieldSet([3, 4]), specType: .prim),
+        USDCCrateSpec(pathIndex: 3, fieldSetIndex: appendFieldSet([5]), specType: .attribute),
+        USDCCrateSpec(pathIndex: 4, fieldSetIndex: appendFieldSet([6]), specType: .attribute),
+        USDCCrateSpec(pathIndex: 5, fieldSetIndex: appendFieldSet([7]), specType: .attribute),
+        USDCCrateSpec(pathIndex: 6, fieldSetIndex: appendFieldSet([8]), specType: .attribute),
+        USDCCrateSpec(pathIndex: 7, fieldSetIndex: appendFieldSet([11]), specType: .attribute),
+        USDCCrateSpec(pathIndex: 8, fieldSetIndex: appendFieldSet([12]), specType: .attribute),
+        USDCCrateSpec(pathIndex: 9, fieldSetIndex: appendFieldSet([9]), specType: .attribute),
+        USDCCrateSpec(pathIndex: 10, fieldSetIndex: appendFieldSet([10]), specType: .attribute),
+    ]
+
+    return makeUSDCFixture(version: version, valueData: valueData, sections: [
+        ("TOKENS", makeUSDCTokenSection(version: version, tokenData: nullSeparatedTokenData(tokens))),
+        ("STRINGS", makeUSDCStringsSection([])),
+        ("FIELDS", makeUSDCFieldsSection(version: version, fields: fields)),
+        ("FIELDSETS", makeUSDCFieldSetsSection(version: version, indexes: fieldSetIndexes)),
+        ("PATHS", makeUSDCCompressedPathsSection(
+            pathCount: 11,
+            pathIndexes: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+            elementTokenIndexes: [0, 1, 2, -9, -10, -11, -12, -15, -16, -15, -16],
+            jumps: [-1, -1, 7, 0, 0, 0, 0, 0, -2, 0, -2]
+        )),
+        ("SPECS", makeUSDCSpecsSection(version: version, specs: specs)),
+    ])
+}
+
 private func makeUSDCMeshSceneFixture(
     compressedPoints: Bool = false,
-    compressedXformOpOrder: Bool = false
+    faceVertexCounts: [Int32] = [3],
+    faceVertexIndices: [Int32] = [0, 1, 2],
+    compressedXformOpOrder: Bool = false,
+    includeExtent: Bool = false,
+    extentTimeSamples: [(timeCode: Double, points: [USDPoint3D])]? = nil,
+    blockedTopologyTimeSampleField: String? = nil,
+    sampledTopologyTimeSampleField: String? = nil,
+    sampledTopologyTimeSampleValues: [Int32] = [],
+    valueBlockedTopologyDefaultField: String? = nil,
+    meshSpecifierPayload: UInt64 = 0
 ) -> Data {
     let version = USDCCrateVersion(major: 0, minor: 8, patch: 0)
     let tokens = [
@@ -4335,10 +6218,12 @@ private func makeUSDCMeshSceneFixture(
         "none",
         "xformOp:translate",
         "xformOpOrder",
+        "extent",
+        "timeSamples",
     ]
     var valueData = Data()
-    let faceVertexCountsOffset = appendUSDCIntArray([3], to: &valueData)
-    let faceVertexIndicesOffset = appendUSDCIntArray([0, 1, 2], to: &valueData)
+    let faceVertexCountsOffset = appendUSDCIntArray(faceVertexCounts, to: &valueData)
+    let faceVertexIndicesOffset = appendUSDCIntArray(faceVertexIndices, to: &valueData)
     let meshPoints = [
         USDPoint3D(x: 0, y: 0, z: 0),
         USDPoint3D(x: 1, y: 0, z: 0),
@@ -4363,6 +6248,53 @@ private func makeUSDCMeshSceneFixture(
         translateOffset = nil
         xformOpOrderOffset = nil
     }
+    let extentField: (tokenIndex: UInt32, valueRep: USDCCrateValueRep)?
+    if let extentTimeSamples {
+        let sampleValueReps = extentTimeSamples.map { sample in
+            USDCCrateValueRep(
+                type: .vec3f,
+                isInlined: false,
+                isArray: true,
+                payload: appendUSDCVec3fArray(sample.points, to: &valueData)
+            )
+        }
+        let extentTimeSamplesOffset = appendUSDCTimeSamples(
+            times: extentTimeSamples.map { $0.timeCode },
+            valueReps: sampleValueReps,
+            to: &valueData
+        )
+        extentField = (
+            tokenIndex: 17,
+            valueRep: USDCCrateValueRep(
+                type: .timeSamples,
+                isInlined: false,
+                isArray: false,
+                payload: extentTimeSamplesOffset
+            )
+        )
+    } else if includeExtent {
+        extentField = (
+            tokenIndex: 12,
+            valueRep: USDCCrateValueRep(
+                type: .vec3f,
+                isInlined: false,
+                isArray: true,
+                payload: appendUSDCVec3fArray([
+                    USDPoint3D(x: 0, y: 0, z: 0),
+                    USDPoint3D(x: 1, y: 1, z: 0),
+                ], to: &valueData)
+            )
+        )
+    } else {
+        extentField = nil
+    }
+
+    let faceVertexCountsDefaultValueRep = valueBlockedTopologyDefaultField == "faceVertexCounts"
+        ? USDCCrateValueRep(type: .valueBlock, isInlined: false, isArray: false, payload: 0)
+        : USDCCrateValueRep(type: .int, isInlined: false, isArray: true, payload: faceVertexCountsOffset)
+    let faceVertexIndicesDefaultValueRep = valueBlockedTopologyDefaultField == "faceVertexIndices"
+        ? USDCCrateValueRep(type: .valueBlock, isInlined: false, isArray: false, payload: 0)
+        : USDCCrateValueRep(type: .int, isInlined: false, isArray: true, payload: faceVertexIndicesOffset)
 
     var fields = [
         USDCCrateField(
@@ -4379,7 +6311,7 @@ private func makeUSDCMeshSceneFixture(
         ),
         USDCCrateField(
             tokenIndex: 5,
-            valueRep: USDCCrateValueRep(type: .specifier, isInlined: true, isArray: false, payload: 0)
+            valueRep: USDCCrateValueRep(type: .specifier, isInlined: true, isArray: false, payload: meshSpecifierPayload)
         ),
         USDCCrateField(
             tokenIndex: 6,
@@ -4387,11 +6319,11 @@ private func makeUSDCMeshSceneFixture(
         ),
         USDCCrateField(
             tokenIndex: 12,
-            valueRep: USDCCrateValueRep(type: .int, isInlined: false, isArray: true, payload: faceVertexCountsOffset)
+            valueRep: faceVertexCountsDefaultValueRep
         ),
         USDCCrateField(
             tokenIndex: 12,
-            valueRep: USDCCrateValueRep(type: .int, isInlined: false, isArray: true, payload: faceVertexIndicesOffset)
+            valueRep: faceVertexIndicesDefaultValueRep
         ),
         USDCCrateField(
             tokenIndex: 12,
@@ -4402,42 +6334,93 @@ private func makeUSDCMeshSceneFixture(
             valueRep: USDCCrateValueRep(type: .token, isInlined: true, isArray: false, payload: 13)
         ),
     ]
+    let translateFieldIndex: UInt32?
+    let xformOpOrderFieldIndex: UInt32?
     if let translateOffset, let xformOpOrderOffset {
+        translateFieldIndex = UInt32(fields.count)
         fields.append(USDCCrateField(
             tokenIndex: 12,
             valueRep: USDCCrateValueRep(type: .vec3d, isInlined: false, isArray: false, payload: translateOffset)
         ))
         var xformOpOrderValueRep = USDCCrateValueRep(type: .token, isInlined: false, isArray: true, payload: xformOpOrderOffset)
         xformOpOrderValueRep.rawValue |= USDCCrateValueRep.isCompressedBit
+        xformOpOrderFieldIndex = UInt32(fields.count)
         fields.append(USDCCrateField(
             tokenIndex: 12,
             valueRep: xformOpOrderValueRep
         ))
+    } else {
+        translateFieldIndex = nil
+        xformOpOrderFieldIndex = nil
     }
-    var fieldSetIndexes: [UInt32] = [
-        0, 1, 2, UInt32.max,
-        3, 4, UInt32.max,
-        5, UInt32.max,
-        6, UInt32.max,
-        7, UInt32.max,
-        8, UInt32.max,
-    ]
+    let extentFieldIndex: UInt32?
+    if let extentField {
+        extentFieldIndex = UInt32(fields.count)
+        fields.append(USDCCrateField(
+            tokenIndex: extentField.tokenIndex,
+            valueRep: extentField.valueRep
+        ))
+    } else {
+        extentFieldIndex = nil
+    }
+
+    let faceVertexCountsTimeSamplesFieldIndex = appendUSDCTopologyTimeSamplesField(
+        named: "faceVertexCounts",
+        blockedTopologyTimeSampleField: blockedTopologyTimeSampleField,
+        sampledTopologyTimeSampleField: sampledTopologyTimeSampleField,
+        sampledTopologyTimeSampleValues: sampledTopologyTimeSampleValues,
+        fallbackValueRep: USDCCrateValueRep(type: .int, isInlined: false, isArray: true, payload: faceVertexCountsOffset),
+        valueData: &valueData,
+        fields: &fields
+    )
+    let faceVertexIndicesTimeSamplesFieldIndex = appendUSDCTopologyTimeSamplesField(
+        named: "faceVertexIndices",
+        blockedTopologyTimeSampleField: blockedTopologyTimeSampleField,
+        sampledTopologyTimeSampleField: sampledTopologyTimeSampleField,
+        sampledTopologyTimeSampleValues: sampledTopologyTimeSampleValues,
+        fallbackValueRep: USDCCrateValueRep(type: .int, isInlined: false, isArray: true, payload: faceVertexIndicesOffset),
+        valueData: &valueData,
+        fields: &fields
+    )
+
+    var fieldSetIndexes: [UInt32] = []
+    func appendFieldSet(_ indexes: [UInt32]) -> UInt32 {
+        let fieldSetIndex = UInt32(fieldSetIndexes.count)
+        fieldSetIndexes.append(contentsOf: indexes)
+        fieldSetIndexes.append(UInt32.max)
+        return fieldSetIndex
+    }
+
+    let rootFieldSetIndex = appendFieldSet([0, 1, 2])
+    let meshFieldSetIndex = appendFieldSet([3, 4])
+    var faceVertexCountsFieldIndexes: [UInt32] = [5]
+    if let faceVertexCountsTimeSamplesFieldIndex {
+        faceVertexCountsFieldIndexes.append(faceVertexCountsTimeSamplesFieldIndex)
+    }
+    var faceVertexIndicesFieldIndexes: [UInt32] = [6]
+    if let faceVertexIndicesTimeSamplesFieldIndex {
+        faceVertexIndicesFieldIndexes.append(faceVertexIndicesTimeSamplesFieldIndex)
+    }
+    let faceVertexCountsFieldSetIndex = appendFieldSet(faceVertexCountsFieldIndexes)
+    let faceVertexIndicesFieldSetIndex = appendFieldSet(faceVertexIndicesFieldIndexes)
+    let pointsFieldSetIndex = appendFieldSet([7])
+    let subdivisionSchemeFieldSetIndex = appendFieldSet([8])
+
     var specs = [
-        USDCCrateSpec(pathIndex: 0, fieldSetIndex: 0, specType: .pseudoRoot),
-        USDCCrateSpec(pathIndex: 1, fieldSetIndex: 4, specType: .prim),
-        USDCCrateSpec(pathIndex: 2, fieldSetIndex: 7, specType: .attribute),
-        USDCCrateSpec(pathIndex: 3, fieldSetIndex: 9, specType: .attribute),
-        USDCCrateSpec(pathIndex: 4, fieldSetIndex: 11, specType: .attribute),
-        USDCCrateSpec(pathIndex: 5, fieldSetIndex: 13, specType: .attribute),
+        USDCCrateSpec(pathIndex: 0, fieldSetIndex: rootFieldSetIndex, specType: .pseudoRoot),
+        USDCCrateSpec(pathIndex: 1, fieldSetIndex: meshFieldSetIndex, specType: .prim),
+        USDCCrateSpec(pathIndex: 2, fieldSetIndex: faceVertexCountsFieldSetIndex, specType: .attribute),
+        USDCCrateSpec(pathIndex: 3, fieldSetIndex: faceVertexIndicesFieldSetIndex, specType: .attribute),
+        USDCCrateSpec(pathIndex: 4, fieldSetIndex: pointsFieldSetIndex, specType: .attribute),
+        USDCCrateSpec(pathIndex: 5, fieldSetIndex: subdivisionSchemeFieldSetIndex, specType: .attribute),
     ]
-    let pathCount: Int
-    let pathIndexes: [UInt32]
-    let elementTokenIndexes: [Int32]
-    let jumps: [Int32]
-    if compressedXformOpOrder {
-        fieldSetIndexes.append(contentsOf: [9, UInt32.max, 10, UInt32.max])
-        specs.append(USDCCrateSpec(pathIndex: 6, fieldSetIndex: 15, specType: .attribute))
-        specs.append(USDCCrateSpec(pathIndex: 7, fieldSetIndex: 17, specType: .attribute))
+    var pathCount: Int
+    var pathIndexes: [UInt32]
+    var elementTokenIndexes: [Int32]
+    var jumps: [Int32]
+    if let translateFieldIndex, let xformOpOrderFieldIndex {
+        specs.append(USDCCrateSpec(pathIndex: 6, fieldSetIndex: appendFieldSet([translateFieldIndex]), specType: .attribute))
+        specs.append(USDCCrateSpec(pathIndex: 7, fieldSetIndex: appendFieldSet([xformOpOrderFieldIndex]), specType: .attribute))
         pathCount = 8
         pathIndexes = [0, 1, 2, 3, 4, 5, 6, 7]
         elementTokenIndexes = [0, 1, -8, -9, -10, -11, -14, -15]
@@ -4447,6 +6430,16 @@ private func makeUSDCMeshSceneFixture(
         pathIndexes = [0, 1, 2, 3, 4, 5]
         elementTokenIndexes = [0, 1, -8, -9, -10, -11]
         jumps = [-1, -1, 0, 0, 0, -2]
+    }
+    if let extentFieldIndex {
+        let extentPathIndex = UInt32(pathCount)
+        let extentFieldSetIndex = appendFieldSet([extentFieldIndex])
+        specs.append(USDCCrateSpec(pathIndex: extentPathIndex, fieldSetIndex: extentFieldSetIndex, specType: .attribute))
+        pathIndexes.append(extentPathIndex)
+        elementTokenIndexes.append(-16)
+        jumps[jumps.count - 1] = 0
+        jumps.append(-2)
+        pathCount += 1
     }
 
     return makeUSDCFixture(version: version, valueData: valueData, sections: [
@@ -4471,6 +6464,45 @@ private func appendUSDCIntArray(_ values: [Int32], to data: inout Data) -> UInt6
         data.appendLittleEndian(value)
     }
     return offset
+}
+
+private func appendUSDCTopologyTimeSamplesField(
+    named name: String,
+    blockedTopologyTimeSampleField: String?,
+    sampledTopologyTimeSampleField: String?,
+    sampledTopologyTimeSampleValues: [Int32],
+    fallbackValueRep: USDCCrateValueRep,
+    valueData: inout Data,
+    fields: inout [USDCCrateField]
+) -> UInt32? {
+    let sampleValueRep: USDCCrateValueRep
+    if blockedTopologyTimeSampleField == name {
+        sampleValueRep = USDCCrateValueRep(type: .valueBlock, isInlined: false, isArray: false, payload: 0)
+    } else if sampledTopologyTimeSampleField == name {
+        let sampledOffset = appendUSDCIntArray(sampledTopologyTimeSampleValues, to: &valueData)
+        sampleValueRep = USDCCrateValueRep(type: .int, isInlined: false, isArray: true, payload: sampledOffset)
+    } else {
+        return nil
+    }
+    let timeSamplesOffset = appendUSDCTimeSamples(
+        times: [1, 2],
+        valueReps: [
+            sampleValueRep,
+            fallbackValueRep,
+        ],
+        to: &valueData
+    )
+    let fieldIndex = UInt32(fields.count)
+    fields.append(USDCCrateField(
+        tokenIndex: 17,
+        valueRep: USDCCrateValueRep(
+            type: .timeSamples,
+            isInlined: false,
+            isArray: false,
+            payload: timeSamplesOffset
+        )
+    ))
+    return fieldIndex
 }
 
 private func appendUSDCInt64Scalar(_ value: Int64, to data: inout Data) -> UInt64 {
@@ -4604,6 +6636,34 @@ private func appendUSDCDoubleArray(_ values: [Double], compressed: Bool = false,
         rawValueData.appendLittleEndian(value.bitPattern)
     }
     appendUSDCArrayPayload(rawValueData, compressed: compressed, to: &data)
+    return offset
+}
+
+private func appendUSDCTimeSamples(
+    times: [Double],
+    valueReps: [USDCCrateValueRep],
+    to data: inout Data
+) -> UInt64 {
+    let offset = alignUSDCValueData(&data)
+    var timesPayload = Data()
+    timesPayload.appendLittleEndian(UInt64(times.count))
+    for time in times {
+        timesPayload.appendLittleEndian(time.bitPattern)
+    }
+    let timesPayloadOffset = UInt64(USDCCrateFile.bootstrapByteCount + data.count + MemoryLayout<Int64>.size)
+    data.appendLittleEndian(Int64(MemoryLayout<Int64>.size + timesPayload.count))
+    data.append(timesPayload)
+    data.appendLittleEndian(USDCCrateValueRep(
+        type: .doubleVector,
+        isInlined: false,
+        isArray: false,
+        payload: timesPayloadOffset
+    ).rawValue)
+    data.appendLittleEndian(Int64(MemoryLayout<Int64>.size))
+    data.appendLittleEndian(UInt64(valueReps.count))
+    for valueRep in valueReps {
+        data.appendLittleEndian(valueRep.rawValue)
+    }
     return offset
 }
 

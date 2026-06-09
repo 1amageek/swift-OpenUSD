@@ -37,12 +37,14 @@ public struct USDAReader: USDSceneReader {
         if let timeCode = options.timeCode, !timeCode.isFinite {
             throw USDImportError.invalidData("USDA requested timeCode must be finite.")
         }
-        let metersPerUnit = try parseRequiredDouble(named: "metersPerUnit", in: text)
+        let metersPerUnit = try metadataBody.flatMap {
+            try parseOptionalDouble(named: "metersPerUnit", in: $0)
+        } ?? 1
         guard metersPerUnit.isFinite, metersPerUnit > 0 else {
             throw USDImportError.invalidData("USDA metersPerUnit must be a positive finite value.")
         }
-        let upAxis = try parseUpAxis(in: text)
-        let defaultPrim = try parseOptionalString(named: "defaultPrim", in: text)
+        let upAxis = try metadataBody.map { try parseUpAxis(in: $0) } ?? .y
+        let defaultPrim = try metadataBody.flatMap { try parseOptionalString(named: "defaultPrim", in: $0) }
         let meshes = try parseMeshes(in: text, options: options)
         guard !meshes.isEmpty else {
             throw USDImportError.invalidData("USDA scene contains no Mesh prims.")
@@ -81,7 +83,8 @@ public struct USDAReader: USDSceneReader {
             upAxis: upAxis,
             composition: try parseLayerComposition(in: text, metadataBody: metadataBody),
             specs: specs,
-            primTransforms: try parsePrimTransforms(in: text)
+            primTransforms: try parsePrimTransforms(in: text),
+            resetXformStackPrimPaths: try parseResetXformStackPrimPaths(in: text)
         )
     }
 
@@ -172,11 +175,17 @@ public struct USDAReader: USDSceneReader {
             let character = text[cursor]
             if character == "#" {
                 skipLineComment(in: text, index: &cursor)
-                isStatementStart = true
+                if parenthesisDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
+                    isStatementStart = true
+                }
                 continue
             }
             if character == "\"" || character == "'" {
                 try skipQuotedString(in: text, index: &cursor)
+                continue
+            }
+            if character == "@" {
+                try skipAssetPathLiteral(in: text, index: &cursor)
                 continue
             }
             if character == "(" {
@@ -276,6 +285,13 @@ public struct USDAReader: USDSceneReader {
             cursor = text.index(after: cursor)
         }
         let propertyName = String(text[propertyNameStart..<cursor])
+        guard !propertyName.isEmpty else {
+            throw USDImportError.invalidData("USDA property declaration is missing a property name.")
+        }
+        let normalizedPropertyName = normalizedPropertyName(propertyName)
+        guard isValidUSDPropertyName(normalizedPropertyName.baseName) else {
+            throw USDImportError.invalidData("USDA property name \(propertyName) is not a valid identifier.")
+        }
         if skipPropertyNameTrailingWhitespace(in: text, index: &cursor) {
             return
         }
@@ -297,7 +313,7 @@ public struct USDAReader: USDSceneReader {
         if typeName == "opaque", !propertyName.hasSuffix(".connect") {
             throw USDImportError.invalidData("USDA opaque attribute \(propertyName) cannot author a default value.")
         }
-        if text[cursor...].hasPrefix("None") {
+        if isNoneValue(at: cursor, in: text) {
             if qualifiers.contains(where: isListEditQualifier) {
                 throw USDImportError.invalidData("USDA \(propertyName) list-edit cannot use None.")
             }
@@ -415,6 +431,10 @@ public struct USDAReader: USDSceneReader {
                 try skipQuotedString(in: text, index: &cursor)
                 continue
             }
+            if character == "@" {
+                try skipAssetPathLiteral(in: text, index: &cursor)
+                continue
+            }
             if character == "<" {
                 count += 1
             }
@@ -464,6 +484,10 @@ public struct USDAReader: USDSceneReader {
                 try skipQuotedString(in: text, index: &cursor)
                 continue
             }
+            if character == "@" {
+                try skipAssetPathLiteral(in: text, index: &cursor)
+                continue
+            }
             if character == "[" {
                 throw USDImportError.invalidData(
                     "USDA \(typeName) attribute \(propertyName) contains a nested shaped list value."
@@ -478,8 +502,25 @@ public struct USDAReader: USDSceneReader {
         startingAt cursor: String.Index,
         in text: String
     ) throws {
-        guard text[cursor] == "[" else {
+        guard cursor < text.endIndex else {
             return
+        }
+        if text[cursor] == "<" {
+            let parsedTarget = try parseRelationshipTargetPath(
+                named: propertyName,
+                startingAt: cursor,
+                before: text.endIndex,
+                in: text
+            )
+            try validateRelationshipTrailingContent(
+                named: propertyName,
+                startingAt: parsedTarget.endIndex,
+                in: text
+            )
+            return
+        }
+        guard text[cursor] == "[" else {
+            throw USDImportError.invalidData("USDA relationship \(propertyName) target contains invalid target syntax.")
         }
         let closeBracket = try matchingBracket(startingAt: cursor, in: text)
         var listCursor = text.index(after: cursor)
@@ -496,18 +537,72 @@ public struct USDAReader: USDSceneReader {
             guard text[listCursor] == "<" else {
                 throw USDImportError.invalidData("USDA relationship \(propertyName) target list contains invalid target syntax.")
             }
-            let targetStart = listCursor
-            while listCursor < closeBracket, text[listCursor] != ">" {
-                listCursor = text.index(after: listCursor)
-            }
-            guard listCursor < closeBracket else {
-                throw USDImportError.invalidData("USDA relationship \(propertyName) target list contains unterminated target path.")
-            }
-            listCursor = text.index(after: listCursor)
-            let target = String(text[targetStart..<listCursor])
+            let parsedTarget = try parseRelationshipTargetPath(
+                named: propertyName,
+                startingAt: listCursor,
+                before: closeBracket,
+                in: text
+            )
+            listCursor = parsedTarget.endIndex
+            let target = parsedTarget.value
             guard targets.insert(target).inserted else {
                 throw USDImportError.invalidData("USDA relationship \(propertyName) contains duplicate target \(target).")
             }
+        }
+        try validateRelationshipTrailingContent(
+            named: propertyName,
+            startingAt: text.index(after: closeBracket),
+            in: text
+        )
+    }
+
+    private func parseRelationshipTargetPath(
+        named propertyName: String,
+        startingAt start: String.Index,
+        before end: String.Index,
+        in text: String
+    ) throws -> (value: String, endIndex: String.Index) {
+        var cursor = start
+        guard cursor < end, text[cursor] == "<" else {
+            throw USDImportError.invalidData("USDA relationship \(propertyName) target contains invalid target syntax.")
+        }
+        while cursor < end, text[cursor] != ">" {
+            cursor = text.index(after: cursor)
+        }
+        guard cursor < end else {
+            throw USDImportError.invalidData("USDA relationship \(propertyName) target contains unterminated target path.")
+        }
+        let value = String(text[text.index(after: start)..<cursor])
+        try validateUSDPath(value, subject: "relationship \(propertyName) target")
+        return (String(text[start...cursor]), text.index(after: cursor))
+    }
+
+    private func validateRelationshipTrailingContent(
+        named propertyName: String,
+        startingAt start: String.Index,
+        in text: String
+    ) throws {
+        var cursor = start
+        while cursor < text.endIndex {
+            if text[cursor].isWhitespace {
+                if text[cursor].isNewline {
+                    return
+                }
+                cursor = text.index(after: cursor)
+                continue
+            }
+            if text[cursor] == "#" {
+                return
+            }
+            if text[cursor] == ";" || text[cursor] == "}" {
+                return
+            }
+            if text[cursor] == "(" {
+                let closeParenthesis = try matchingParenthesis(startingAt: cursor, in: text)
+                cursor = text.index(after: closeParenthesis)
+                continue
+            }
+            throw USDImportError.invalidData("USDA relationship \(propertyName) target contains unexpected trailing content.")
         }
     }
 
@@ -531,6 +626,10 @@ public struct USDAReader: USDSceneReader {
             }
             if character == "\"" || character == "'" {
                 try skipQuotedString(in: text, index: &cursor)
+                continue
+            }
+            if character == "@" {
+                try skipAssetPathLiteral(in: text, index: &cursor)
                 continue
             }
             guard token(name, matchesAt: cursor, in: text) else {
@@ -571,6 +670,10 @@ public struct USDAReader: USDSceneReader {
             }
             if character == "\"" || character == "'" {
                 try skipQuotedString(in: text, index: &cursor)
+                continue
+            }
+            if character == "@" {
+                try skipAssetPathLiteral(in: text, index: &cursor)
                 continue
             }
             guard token(name, matchesAt: cursor, in: text) else {
@@ -620,6 +723,10 @@ public struct USDAReader: USDSceneReader {
             }
             if character == "\"" || character == "'" {
                 try skipQuotedString(in: text, index: &cursor)
+                continue
+            }
+            if character == "@" {
+                try skipAssetPathLiteral(in: text, index: &cursor)
                 continue
             }
             guard token(name, matchesAt: cursor, in: text) else {
@@ -795,6 +902,9 @@ public struct USDAReader: USDSceneReader {
 
     private func validateBracketedListEdits(forField fieldName: String, in text: String) throws {
         var cursor = text.startIndex
+        var parenthesisDepth = 0
+        var bracketDepth = 0
+        var braceDepth = 0
         while cursor < text.endIndex {
             let character = text[cursor]
             if character == "#" {
@@ -805,7 +915,36 @@ public struct USDAReader: USDSceneReader {
                 try skipQuotedString(in: text, index: &cursor)
                 continue
             }
+            if character == "@" {
+                try skipAssetPathLiteral(in: text, index: &cursor)
+                continue
+            }
+            let isAtTopLevel = parenthesisDepth == 0 && bracketDepth == 0 && braceDepth == 0
+            guard isAtTopLevel else {
+                if character == "(" {
+                    parenthesisDepth += 1
+                } else if character == ")" {
+                    parenthesisDepth = max(0, parenthesisDepth - 1)
+                } else if character == "[" {
+                    bracketDepth += 1
+                } else if character == "]" {
+                    bracketDepth = max(0, bracketDepth - 1)
+                } else if character == "{" {
+                    braceDepth += 1
+                } else if character == "}" {
+                    braceDepth = max(0, braceDepth - 1)
+                }
+                cursor = text.index(after: cursor)
+                continue
+            }
             guard let qualifier = compositionListEditQualifier(at: cursor, in: text) else {
+                if character == "(" {
+                    parenthesisDepth += 1
+                } else if character == "[" {
+                    bracketDepth += 1
+                } else if character == "{" {
+                    braceDepth += 1
+                }
                 cursor = text.index(after: cursor)
                 continue
             }
@@ -887,6 +1026,10 @@ public struct USDAReader: USDSceneReader {
                 try skipQuotedString(in: text, index: &cursor)
                 continue
             }
+            if character == "@" {
+                try skipAssetPathLiteral(in: text, index: &cursor)
+                continue
+            }
             guard let valueType = scalarAttributeType(at: cursor, in: text) else {
                 cursor = text.index(after: cursor)
                 continue
@@ -899,12 +1042,19 @@ public struct USDAReader: USDSceneReader {
     private func validateScalarAssignment(type valueType: String, startingAt typeIndex: String.Index, in text: String) throws {
         var cursor = text.index(typeIndex, offsetBy: valueType.count)
         skipWhitespace(in: text, index: &cursor)
+        let propertyNameStart = cursor
         while cursor < text.endIndex {
             let character = text[cursor]
             if character.isWhitespace || character == "=" || character == "(" || character == "\n" || character == "\r" {
                 break
             }
             cursor = text.index(after: cursor)
+        }
+        let propertyName = String(text[propertyNameStart..<cursor])
+        let normalizedName = normalizedPropertyName(propertyName)
+        if normalizedName.valueField == USDAPropertyValueField.connectionPaths
+            || normalizedName.valueField == USDAPropertyValueField.timeSamples {
+            return
         }
         skipWhitespace(in: text, index: &cursor)
         if cursor < text.endIndex, text[cursor] == "(" {
@@ -918,12 +1068,16 @@ public struct USDAReader: USDSceneReader {
         cursor = text.index(after: cursor)
         skipWhitespace(in: text, index: &cursor)
         let valueStart = cursor
-        while cursor < text.endIndex {
-            let character = text[cursor]
-            if character.isWhitespace || character == ";" || character == "," || character == ")" || character == "]" || character == "}" {
-                break
+        if valueType == "string", cursor < text.endIndex, text[cursor] == "\"" || text[cursor] == "'" {
+            try skipQuotedString(in: text, index: &cursor)
+        } else {
+            while cursor < text.endIndex {
+                let character = text[cursor]
+                if character.isWhitespace || character == ";" || character == "," || character == ")" || character == "]" || character == "}" {
+                    break
+                }
+                cursor = text.index(after: cursor)
             }
-            cursor = text.index(after: cursor)
         }
         let value = String(text[valueStart..<cursor])
         switch valueType {
@@ -931,21 +1085,68 @@ public struct USDAReader: USDSceneReader {
             guard ["true", "false", "0", "1", "None"].contains(value) else {
                 throw USDImportError.invalidData("USDA bool attribute contains invalid value \(value).")
             }
+        case "double", "float", "half", "timecode":
+            guard value == "None" || Double(value)?.isFinite == true else {
+                throw USDImportError.invalidData("USDA \(valueType) attribute contains invalid value \(value).")
+            }
         case "int":
             guard value == "None" || Int(value) != nil else {
                 throw USDImportError.invalidData("USDA int attribute contains invalid value \(value).")
+            }
+        case "int64":
+            guard value == "None" || Int64(value) != nil else {
+                throw USDImportError.invalidData("USDA int64 attribute contains invalid value \(value).")
             }
         case "string":
             guard value == "None" || value.first == "\"" || value.first == "'" else {
                 throw USDImportError.invalidData("USDA string attribute contains invalid value \(value).")
             }
+        case "uchar":
+            guard value == "None" || UInt8(value) != nil else {
+                throw USDImportError.invalidData("USDA uchar attribute contains invalid value \(value).")
+            }
+        case "uint":
+            guard value == "None" || UInt32(value) != nil else {
+                throw USDImportError.invalidData("USDA uint attribute contains invalid value \(value).")
+            }
+        case "uint64":
+            guard value == "None" || UInt64(value) != nil else {
+                throw USDImportError.invalidData("USDA uint64 attribute contains invalid value \(value).")
+            }
         default:
             return
+        }
+        try validateScalarTrailingContent(type: valueType, startingAt: cursor, in: text)
+    }
+
+    private func validateScalarTrailingContent(
+        type valueType: String,
+        startingAt start: String.Index,
+        in text: String
+    ) throws {
+        var cursor = start
+        while cursor < text.endIndex {
+            if text[cursor].isWhitespace {
+                if text[cursor].isNewline {
+                    return
+                }
+                cursor = text.index(after: cursor)
+                continue
+            }
+            if text[cursor] == "#" || text[cursor] == ";" || text[cursor] == "}" {
+                return
+            }
+            if text[cursor] == "(" {
+                let closeParenthesis = try matchingParenthesis(startingAt: cursor, in: text)
+                cursor = text.index(after: closeParenthesis)
+                continue
+            }
+            throw USDImportError.invalidData("USDA \(valueType) attribute contains unexpected trailing content.")
         }
     }
 
     private func scalarAttributeType(at index: String.Index, in text: String) -> String? {
-        for keyword in ["bool", "int", "string"] {
+        for keyword in ["timecode", "double", "float", "int64", "string", "uchar", "uint64", "bool", "half", "uint", "int"] {
             guard scalarAttributeType(keyword, matchesAt: index, in: text) else {
                 continue
             }
@@ -988,6 +1189,10 @@ public struct USDAReader: USDSceneReader {
             }
             if character == "\"" || character == "'" {
                 try skipQuotedString(in: text, index: &index)
+                continue
+            }
+            if character == "@" {
+                try skipAssetPathLiteral(in: text, index: &index)
                 continue
             }
             if text[index...].hasPrefix(endToken),
@@ -1340,6 +1545,9 @@ public struct USDAReader: USDSceneReader {
         guard !normalizedName.baseName.isEmpty else {
             return nil
         }
+        guard isValidUSDPropertyName(normalizedName.baseName) else {
+            throw USDImportError.invalidData("USDA property name \(authoredPropertyName) is not a valid identifier.")
+        }
         let isListEdit = qualifiers.contains(where: isListEditQualifier)
         let valueStart = try propertyAssignmentValueStart(afterPropertyName: cursor, in: text)
         let hasAssignment = valueStart != nil
@@ -1495,7 +1703,7 @@ public struct USDAReader: USDSceneReader {
         guard cursor < text.endIndex else {
             return []
         }
-        if text[cursor...].hasPrefix("None") {
+        if isNoneValue(at: cursor, in: text) {
             return []
         }
         if text[cursor] == "<" {
@@ -1607,6 +1815,32 @@ public struct USDAReader: USDSceneReader {
         try parsePrimTransforms(in: text, inheritedTransform: .identity, parentPrimPath: "")
     }
 
+    private func parseResetXformStackPrimPaths(in text: String) throws -> Set<String> {
+        try parseResetXformStackPrimPaths(in: text, parentPrimPath: "")
+    }
+
+    private func parseResetXformStackPrimPaths(
+        in text: String,
+        parentPrimPath: String
+    ) throws -> Set<String> {
+        var resetPrimPaths: Set<String> = []
+        let prims = try parseDirectPrims(in: text)
+        for prim in prims {
+            let primPath = primPath(for: prim, parentPrimPath: parentPrimPath)
+            let directBody = try directAttributeText(from: prim.body)
+            let localTransform = try parseLocalTransform(in: directBody)
+            if localTransform.resetsParentStack {
+                resetPrimPaths.insert(primPath)
+            }
+            let childResetPrimPaths = try parseResetXformStackPrimPaths(
+                in: prim.body,
+                parentPrimPath: primPath
+            )
+            resetPrimPaths.formUnion(childResetPrimPaths)
+        }
+        return resetPrimPaths
+    }
+
     private func parsePrimTransforms(
         in text: String,
         inheritedTransform: USDTransformMatrix4x4,
@@ -1618,9 +1852,12 @@ public struct USDAReader: USDSceneReader {
             let primPath = primPath(for: prim, parentPrimPath: parentPrimPath)
             let directBody = try directAttributeText(from: prim.body)
             let localTransform = try parseLocalTransform(in: directBody)
-            let primTransform = localTransform.resetsParentStack
-                ? localTransform.matrix
-                : localTransform.matrix.concatenating(inheritedTransform)
+            let primTransform: USDTransformMatrix4x4
+            if localTransform.resetsParentStack {
+                primTransform = localTransform.matrix
+            } else {
+                primTransform = try localTransform.matrix.validatedConcatenating(inheritedTransform)
+            }
             primTransforms[primPath] = primTransform
             let childTransforms = try parsePrimTransforms(
                 in: prim.body,
@@ -1644,10 +1881,13 @@ public struct USDAReader: USDSceneReader {
             let primPath = primPath(for: prim, parentPrimPath: parentPrimPath)
             let directBody = try directAttributeText(from: prim.body)
             let localTransform = try parseLocalTransform(in: directBody)
-            let primTransform = localTransform.resetsParentStack
-                ? localTransform.matrix
-                : localTransform.matrix.concatenating(inheritedTransform)
-            if prim.typeName == "Mesh" {
+            let primTransform: USDTransformMatrix4x4
+            if localTransform.resetsParentStack {
+                primTransform = localTransform.matrix
+            } else {
+                primTransform = try localTransform.matrix.validatedConcatenating(inheritedTransform)
+            }
+            if prim.specifier == .def, prim.typeName == "Mesh" {
                 meshes.append(try materializeMesh(
                     prim: prim,
                     primPath: primPath,
@@ -1677,7 +1917,12 @@ public struct USDAReader: USDSceneReader {
         let transformedPoints = try points.map { try transform.transform($0) }
         let counts = try parseIntArray(named: "faceVertexCounts", in: directBody)
         let indices = try parseIntArray(named: "faceVertexIndices", in: directBody)
-        let normals = try parseOptionalPointArray(named: "normals", in: directBody) ?? []
+        try USDMesh.validateTopology(
+            pointCount: transformedPoints.count,
+            faceVertexCounts: counts,
+            faceVertexIndices: indices
+        )
+        let normals = try parseOptionalPointArray(named: "normals", in: directBody, options: options) ?? []
         let transformedNormals = try normals.map { try transform.transformNormal($0) }
         let normalsInterpolation = try parseOptionalAttributeMetadataString(
             attributeName: "normals",
@@ -1698,10 +1943,11 @@ public struct USDAReader: USDSceneReader {
         if let displayOpacity {
             try displayOpacity.validate(pointCount: transformedPoints.count, faceVertexCounts: counts)
         }
-        let extent = try parseOptionalPointArray(named: "extent", in: directBody)
+        let extent = try parseOptionalPointArray(named: "extent", in: directBody, options: options)
         if let extent, extent.count != 2 {
             throw USDImportError.invalidData("USDA extent must contain exactly two points.")
         }
+        let transformedExtent = try transformedExtent(extent, applying: transform)
         return USDMesh(
             name: prim.name,
             primPath: primPath,
@@ -1715,8 +1961,45 @@ public struct USDAReader: USDSceneReader {
             textureCoordinates: textureCoordinates,
             displayColor: displayColor,
             displayOpacity: displayOpacity,
-            extent: extent
+            extent: transformedExtent
         )
+    }
+
+    private func transformedExtent(
+        _ extent: [USDPoint3D]?,
+        applying transform: USDTransformMatrix4x4
+    ) throws -> [USDPoint3D]? {
+        guard let extent else {
+            return nil
+        }
+        let minimum = extent[0]
+        let maximum = extent[1]
+        let corners = [
+            USDPoint3D(x: minimum.x, y: minimum.y, z: minimum.z),
+            USDPoint3D(x: maximum.x, y: minimum.y, z: minimum.z),
+            USDPoint3D(x: minimum.x, y: maximum.y, z: minimum.z),
+            USDPoint3D(x: minimum.x, y: minimum.y, z: maximum.z),
+            USDPoint3D(x: maximum.x, y: maximum.y, z: minimum.z),
+            USDPoint3D(x: maximum.x, y: minimum.y, z: maximum.z),
+            USDPoint3D(x: minimum.x, y: maximum.y, z: maximum.z),
+            USDPoint3D(x: maximum.x, y: maximum.y, z: maximum.z),
+        ]
+        let transformedCorners = try corners.map { try transform.transform($0) }
+        let xs = transformedCorners.map(\.x)
+        let ys = transformedCorners.map(\.y)
+        let zs = transformedCorners.map(\.z)
+        guard let minX = xs.min(),
+              let minY = ys.min(),
+              let minZ = zs.min(),
+              let maxX = xs.max(),
+              let maxY = ys.max(),
+              let maxZ = zs.max() else {
+            return nil
+        }
+        return [
+            USDPoint3D(x: minX, y: minY, z: minZ),
+            USDPoint3D(x: maxX, y: maxY, z: maxZ),
+        ]
     }
 
     private func primPath(for prim: USDAPrim, parentPrimPath: String) -> String {
@@ -1837,9 +2120,14 @@ public struct USDAReader: USDSceneReader {
             metadataBody = ""
         }
 
-        guard let openBrace = text[cursor...].firstIndex(of: "{") else {
+        skipWhitespaceAndLineComments(in: text, index: &cursor)
+        guard cursor < text.endIndex else {
             throw USDImportError.invalidData("USDA prim is missing an opening brace.")
         }
+        guard text[cursor] == "{" else {
+            throw USDImportError.invalidData("USDA prim declaration contains unexpected token before body.")
+        }
+        let openBrace = cursor
         let closeBrace = try matchingBrace(startingAt: openBrace, in: text)
         let body = String(text[text.index(after: openBrace)..<closeBrace])
         return USDAPrim(
@@ -1869,16 +2157,34 @@ public struct USDAReader: USDSceneReader {
         startingAt quoteStart: String.Index,
         in text: String
     ) throws -> (value: String, endIndex: String.Index) {
-        guard quoteStart < text.endIndex, text[quoteStart] == "\"" else {
+        guard quoteStart < text.endIndex,
+              text[quoteStart] == "\"" || text[quoteStart] == "'" else {
             throw USDImportError.invalidData("USDA string is missing an opening quote.")
         }
-        guard let quoteEnd = text[text.index(after: quoteStart)...].firstIndex(of: "\"") else {
-            throw USDImportError.invalidData("USDA string is unterminated.")
+        let quote = text[quoteStart]
+        let delimiterLength = repeatedQuoteCount(at: quoteStart, quote: quote, in: text) >= 3 ? 3 : 1
+        var cursor = text.index(quoteStart, offsetBy: delimiterLength)
+        var value = ""
+        while cursor < text.endIndex {
+            if text[cursor] == "\\" {
+                cursor = text.index(after: cursor)
+                guard cursor < text.endIndex else {
+                    throw USDImportError.invalidData("USDA string is unterminated.")
+                }
+                value.append(text[cursor])
+                cursor = text.index(after: cursor)
+                continue
+            }
+            if repeatedQuoteCount(at: cursor, quote: quote, in: text) >= delimiterLength {
+                return (
+                    value,
+                    text.index(cursor, offsetBy: delimiterLength)
+                )
+            }
+            value.append(text[cursor])
+            cursor = text.index(after: cursor)
         }
-        return (
-            String(text[text.index(after: quoteStart)..<quoteEnd]),
-            text.index(after: quoteEnd)
-        )
+        throw USDImportError.invalidData("USDA string is unterminated.")
     }
 
     private func validatePrimName(_ name: String) throws {
@@ -1944,6 +2250,25 @@ public struct USDAReader: USDSceneReader {
             return isValidUSDIdentifier(finalComponent)
         }
         return isValidUSDIdentifier(name)
+    }
+
+    private func isValidUSDPropertyName(_ name: String) -> Bool {
+        var componentStart = name.startIndex
+        var cursor = name.startIndex
+        while cursor < name.endIndex {
+            if name[cursor] == ":" {
+                guard componentStart < cursor,
+                      isValidUSDIdentifier(name[componentStart..<cursor]) else {
+                    return false
+                }
+                componentStart = name.index(after: cursor)
+            }
+            cursor = name.index(after: cursor)
+        }
+        guard componentStart < name.endIndex else {
+            return false
+        }
+        return isValidUSDIdentifier(name[componentStart..<name.endIndex])
     }
 
     private func primDeclarationKeyword(at index: String.Index, in text: String) -> String? {
@@ -2012,7 +2337,7 @@ public struct USDAReader: USDSceneReader {
     }
 
     private func skipLineComment(in text: String, index: inout String.Index) {
-        while index < text.endIndex, text[index] != "\n" {
+        while index < text.endIndex, !text[index].isNewline {
             index = text.index(after: index)
         }
     }
@@ -2032,18 +2357,6 @@ public struct USDAReader: USDSceneReader {
             index = text.index(after: index)
         }
         throw USDImportError.invalidData("USDA asset path is unterminated.")
-    }
-
-    private func parseRequiredDouble(named name: String, in text: String) throws -> Double {
-        let pattern = "\\b\(NSRegularExpression.escapedPattern(for: name))\\s*=\\s*([-+0-9.eE]+)"
-        let match = try firstMatch(pattern: pattern, in: text)
-        guard let match else {
-            throw USDImportError.missingRequiredField(name)
-        }
-        guard let value = Double(match) else {
-            throw USDImportError.invalidData("USDA \(name) is not a valid number.")
-        }
-        return value
     }
 
     private func parseUpAxis(in text: String) throws -> USDUpAxis {
@@ -2078,12 +2391,12 @@ public struct USDAReader: USDSceneReader {
                 break
             }
             let orderedOp = orderedXformOperationName(from: opName)
-            guard attributeNameRange(named: orderedOp.attributeName, in: text) != nil else {
+            guard try attributeNameRange(named: orderedOp.attributeName, in: text) != nil else {
                 continue
             }
             let opTransform = try self.transform(forXformOp: orderedOp.attributeName, in: text)
             let effectiveTransform = orderedOp.isInverted ? try opTransform.inverted() : opTransform
-            transform = transform.concatenating(effectiveTransform)
+            transform = try transform.validatedConcatenating(effectiveTransform)
         }
         return USDALocalTransform(matrix: transform, resetsParentStack: resetsParentStack)
     }
@@ -2149,19 +2462,50 @@ public struct USDAReader: USDSceneReader {
     }
 
     private func parseOptionalString(named name: String, in text: String) throws -> String? {
-        let pattern = "\\b\(NSRegularExpression.escapedPattern(for: name))\\s*=\\s*\"([^\"]*)\""
-        return try firstMatch(pattern: pattern, in: text)
+        guard let valueStart = try assignedValueStart(named: name, in: text) else {
+            return nil
+        }
+        guard valueStart < text.endIndex else {
+            throw USDImportError.invalidData("USDA \(name) is not a quoted string.")
+        }
+        if isNoneValue(at: valueStart, in: text) {
+            return nil
+        }
+        guard text[valueStart] == "\"" || text[valueStart] == "'" else {
+            throw USDImportError.invalidData("USDA \(name) is not a quoted string.")
+        }
+        return try parseQuotedString(startingAt: valueStart, in: text).value
     }
 
     private func parseOptionalDouble(named name: String, in text: String) throws -> Double? {
-        let pattern = "\\b\(NSRegularExpression.escapedPattern(for: name))\\s*=\\s*([-+0-9.eE]+)"
-        guard let match = try firstMatch(pattern: pattern, in: text) else {
+        guard let valueStart = try assignedValueStart(named: name, in: text) else {
             return nil
         }
+        var valueEnd = valueStart
+        while valueEnd < text.endIndex {
+            let character = text[valueEnd]
+            if character.isWhitespace
+                || character == ","
+                || character == ";"
+                || character == ")"
+                || character == "]"
+                || character == "}" {
+                break
+            }
+            valueEnd = text.index(after: valueEnd)
+        }
+        let match = String(text[valueStart..<valueEnd])
         guard let value = Double(match) else {
             throw USDImportError.invalidData("USDA \(name) is not a valid number.")
         }
         return value
+    }
+
+    private func assignedValueStart(named name: String, in text: String) throws -> String.Index? {
+        guard let nameRange = try attributeNameRange(named: name, in: text) else {
+            return nil
+        }
+        return try propertyAssignmentValueStart(afterPropertyName: nameRange.upperBound, in: text)
     }
 
     private func parseOptionalTokenArray(named name: String, in text: String) throws -> [String]? {
@@ -2183,7 +2527,7 @@ public struct USDAReader: USDSceneReader {
         in text: String,
         sitePrimPath: String
     ) throws -> [USDCompositionArc] {
-        try parseAssetReferences(forField: name, in: text).map { reference in
+        try parseEffectiveAssetReferences(forField: name, in: text).map { reference in
             USDCompositionArc(
                 assetPath: reference.assetPath,
                 sitePrimPath: sitePrimPath,
@@ -2209,15 +2553,205 @@ public struct USDAReader: USDSceneReader {
         return try parseAssetReferences(in: body)
     }
 
+    private func parseEffectiveAssetReferences(
+        forField name: String,
+        in text: String
+    ) throws -> [(assetPath: String, primPath: String?, layerOffset: USDLayerOffset)] {
+        let edits = try parseAssetReferenceListEdits(forField: name, in: text)
+        var references: [(assetPath: String, primPath: String?, layerOffset: USDLayerOffset)] = []
+        for edit in edits {
+            switch edit.operation {
+            case .explicit:
+                references = []
+                appendUniqueAssetReferences(edit.references, to: &references)
+            case .add, .append:
+                appendUniqueAssetReferences(edit.references, to: &references)
+            case .prepend:
+                var prepended: [(assetPath: String, primPath: String?, layerOffset: USDLayerOffset)] = []
+                appendUniqueAssetReferences(edit.references, to: &prepended)
+                appendUniqueAssetReferences(references, to: &prepended)
+                references = prepended
+            case .delete:
+                references.removeAll { reference in
+                    edit.references.contains { deletedReference in
+                        assetReference(reference, matches: deletedReference)
+                    }
+                }
+            case .reorder:
+                references = reorderedAssetReferences(references, using: edit.references)
+            }
+        }
+        return references
+    }
+
+    private func parseAssetReferenceListEdits(
+        forField name: String,
+        in text: String
+    ) throws -> [USDAAssetReferenceListEdit] {
+        var edits: [USDAAssetReferenceListEdit] = []
+        var cursor = text.startIndex
+        var parenthesisDepth = 0
+        var bracketDepth = 0
+        var braceDepth = 0
+        while cursor < text.endIndex {
+            let character = text[cursor]
+            if character == "#" {
+                skipLineComment(in: text, index: &cursor)
+                continue
+            }
+            if character == "\"" || character == "'" {
+                try skipQuotedString(in: text, index: &cursor)
+                continue
+            }
+            if character == "@" {
+                try skipAssetPathLiteral(in: text, index: &cursor)
+                continue
+            }
+
+            let isAtTopLevel = parenthesisDepth == 0 && bracketDepth == 0 && braceDepth == 0
+            if isAtTopLevel,
+               let match = compositionListEditAssignment(at: cursor, fieldName: name, in: text) {
+                var bodyEnd = match.fieldEnd
+                let body = try compositionAssignmentBody(after: match.fieldEnd, named: name, in: text, endIndex: &bodyEnd)
+                edits.append(USDAAssetReferenceListEdit(
+                    operation: match.operation,
+                    references: try parseAssetReferences(in: body)
+                ))
+                cursor = bodyEnd
+                continue
+            }
+
+            if character == "(" {
+                parenthesisDepth += 1
+            } else if character == ")" {
+                parenthesisDepth = max(0, parenthesisDepth - 1)
+            } else if character == "[" {
+                bracketDepth += 1
+            } else if character == "]" {
+                bracketDepth = max(0, bracketDepth - 1)
+            } else if character == "{" {
+                braceDepth += 1
+            } else if character == "}" {
+                braceDepth = max(0, braceDepth - 1)
+            }
+            cursor = text.index(after: cursor)
+        }
+        return edits
+    }
+
+    private func compositionListEditAssignment(
+        at index: String.Index,
+        fieldName: String,
+        in text: String
+    ) -> (operation: USDAListEditOperation, fieldEnd: String.Index)? {
+        for operation in USDAListEditOperation.qualifiedOperations {
+            guard token(operation.rawValue, matchesAt: index, in: text) else {
+                continue
+            }
+            var fieldCursor = text.index(index, offsetBy: operation.rawValue.count)
+            skipWhitespace(in: text, index: &fieldCursor)
+            guard token(fieldName, matchesAt: fieldCursor, in: text),
+                  let fieldEnd = text.index(fieldCursor, offsetBy: fieldName.count, limitedBy: text.endIndex) else {
+                continue
+            }
+            return (operation, fieldEnd)
+        }
+        guard token(fieldName, matchesAt: index, in: text),
+              let fieldEnd = text.index(index, offsetBy: fieldName.count, limitedBy: text.endIndex) else {
+            return nil
+        }
+        return (.explicit, fieldEnd)
+    }
+
+    private func compositionAssignmentBody(
+        after fieldEnd: String.Index,
+        named name: String,
+        in text: String,
+        endIndex: inout String.Index
+    ) throws -> String {
+        var cursor = fieldEnd
+        skipWhitespace(in: text, index: &cursor)
+        guard cursor < text.endIndex, text[cursor] == "=" else {
+            throw USDImportError.invalidData("USDA \(name) list-edit is missing an assignment.")
+        }
+        cursor = text.index(after: cursor)
+        skipWhitespace(in: text, index: &cursor)
+        guard cursor < text.endIndex else {
+            endIndex = cursor
+            return ""
+        }
+        if text[cursor] == "[" {
+            let closeBracket = try matchingBracket(startingAt: cursor, in: text)
+            endIndex = text.index(after: closeBracket)
+            return String(text[text.index(after: cursor)..<closeBracket])
+        }
+
+        let valueStart = cursor
+        var parenthesisDepth = 0
+        var bracketDepth = 0
+        var braceDepth = 0
+        while cursor < text.endIndex {
+            let character = text[cursor]
+            let isAtTopLevel = parenthesisDepth == 0 && bracketDepth == 0 && braceDepth == 0
+            if isAtTopLevel,
+               character == "\n" || character == "\r" || character == ";" || character == "#" {
+                break
+            }
+            if character == "\"" || character == "'" {
+                try skipQuotedString(in: text, index: &cursor)
+                continue
+            }
+            if character == "@" {
+                try skipAssetPathLiteral(in: text, index: &cursor)
+                continue
+            }
+            if character == "(" {
+                parenthesisDepth += 1
+            } else if character == ")" {
+                parenthesisDepth = max(0, parenthesisDepth - 1)
+            } else if character == "[" {
+                bracketDepth += 1
+            } else if character == "]" {
+                bracketDepth = max(0, bracketDepth - 1)
+            } else if character == "{" {
+                braceDepth += 1
+            } else if character == "}" {
+                braceDepth = max(0, braceDepth - 1)
+            }
+            cursor = text.index(after: cursor)
+        }
+        endIndex = cursor
+        return String(text[valueStart..<cursor])
+    }
+
     private func parseAssetReferences(
         in body: String
     ) throws -> [(assetPath: String, primPath: String?, layerOffset: USDLayerOffset)] {
         var references: [(assetPath: String, primPath: String?, layerOffset: USDLayerOffset)] = []
         var cursor = body.startIndex
         while cursor < body.endIndex {
-            guard body[cursor] == "@" else {
+            if body[cursor] == "#" {
+                skipLineComment(in: body, index: &cursor)
+                continue
+            }
+            if body[cursor].isWhitespace || body[cursor] == "," {
                 cursor = body.index(after: cursor)
                 continue
+            }
+            if isNoneValue(at: cursor, in: body),
+               let noneEnd = body.index(cursor, offsetBy: 4, limitedBy: body.endIndex) {
+                cursor = noneEnd
+                continue
+            }
+            if body[cursor] == "<" {
+                let primPath = try parseOptionalPrimPath(in: body, index: &cursor)
+                skipWhitespace(in: body, index: &cursor)
+                let layerOffset = try parseOptionalLayerOffset(in: body, index: &cursor)
+                references.append((assetPath: "", primPath: primPath, layerOffset: layerOffset))
+                continue
+            }
+            guard body[cursor] == "@" else {
+                throw USDImportError.invalidData("USDA composition arc list contains unexpected content.")
             }
             let assetPath = try parseAssetPath(startingAt: cursor, in: body, endIndex: &cursor)
             skipWhitespace(in: body, index: &cursor)
@@ -2227,6 +2761,42 @@ public struct USDAReader: USDSceneReader {
             references.append((assetPath: assetPath, primPath: primPath, layerOffset: layerOffset))
         }
         return references
+    }
+
+    private func appendUniqueAssetReferences(
+        _ newReferences: [(assetPath: String, primPath: String?, layerOffset: USDLayerOffset)],
+        to references: inout [(assetPath: String, primPath: String?, layerOffset: USDLayerOffset)]
+    ) {
+        for reference in newReferences {
+            guard !references.contains(where: { assetReference($0, matches: reference) }) else {
+                continue
+            }
+            references.append(reference)
+        }
+    }
+
+    private func reorderedAssetReferences(
+        _ references: [(assetPath: String, primPath: String?, layerOffset: USDLayerOffset)],
+        using orderedReferences: [(assetPath: String, primPath: String?, layerOffset: USDLayerOffset)]
+    ) -> [(assetPath: String, primPath: String?, layerOffset: USDLayerOffset)] {
+        var reordered: [(assetPath: String, primPath: String?, layerOffset: USDLayerOffset)] = []
+        for orderedReference in orderedReferences {
+            guard let reference = references.first(where: { assetReference($0, matches: orderedReference) }) else {
+                continue
+            }
+            appendUniqueAssetReferences([reference], to: &reordered)
+        }
+        appendUniqueAssetReferences(references, to: &reordered)
+        return reordered
+    }
+
+    private func assetReference(
+        _ lhs: (assetPath: String, primPath: String?, layerOffset: USDLayerOffset),
+        matches rhs: (assetPath: String, primPath: String?, layerOffset: USDLayerOffset)
+    ) -> Bool {
+        lhs.assetPath == rhs.assetPath
+            && lhs.primPath == rhs.primPath
+            && lhs.layerOffset == rhs.layerOffset
     }
 
     private func parseAssetPath(
@@ -2265,7 +2835,28 @@ public struct USDAReader: USDSceneReader {
         }
         let value = String(text[text.index(after: index)..<closeAngle])
         index = text.index(after: closeAngle)
-        return value
+        try validateCompositionPrimPath(value)
+        return value.isEmpty ? nil : value
+    }
+
+    private func validateCompositionPrimPath(_ path: String) throws {
+        guard !path.isEmpty else {
+            return
+        }
+        try validateUSDPath(path, subject: "composition arc prim path")
+    }
+
+    private func validateUSDPath(_ path: String, subject: String) throws {
+        guard !path.isEmpty else {
+            throw USDImportError.invalidData("USDA \(subject) cannot be empty.")
+        }
+        let invalidCharacters: Set<Character> = ["\\", "?", "*", "\"", "'"]
+        guard !path.contains(where: { invalidCharacters.contains($0) || $0.isWhitespace }) else {
+            throw USDImportError.invalidData("USDA \(subject) contains invalid path characters.")
+        }
+        guard !path.contains("{"), !path.contains("}") else {
+            throw USDImportError.invalidData("USDA \(subject) cannot contain variant selections.")
+        }
     }
 
     private func parseOptionalLayerOffset(in text: String, index: inout String.Index) throws -> USDLayerOffset {
@@ -2288,7 +2879,7 @@ public struct USDAReader: USDSceneReader {
     }
 
     private func compositionFieldBody(named name: String, in text: String) throws -> String? {
-        guard let nameRange = attributeNameRange(named: name, in: text),
+        guard let nameRange = try attributeNameRange(named: name, in: text),
               let equalSign = text[nameRange.upperBound...].firstIndex(of: "=") else {
             return nil
         }
@@ -2353,7 +2944,7 @@ public struct USDAReader: USDSceneReader {
         metadataName: String,
         in text: String
     ) throws -> String? {
-        guard let nameRange = attributeNameRange(named: attributeName, in: text) else {
+        guard let nameRange = try attributeNameRange(named: attributeName, in: text) else {
             return nil
         }
         guard let openBracket = text[nameRange.upperBound...].firstIndex(of: "[") else {
@@ -2381,15 +2972,35 @@ public struct USDAReader: USDSceneReader {
         in text: String,
         options: USDReadingOptions
     ) throws -> [USDPoint3D] {
-        if let timeSamplesBody = try optionalTimeSamplesBody(named: name, in: text),
-           let sampledPoints = try parsePointTimeSamples(named: name, in: timeSamplesBody, options: options) {
-            return sampledPoints
+        if let timeSamplesBody = try optionalTimeSamplesBody(named: name, in: text) {
+            switch try parsePointTimeSamples(named: name, in: timeSamplesBody, options: options) {
+            case .value(let sampledPoints):
+                return sampledPoints
+            case .blocked:
+                throw USDImportError.missingRequiredField(name)
+            case .unresolved:
+                break
+            }
         }
         let body = try bracketArrayBody(named: name, in: text)
         return try parsePointTuples(named: name, in: body)
     }
 
-    private func parseOptionalPointArray(named name: String, in text: String) throws -> [USDPoint3D]? {
+    private func parseOptionalPointArray(
+        named name: String,
+        in text: String,
+        options: USDReadingOptions = .default
+    ) throws -> [USDPoint3D]? {
+        if let timeSamplesBody = try optionalTimeSamplesBody(named: name, in: text) {
+            switch try parsePointTimeSamples(named: name, in: timeSamplesBody, options: options) {
+            case .value(let sampledPoints):
+                return sampledPoints
+            case .blocked:
+                return nil
+            case .unresolved:
+                break
+            }
+        }
         guard let body = try optionalBracketArrayBody(named: name, in: text) else {
             return nil
         }
@@ -2418,7 +3029,7 @@ public struct USDAReader: USDSceneReader {
     }
 
     private func parseRequiredScalar(named name: String, in text: String) throws -> Double {
-        guard let nameRange = attributeNameRange(named: name, in: text) else {
+        guard let nameRange = try attributeNameRange(named: name, in: text) else {
             throw USDImportError.missingRequiredField(name)
         }
         guard let equalSign = text[nameRange.upperBound...].firstIndex(of: "=") else {
@@ -2463,16 +3074,12 @@ public struct USDAReader: USDSceneReader {
     }
 
     private func parseRequiredMatrix4x4(named name: String, in text: String) throws -> USDTransformMatrix4x4 {
-        let values = try parseRequiredTuple(named: name, expectedCount: 16, in: text)
+        let values = try parseRequiredMatrixValues(named: name, in: text)
         return USDTransformMatrix4x4(values: values)
     }
 
-    private func parseRequiredTuple(
-        named name: String,
-        expectedCount: Int,
-        in text: String
-    ) throws -> [Double] {
-        guard let nameRange = attributeNameRange(named: name, in: text) else {
+    private func parseRequiredMatrixValues(named name: String, in text: String) throws -> [Double] {
+        guard let nameRange = try attributeNameRange(named: name, in: text) else {
             throw USDImportError.missingRequiredField(name)
         }
         guard let equalSign = text[nameRange.upperBound...].firstIndex(of: "=") else {
@@ -2483,53 +3090,50 @@ public struct USDAReader: USDSceneReader {
         }
         let closeParenthesis = try matchingParenthesis(startingAt: openParenthesis, in: text)
         let body = String(text[text.index(after: openParenthesis)..<closeParenthesis])
-        let values = try parseDoubleLiterals(named: name, in: body)
-        guard values.count == expectedCount else {
-            throw USDImportError.invalidData("USDA \(name) tuple contains \(values.count) values.")
+        if body.contains("(") {
+            let rows = try parseNumericTupleArray(named: name, expectedCount: 4, in: body)
+            guard rows.count == 4 else {
+                throw USDImportError.invalidData("USDA \(name) matrix contains \(rows.count) rows.")
+            }
+            return rows.flatMap { $0 }
         }
-        return values
+        return try parseNumericTupleBody(named: name, expectedCount: 16, in: body)
+    }
+
+    private func parseRequiredTuple(
+        named name: String,
+        expectedCount: Int,
+        in text: String
+    ) throws -> [Double] {
+        guard let nameRange = try attributeNameRange(named: name, in: text) else {
+            throw USDImportError.missingRequiredField(name)
+        }
+        guard let equalSign = text[nameRange.upperBound...].firstIndex(of: "=") else {
+            throw USDImportError.invalidData("USDA \(name) is missing an assignment.")
+        }
+        guard let openParenthesis = text[equalSign...].firstIndex(of: "(") else {
+            throw USDImportError.invalidData("USDA \(name) is missing an opening parenthesis.")
+        }
+        let closeParenthesis = try matchingParenthesis(startingAt: openParenthesis, in: text)
+        let body = String(text[text.index(after: openParenthesis)..<closeParenthesis])
+        return try parseNumericTupleBody(named: name, expectedCount: expectedCount, in: body)
     }
 
     private func parsePointTuples(named name: String, in body: String) throws -> [USDPoint3D] {
-        let expression = try NSRegularExpression(pattern: "\\(([^)]*)\\)")
-        let range = NSRange(body.startIndex..<body.endIndex, in: body)
-        let matches = expression.matches(in: body, range: range)
-        guard !matches.isEmpty else {
-            throw USDImportError.invalidData("USDA \(name) contains no point tuples.")
-        }
-        return try matches.map { match in
-            let tuple = String(body[Range(match.range(at: 1), in: body)!])
-            let parts = tuple.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            guard parts.count == 3,
-                  let x = Double(parts[0]),
-                  let y = Double(parts[1]),
-                  let z = Double(parts[2]),
-                  x.isFinite,
-                  y.isFinite,
-                  z.isFinite else {
-                throw USDImportError.invalidData("USDA point tuple is malformed.")
-            }
+        let tuples = try parseNumericTupleArray(named: name, expectedCount: 3, in: body)
+        return tuples.map { values in
+            let x = values[0]
+            let y = values[1]
+            let z = values[2]
             return USDPoint3D(x: x, y: y, z: z)
         }
     }
 
     private func parsePoint2Tuples(named name: String, in body: String) throws -> [USDPoint2D] {
-        let expression = try NSRegularExpression(pattern: "\\(([^)]*)\\)")
-        let range = NSRange(body.startIndex..<body.endIndex, in: body)
-        let matches = expression.matches(in: body, range: range)
-        guard !matches.isEmpty else {
-            throw USDImportError.invalidData("USDA \(name) contains no point tuples.")
-        }
-        return try matches.map { match in
-            let tuple = String(body[Range(match.range(at: 1), in: body)!])
-            let parts = tuple.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            guard parts.count == 2,
-                  let x = Double(parts[0]),
-                  let y = Double(parts[1]),
-                  x.isFinite,
-                  y.isFinite else {
-                throw USDImportError.invalidData("USDA point2 tuple is malformed.")
-            }
+        let tuples = try parseNumericTupleArray(named: name, expectedCount: 2, in: body)
+        return tuples.map { values in
+            let x = values[0]
+            let y = values[1]
             return USDPoint2D(x: x, y: y)
         }
     }
@@ -2538,7 +3142,7 @@ public struct USDAReader: USDSceneReader {
         named name: String,
         in body: String,
         options: USDReadingOptions
-    ) throws -> [USDPoint3D]? {
+    ) throws -> USDAPointTimeSampleResolution {
         let entries = try parseTimeSampleEntries(in: body)
         guard !entries.isEmpty else {
             throw USDImportError.invalidData("USDA \(name).timeSamples contains no samples.")
@@ -2547,7 +3151,7 @@ public struct USDAReader: USDSceneReader {
         for entry in entries {
             guard entry.value != "None" else {
                 if let timeCode = options.timeCode, entry.timeCode == timeCode {
-                    return nil
+                    return .blocked
                 }
                 continue
             }
@@ -2558,13 +3162,19 @@ public struct USDAReader: USDSceneReader {
             lhs.timeCode < rhs.timeCode
         }
         guard let timeCode = options.timeCode else {
-            return samples.first?.points
+            guard let points = samples.first?.points else {
+                return .unresolved
+            }
+            return .value(points)
         }
-        return interpolatedPointSample(
+        guard let points = interpolatedPointSample(
             samples,
             at: timeCode,
             interpolation: options.timeSampleInterpolation
-        )
+        ) else {
+            return .unresolved
+        }
+        return .value(points)
     }
 
     private func interpolatedPointSample(
@@ -2614,42 +3224,179 @@ public struct USDAReader: USDSceneReader {
     }
 
     private func parseTimeSampleEntries(in body: String) throws -> [(timeCode: Double, value: String)] {
-        let expression = try NSRegularExpression(
-            pattern: "([-+]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][-+]?\\d+)?)\\s*:\\s*(None|\\[[^\\]]*\\])"
-        )
-        let range = NSRange(body.startIndex..<body.endIndex, in: body)
-        return try expression.matches(in: body, range: range).map { match in
-            guard let timeRange = Range(match.range(at: 1), in: body),
-                  let valueRange = Range(match.range(at: 2), in: body),
-                  let timeCode = Double(body[timeRange]),
+        var entries: [(timeCode: Double, value: String)] = []
+        var seenTimeCodes: Set<Double> = []
+        var cursor = body.startIndex
+        while true {
+            skipWhitespaceAndLineComments(in: body, index: &cursor)
+            guard cursor < body.endIndex else {
+                return entries
+            }
+            if body[cursor] == "," {
+                cursor = body.index(after: cursor)
+                continue
+            }
+
+            let timeStart = cursor
+            while cursor < body.endIndex, isNumberLiteralCharacter(body[cursor]) {
+                cursor = body.index(after: cursor)
+            }
+            guard timeStart < cursor,
+                  let timeCode = Double(body[timeStart..<cursor]),
                   timeCode.isFinite else {
                 throw USDImportError.invalidData("USDA timeSamples entry is malformed.")
             }
-            return (timeCode: timeCode, value: String(body[valueRange]))
+            guard seenTimeCodes.insert(timeCode).inserted else {
+                throw USDImportError.invalidData("USDA timeSamples contains duplicate timeCode values.")
+            }
+
+            skipWhitespaceAndLineComments(in: body, index: &cursor)
+            guard cursor < body.endIndex, body[cursor] == ":" else {
+                throw USDImportError.invalidData("USDA timeSamples entry is missing a colon.")
+            }
+            cursor = body.index(after: cursor)
+            skipWhitespaceAndLineComments(in: body, index: &cursor)
+
+            guard cursor < body.endIndex else {
+                throw USDImportError.invalidData("USDA timeSamples entry is malformed.")
+            }
+            if isNoneValue(at: cursor, in: body),
+               let noneEnd = body.index(cursor, offsetBy: 4, limitedBy: body.endIndex) {
+                entries.append((timeCode: timeCode, value: "None"))
+                cursor = noneEnd
+                continue
+            }
+
+            guard cursor < body.endIndex, body[cursor] == "[" else {
+                throw USDImportError.invalidData("USDA timeSamples entry is malformed.")
+            }
+            let closeBracket = try matchingBracket(startingAt: cursor, in: body)
+            entries.append((timeCode: timeCode, value: String(body[cursor...closeBracket])))
+            cursor = body.index(after: closeBracket)
         }
     }
 
-    private func parseColorTuples(named name: String, in body: String) throws -> [USDColorRGB] {
-        let expression = try NSRegularExpression(pattern: "\\(([^)]*)\\)")
-        let range = NSRange(body.startIndex..<body.endIndex, in: body)
-        let matches = expression.matches(in: body, range: range)
-        guard !matches.isEmpty else {
-            throw USDImportError.invalidData("USDA \(name) contains no color tuples.")
-        }
-        return try matches.map { match in
-            let tuple = String(body[Range(match.range(at: 1), in: body)!])
-            let parts = tuple.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            guard parts.count == 3,
-                  let r = Double(parts[0]),
-                  let g = Double(parts[1]),
-                  let b = Double(parts[2]),
-                  r.isFinite,
-                  g.isFinite,
-                  b.isFinite else {
-                throw USDImportError.invalidData("USDA color tuple is malformed.")
+    private func isNumberLiteralCharacter(_ character: Character) -> Bool {
+        character.isNumber || character == "." || character == "+" || character == "-" || character == "e" || character == "E"
+    }
+
+    private func removingLineComments(from text: String) -> String {
+        var result = ""
+        var cursor = text.startIndex
+        while cursor < text.endIndex {
+            if text[cursor] == "#" {
+                skipLineComment(in: text, index: &cursor)
+                continue
             }
+            result.append(text[cursor])
+            cursor = text.index(after: cursor)
+        }
+        return result
+    }
+
+    private func parseColorTuples(named name: String, in body: String) throws -> [USDColorRGB] {
+        let tuples = try parseNumericTupleArray(named: name, expectedCount: 3, in: body)
+        return tuples.map { values in
+            let r = values[0]
+            let g = values[1]
+            let b = values[2]
             return USDColorRGB(r: r, g: g, b: b)
         }
+    }
+
+    private func parseNumericTupleArray(
+        named name: String,
+        expectedCount: Int,
+        in body: String
+    ) throws -> [[Double]] {
+        let body = removingLineComments(from: body)
+        var cursor = body.startIndex
+        var contentEnd = body.endIndex
+        skipWhitespace(in: body, index: &cursor)
+        if cursor < body.endIndex, body[cursor] == "[" {
+            let closeBracket = try matchingBracket(startingAt: cursor, in: body)
+            var trailingIndex = body.index(after: closeBracket)
+            skipWhitespace(in: body, index: &trailingIndex)
+            guard trailingIndex == body.endIndex else {
+                throw USDImportError.invalidData("USDA \(name) contains unexpected tuple array content.")
+            }
+            cursor = body.index(after: cursor)
+            contentEnd = closeBracket
+        }
+
+        var tuples: [[Double]] = []
+        while true {
+            skipWhitespace(in: body, index: &cursor)
+            guard cursor < contentEnd else {
+                break
+            }
+            if body[cursor] == "," {
+                guard !tuples.isEmpty else {
+                    throw USDImportError.invalidData("USDA \(name) tuple array has an unexpected separator.")
+                }
+                cursor = body.index(after: cursor)
+                skipWhitespace(in: body, index: &cursor)
+                if cursor >= contentEnd {
+                    break
+                }
+            }
+            guard cursor < contentEnd, body[cursor] == "(" else {
+                throw USDImportError.invalidData("USDA \(name) tuple array contains unexpected content.")
+            }
+            let closeParenthesis = try matchingParenthesis(startingAt: cursor, in: body)
+            guard closeParenthesis <= contentEnd else {
+                throw USDImportError.invalidData("USDA \(name) tuple is malformed.")
+            }
+            let tupleBody = String(body[body.index(after: cursor)..<closeParenthesis])
+            tuples.append(try parseNumericTupleBody(named: name, expectedCount: expectedCount, in: tupleBody))
+            cursor = body.index(after: closeParenthesis)
+        }
+        guard !tuples.isEmpty else {
+            throw USDImportError.invalidData("USDA \(name) contains no tuples.")
+        }
+        return tuples
+    }
+
+    private func parseNumericTupleBody(
+        named name: String,
+        expectedCount: Int,
+        in body: String
+    ) throws -> [Double] {
+        let body = removingLineComments(from: body)
+        var values: [Double] = []
+        var cursor = body.startIndex
+        while true {
+            skipWhitespace(in: body, index: &cursor)
+            guard cursor < body.endIndex else {
+                break
+            }
+            let valueStart = cursor
+            while cursor < body.endIndex, isNumberLiteralCharacter(body[cursor]) {
+                cursor = body.index(after: cursor)
+            }
+            guard valueStart < cursor,
+                  let value = Double(body[valueStart..<cursor]),
+                  value.isFinite else {
+                throw USDImportError.invalidData("USDA \(name) tuple contains a non-finite number.")
+            }
+            values.append(value)
+            skipWhitespace(in: body, index: &cursor)
+            guard cursor < body.endIndex else {
+                break
+            }
+            guard body[cursor] == "," else {
+                throw USDImportError.invalidData("USDA \(name) tuple contains unexpected content.")
+            }
+            cursor = body.index(after: cursor)
+            skipWhitespace(in: body, index: &cursor)
+            guard cursor < body.endIndex else {
+                throw USDImportError.invalidData("USDA \(name) tuple has a trailing separator.")
+            }
+        }
+        guard values.count == expectedCount else {
+            throw USDImportError.invalidData("USDA \(name) tuple contains \(values.count) values.")
+        }
+        return values
     }
 
     private func parseIntArray(named name: String, in text: String) throws -> [Int] {
@@ -2665,6 +3412,7 @@ public struct USDAReader: USDSceneReader {
     }
 
     private func parseIntTokens(named name: String, in body: String) throws -> [Int] {
+        let body = removingLineComments(from: body)
         let tokens = body.split { character in
             character == "," || character.isWhitespace || character.isNewline
         }
@@ -2680,6 +3428,7 @@ public struct USDAReader: USDSceneReader {
     }
 
     private func parseDoubleTokens(named name: String, in body: String) throws -> [Double] {
+        let body = removingLineComments(from: body)
         let tokens = body.split { character in
             character == "," || character.isWhitespace || character.isNewline
         }
@@ -2694,40 +3443,25 @@ public struct USDAReader: USDSceneReader {
         }
     }
 
-    private func parseDoubleLiterals(named name: String, in body: String) throws -> [Double] {
-        let pattern = "[-+]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][-+]?\\d+)?"
-        let expression = try NSRegularExpression(pattern: pattern)
-        let range = NSRange(body.startIndex..<body.endIndex, in: body)
-        let matches = expression.matches(in: body, range: range)
-        guard !matches.isEmpty else {
-            throw USDImportError.invalidData("USDA \(name) is empty.")
-        }
-        return try matches.map { match in
-            guard let valueRange = Range(match.range, in: body),
-                  let value = Double(body[valueRange]),
-                  value.isFinite else {
-                throw USDImportError.invalidData("USDA \(name) contains a non-finite number.")
-            }
-            return value
-        }
-    }
-
     private func bracketArrayBody(named name: String, in text: String) throws -> String {
-        guard let nameRange = attributeNameRange(named: name, in: text) else {
+        guard let nameRange = try attributeNameRange(named: name, in: text) else {
             throw USDImportError.missingRequiredField(name)
         }
-        return try bracketArrayBody(after: nameRange.upperBound, named: name, in: text)
+        guard let body = try assignedBracketArrayBody(after: nameRange.upperBound, named: name, in: text) else {
+            throw USDImportError.missingRequiredField(name)
+        }
+        return body
     }
 
     private func optionalBracketArrayBody(named name: String, in text: String) throws -> String? {
-        guard let nameRange = attributeNameRange(named: name, in: text) else {
+        guard let nameRange = try attributeNameRange(named: name, in: text) else {
             return nil
         }
-        return try bracketArrayBody(after: nameRange.upperBound, named: name, in: text)
+        return try assignedBracketArrayBody(after: nameRange.upperBound, named: name, in: text)
     }
 
     private func optionalTimeSamplesBody(named name: String, in text: String) throws -> String? {
-        guard let nameRange = attributeNameRange(named: "\(name).timeSamples", in: text) else {
+        guard let nameRange = try attributeNameRange(named: "\(name).timeSamples", in: text) else {
             return nil
         }
         guard let openBrace = text[nameRange.upperBound...].firstIndex(of: "{") else {
@@ -2738,43 +3472,107 @@ public struct USDAReader: USDSceneReader {
     }
 
     private func bracketArrayBody(after index: String.Index, named name: String, in text: String) throws -> String {
-        guard let openBracket = text[index...].firstIndex(of: "[") else {
+        guard index < text.endIndex, text[index] == "[" else {
             throw USDImportError.invalidData("USDA \(name) is missing an opening bracket.")
         }
-        let closeBracket = try matchingBracket(startingAt: openBracket, in: text)
-        return String(text[text.index(after: openBracket)..<closeBracket])
+        let closeBracket = try matchingBracket(startingAt: index, in: text)
+        return String(text[text.index(after: index)..<closeBracket])
     }
 
-    private func attributeNameRange(named name: String, in text: String) -> Range<String.Index>? {
-        var searchRange = text.startIndex..<text.endIndex
-        while let range = text.range(of: name, range: searchRange) {
-            let hasValidLeadingBoundary: Bool
-            if range.lowerBound == text.startIndex {
-                hasValidLeadingBoundary = true
-            } else {
-                let previous = text[text.index(before: range.lowerBound)]
-                hasValidLeadingBoundary = previous.isWhitespace || previous == "]" || previous == "(" || previous == ","
-            }
+    private func assignedBracketArrayBody(
+        after index: String.Index,
+        named name: String,
+        in text: String
+    ) throws -> String? {
+        guard let valueStart = try propertyAssignmentValueStart(afterPropertyName: index, in: text) else {
+            return nil
+        }
+        guard valueStart < text.endIndex else {
+            throw USDImportError.invalidData("USDA \(name) is missing a value.")
+        }
+        if isNoneValue(at: valueStart, in: text) {
+            return nil
+        }
+        return try bracketArrayBody(after: valueStart, named: name, in: text)
+    }
 
-            let hasValidTrailingBoundary: Bool
-            if range.upperBound == text.endIndex {
-                hasValidTrailingBoundary = true
-            } else {
-                let next = text[range.upperBound]
-                hasValidTrailingBoundary = next.isWhitespace
-                    || next == "="
-                    || next == "["
-                    || next == "("
-                    || next == ","
-                    || next == ")"
+    private func attributeNameRange(named name: String, in text: String) throws -> Range<String.Index>? {
+        var index = text.startIndex
+        var braceDepth = 0
+        var bracketDepth = 0
+        var parenthesisDepth = 0
+        while index < text.endIndex {
+            let character = text[index]
+            if character == "#" {
+                skipLineComment(in: text, index: &index)
+                continue
             }
-
-            if hasValidLeadingBoundary && hasValidTrailingBoundary {
-                return range
+            if character == "\"" || character == "'" {
+                try skipQuotedString(in: text, index: &index)
+                continue
             }
-            searchRange = range.upperBound..<text.endIndex
+            if character == "@" {
+                try skipAssetPathLiteral(in: text, index: &index)
+                continue
+            }
+            let isAtTopLevel = braceDepth == 0 && bracketDepth == 0 && parenthesisDepth == 0
+            guard isAtTopLevel,
+                  text[index...].hasPrefix(name),
+                  let nameEnd = text.index(index, offsetBy: name.count, limitedBy: text.endIndex) else {
+                if character == "{" {
+                    braceDepth += 1
+                } else if character == "}" {
+                    braceDepth = max(0, braceDepth - 1)
+                } else if character == "[" {
+                    bracketDepth += 1
+                } else if character == "]" {
+                    bracketDepth = max(0, bracketDepth - 1)
+                } else if character == "(" {
+                    parenthesisDepth += 1
+                } else if character == ")" {
+                    parenthesisDepth = max(0, parenthesisDepth - 1)
+                }
+                index = text.index(after: index)
+                continue
+            }
+            if hasValidAttributeLeadingBoundary(at: index, in: text),
+               hasValidAttributeTrailingBoundary(at: nameEnd, in: text) {
+                return index..<nameEnd
+            }
+            index = text.index(after: index)
         }
         return nil
+    }
+
+    private func hasValidAttributeLeadingBoundary(at index: String.Index, in text: String) -> Bool {
+        guard index > text.startIndex else {
+            return true
+        }
+        let previous = text[text.index(before: index)]
+        return previous.isWhitespace || previous == "]" || previous == "(" || previous == ","
+    }
+
+    private func hasValidAttributeTrailingBoundary(at index: String.Index, in text: String) -> Bool {
+        guard index < text.endIndex else {
+            return true
+        }
+        let next = text[index]
+        return next.isWhitespace
+            || next == "="
+            || next == "["
+            || next == "("
+            || next == ","
+            || next == ")"
+            || next == ";"
+    }
+
+    private func isNoneValue(at index: String.Index, in text: String) -> Bool {
+        guard index < text.endIndex,
+              text[index...].hasPrefix("None"),
+              let valueEnd = text.index(index, offsetBy: 4, limitedBy: text.endIndex) else {
+            return false
+        }
+        return hasValidAttributeTrailingBoundary(at: valueEnd, in: text)
     }
 
     private func matchingBrace(startingAt openBrace: String.Index, in text: String) throws -> String.Index {
@@ -2799,8 +3597,16 @@ public struct USDAReader: USDSceneReader {
         var index = openIndex
         while index < text.endIndex {
             let character = text[index]
+            if character == "#" {
+                skipLineComment(in: text, index: &index)
+                continue
+            }
             if character == "\"" || character == "'" {
                 try skipQuotedString(in: text, index: &index)
+                continue
+            }
+            if character == "@" {
+                try skipAssetPathLiteral(in: text, index: &index)
                 continue
             }
             if character == open {
@@ -2847,16 +3653,6 @@ public struct USDAReader: USDSceneReader {
         return count
     }
 
-    private func firstMatch(pattern: String, in text: String) throws -> String? {
-        let expression = try NSRegularExpression(pattern: pattern)
-        let range = NSRange(text.startIndex..<text.endIndex, in: text)
-        guard let match = expression.firstMatch(in: text, range: range),
-              match.numberOfRanges > 1,
-              let valueRange = Range(match.range(at: 1), in: text) else {
-            return nil
-        }
-        return String(text[valueRange])
-    }
 }
 
 private struct USDAPrim {
@@ -2866,6 +3662,28 @@ private struct USDAPrim {
     var metadataBody: String
     var body: String
     var fullRange: Range<String.Index>
+}
+
+private struct USDAAssetReferenceListEdit {
+    var operation: USDAListEditOperation
+    var references: [(assetPath: String, primPath: String?, layerOffset: USDLayerOffset)]
+}
+
+private enum USDAListEditOperation: String {
+    case explicit
+    case add
+    case prepend
+    case append
+    case delete
+    case reorder
+
+    static let qualifiedOperations: [USDAListEditOperation] = [
+        .add,
+        .prepend,
+        .append,
+        .delete,
+        .reorder,
+    ]
 }
 
 private struct USDAPropertySpecDeclaration {
@@ -2885,4 +3703,10 @@ private enum USDAPropertyValueField {
 private struct USDALocalTransform {
     var matrix: USDTransformMatrix4x4
     var resetsParentStack: Bool
+}
+
+private enum USDAPointTimeSampleResolution {
+    case value([USDPoint3D])
+    case blocked
+    case unresolved
 }

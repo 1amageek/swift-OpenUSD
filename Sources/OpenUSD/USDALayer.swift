@@ -5,6 +5,7 @@ public struct USDALayer: Sendable, Equatable {
     public var composition: USDLayerComposition
     public var specs: [USDLayerSpec]
     public var primTransforms: [String: USDTransformMatrix4x4]
+    public var resetXformStackPrimPaths: Set<String>
 
     public init(
         defaultPrim: String? = nil,
@@ -12,7 +13,8 @@ public struct USDALayer: Sendable, Equatable {
         upAxis: USDUpAxis? = nil,
         composition: USDLayerComposition = USDLayerComposition(),
         specs: [USDLayerSpec] = [],
-        primTransforms: [String: USDTransformMatrix4x4] = [:]
+        primTransforms: [String: USDTransformMatrix4x4] = [:],
+        resetXformStackPrimPaths: Set<String> = []
     ) {
         self.defaultPrim = defaultPrim
         self.metersPerUnit = metersPerUnit
@@ -20,6 +22,7 @@ public struct USDALayer: Sendable, Equatable {
         self.composition = composition
         self.specs = specs
         self.primTransforms = primTransforms
+        self.resetXformStackPrimPaths = resetXformStackPrimPaths
     }
 
     public var prims: [USDLayerSpec] {
