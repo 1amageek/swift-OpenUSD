@@ -139,7 +139,12 @@ def public_symbol_names(symbol_graph_dir: Path) -> set[str]:
     if not files:
         raise RuntimeError(
             f"No symbol graph files found under {symbol_graph_dir}. "
-            "Run `swift package dump-symbol-graph --minimum-access-level public --skip-synthesized-members` first."
+            "Generate them first, e.g.:\n"
+            "  swift build --target OpenUSD --target OpenUSDC --target OpenUSDZ \\\n"
+            "    -Xswiftc -emit-symbol-graph \\\n"
+            "    -Xswiftc -emit-symbol-graph-dir -Xswiftc .build/symbol-graphs \\\n"
+            "    -Xswiftc -symbol-graph-minimum-access-level -Xswiftc public\n"
+            "then pass --symbolgraph-dir .build/symbol-graphs."
         )
 
     names: set[str] = set()
