@@ -1,4 +1,6 @@
-public enum USDCPrimSpecifier: Sendable, Equatable {
+import OpenUSD
+
+enum USDCPrimSpecifier: Sendable, Equatable {
     case def
     case over
     case `class`
@@ -14,6 +16,19 @@ public enum USDCPrimSpecifier: Sendable, Equatable {
             self = .class
         default:
             self = .unknown(payload)
+        }
+    }
+
+    var layerSpecifier: SdfSpecifier {
+        switch self {
+        case .def:
+            .def
+        case .over:
+            .over
+        case .class:
+            .class
+        case .unknown(let payload):
+            .unknown(payload)
         }
     }
 }

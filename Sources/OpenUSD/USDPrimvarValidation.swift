@@ -4,7 +4,7 @@ func validateUSDPrimvarIndices(_ indices: [Int]?, valueCount: Int, name: String)
     }
     for index in indices {
         guard index >= 0, index < valueCount else {
-            throw USDImportError.invalidData("USD \(name) index is outside the value range.")
+            throw USDError.invalidData("USD \(name) index is outside the value range.")
         }
     }
 }
@@ -27,9 +27,9 @@ func validateUSDPrimvarElementCount(
     case "faceVarying":
         expectedCount = faceVertexCounts.reduce(0, +)
     default:
-        throw USDImportError.invalidData("Unsupported USD \(name) interpolation \(interpolation ?? "").")
+        throw USDError.invalidData("Unsupported USD \(name) interpolation \(interpolation ?? "").")
     }
     guard valueCount == expectedCount else {
-        throw USDImportError.invalidData("USD \(name) value count does not match its interpolation.")
+        throw USDError.invalidData("USD \(name) value count does not match its interpolation.")
     }
 }

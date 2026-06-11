@@ -4,41 +4,51 @@ import Foundation
 struct USDCSceneMaterializer {
     private let crate: USDCCrateFile
     private let options: USDReadingOptions
+    private let sections: USDCCrateStructuralSections
 
-    init(crate: USDCCrateFile, options: USDReadingOptions = .default) {
+    init(crate: USDCCrateFile, options: USDReadingOptions = .default, sections: USDCCrateStructuralSections) {
         self.crate = crate
         self.options = options
+        self.sections = sections
+    }
+
+    private func makeValueDecoder() -> USDCCrateValueDecoder {
+        USDCCrateValueDecoder(
+            crate: crate,
+            tokens: sections.tokens,
+            strings: sections.strings,
+            paths: sections.paths
+        )
     }
 
     func readScene() throws -> USDScene {
-        let tokens = try crate.readTokens()
-        let strings = try crate.readStrings()
-        let paths = try crate.readPaths()
-        let specs = try crate.readSpecs()
-        let fields = try crate.readFields()
-        let fieldSetIndexes = try crate.readFieldSetIndexes()
-        let valueDecoder = USDCCrateValueDecoder(crate: crate, tokens: tokens, strings: strings)
+        let valueDecoder = makeValueDecoder()
 
         let specsByPath = try buildSpecsByPath(
-            specs: specs,
-            paths: paths,
-            fields: fields,
-            fieldSetIndexes: fieldSetIndexes,
-            tokens: tokens
+            specs: sections.specs,
+            paths: sections.paths,
+            fields: sections.fields,
+            fieldSetIndexes: sections.fieldSetIndexes,
+            tokens: sections.tokens
         )
         try validatePrimChildren(in: specsByPath, valueDecoder: valueDecoder)
 
-        let rootFields = specsByPath["/"]?.fields ?? [:]
+        guard let rootSpec = specsByPath["/"] else {
+            throw USDError.invalidData("USDC scene is missing the pseudo-root spec.")
+        }
+        let rootFields = rootSpec.fields
         let defaultPrim = try rootFields["defaultPrim"].map { try valueDecoder.readStringLike($0) }
-        let metersPerUnit = try rootFields["metersPerUnit"].map { try valueDecoder.readDouble($0) } ?? 1
+        // Upstream USD falls back to 0.01 (centimeters) when layer metadata
+        // does not author metersPerUnit.
+        let metersPerUnit = try rootFields["metersPerUnit"].map { try valueDecoder.readDouble($0) } ?? 0.01
         guard metersPerUnit.isFinite, metersPerUnit > 0 else {
-            throw USDImportError.invalidData("USDC metersPerUnit must be a positive finite value.")
+            throw USDError.invalidData("USDC metersPerUnit must be a positive finite value.")
         }
         let upAxisToken = try rootFields["upAxis"].map { try valueDecoder.readStringLike($0) }
         let upAxis: USDUpAxis
         if let upAxisToken {
             guard let parsed = USDUpAxis(rawValue: upAxisToken) else {
-                throw USDImportError.invalidData("Unsupported USDC upAxis \(upAxisToken).")
+                throw USDError.invalidData("Unsupported USDC upAxis \(upAxisToken).")
             }
             upAxis = parsed
         } else {
@@ -47,7 +57,7 @@ struct USDCSceneMaterializer {
 
         let meshes = try materializeMeshes(specsByPath: specsByPath, valueDecoder: valueDecoder)
         guard !meshes.isEmpty else {
-            throw USDImportError.invalidData("USDC scene contains no Mesh prims.")
+            throw USDError.invalidData("USDC scene contains no Mesh prims.")
         }
         return USDScene(defaultPrim: defaultPrim, metersPerUnit: metersPerUnit, upAxis: upAxis, meshes: meshes)
     }
@@ -60,21 +70,16 @@ struct USDCSceneMaterializer {
         primTransforms: [String: USDTransformMatrix4x4],
         resetXformStackPrimPaths: Set<String>
     ) {
-        let tokens = try crate.readTokens()
-        let strings = try crate.readStrings()
-        let paths = try crate.readPaths()
-        let specs = try crate.readSpecs()
-        let fields = try crate.readFields()
-        let fieldSetIndexes = try crate.readFieldSetIndexes()
-        let valueDecoder = USDCCrateValueDecoder(crate: crate, tokens: tokens, strings: strings)
+        let valueDecoder = makeValueDecoder()
         let specsByPath = try buildSpecsByPath(
-            specs: specs,
-            paths: paths,
-            fields: fields,
-            fieldSetIndexes: fieldSetIndexes,
-            tokens: tokens
+            specs: sections.specs,
+            paths: sections.paths,
+            fields: sections.fields,
+            fieldSetIndexes: sections.fieldSetIndexes,
+            tokens: sections.tokens
         )
         try validatePrimChildren(in: specsByPath, valueDecoder: valueDecoder)
+        var context = USDCTransformContext(specsByPath: specsByPath)
         var primTransforms: [String: USDTransformMatrix4x4] = [:]
         var resetXformStackPrimPaths: Set<String> = []
         for path in specsByPath.keys.sorted() where path != "/" {
@@ -83,7 +88,7 @@ struct USDCSceneMaterializer {
             }
             let localTransform = try localTransform(
                 forPrimPath: path,
-                specsByPath: specsByPath,
+                context: &context,
                 valueDecoder: valueDecoder
             )
             if localTransform.resetsParentStack {
@@ -91,7 +96,7 @@ struct USDCSceneMaterializer {
             }
             primTransforms[path] = try worldTransform(
                 forPrimPath: path,
-                specsByPath: specsByPath,
+                context: &context,
                 valueDecoder: valueDecoder
             ).usdTransformMatrix
         }
@@ -112,15 +117,15 @@ struct USDCSceneMaterializer {
             var fieldReps: [String: USDCCrateValueRep] = [:]
             for fieldIndex in fieldIndexes {
                 guard fieldIndex < UInt32(fields.count) else {
-                    throw USDImportError.invalidData("USDC spec references a field outside FIELDS.")
+                    throw USDError.invalidData("USDC spec references a field outside FIELDS.")
                 }
                 let field = fields[Int(fieldIndex)]
                 guard field.tokenIndex < UInt32(tokens.count) else {
-                    throw USDImportError.invalidData("USDC field references a token outside TOKENS.")
+                    throw USDError.invalidData("USDC field references a token outside TOKENS.")
                 }
                 let fieldName = tokens[Int(field.tokenIndex)]
                 guard fieldReps[fieldName] == nil else {
-                    throw USDImportError.invalidData("USDC spec contains duplicate field \(fieldName).")
+                    throw USDError.invalidData("USDC spec contains duplicate field \(fieldName).")
                 }
                 fieldReps[fieldName] = field.valueRep
             }
@@ -148,7 +153,7 @@ struct USDCSceneMaterializer {
     private func fieldIndexesForSpec(_ spec: USDCCrateSpec, fieldSetIndexes: [UInt32]) throws -> [UInt32] {
         var index = Int(spec.fieldSetIndex)
         guard index < fieldSetIndexes.count else {
-            throw USDImportError.invalidData("USDC spec field set index is outside FIELDSETS.")
+            throw USDError.invalidData("USDC spec field set index is outside FIELDSETS.")
         }
         var fieldIndexes: [UInt32] = []
         while index < fieldSetIndexes.count {
@@ -159,7 +164,7 @@ struct USDCSceneMaterializer {
             }
             fieldIndexes.append(fieldIndex)
         }
-        throw USDImportError.invalidData("USDC spec field set is unterminated.")
+        throw USDError.invalidData("USDC spec field set is unterminated.")
     }
 
     private func materializeMeshes(
@@ -180,8 +185,9 @@ struct USDCSceneMaterializer {
             return try valueDecoder.readStringLike(typeNameRep) == "Mesh"
         }
 
+        var context = USDCTransformContext(specsByPath: specsByPath)
         for meshPath in meshPrimPaths {
-            let attributeRecords = attributeRecords(forPrimPath: meshPath, specsByPath: specsByPath)
+            let attributeRecords = context.attributes(forPrimPath: meshPath)
             let points = try requiredPointArray(
                 named: "points",
                 attributeRecords: attributeRecords,
@@ -189,7 +195,7 @@ struct USDCSceneMaterializer {
             )
             let transform = try worldTransform(
                 forPrimPath: meshPath,
-                specsByPath: specsByPath,
+                context: &context,
                 valueDecoder: valueDecoder
             )
             let transformedPoints = try points.map { try transform.transform($0) }
@@ -198,7 +204,7 @@ struct USDCSceneMaterializer {
                 attributeRecords: attributeRecords,
                 valueDecoder: valueDecoder
             ) ?? []
-            let transformedNormals = try normals.map { try transform.transformNormal($0) }
+            let transformedNormals = try normals.map { try transform.transform(normal: $0) }
             let normalsInterpolation = try optionalMetadataString(
                 named: "interpolation",
                 record: attributeRecords["normals"],
@@ -255,7 +261,7 @@ struct USDCSceneMaterializer {
                 valueDecoder: valueDecoder
             )
             if let extent, extent.count != 2 {
-                throw USDImportError.invalidData("USDC Mesh extent must contain exactly two points.")
+                throw USDError.invalidData("USDC Mesh extent must contain exactly two points.")
             }
             let transformedExtent = try transformedExtent(extent, applying: transform)
             meshes.append(USDMesh(
@@ -316,34 +322,54 @@ struct USDCSceneMaterializer {
 
     private func worldTransform(
         forPrimPath primPath: String,
-        specsByPath: [String: USDCSpecRecord],
+        context: inout USDCTransformContext,
         valueDecoder: USDCCrateValueDecoder
     ) throws -> USDCMatrix4x4 {
-        var transform = USDCMatrix4x4.identity
-        var currentPath: String? = primPath
-        while let path = currentPath, path != "/" {
-            if let record = specsByPath[path], record.specType == .prim {
-                let localTransform = try localTransform(
-                    forPrimPath: path,
-                    specsByPath: specsByPath,
-                    valueDecoder: valueDecoder
-                )
-                transform = try transform.validatedConcatenating(localTransform.matrix)
-                if localTransform.resetsParentStack {
-                    break
-                }
-            }
-            currentPath = parentPrimPath(from: path)
+        if let cached = context.worldTransforms[primPath] {
+            return cached
         }
+        var transform = USDCMatrix4x4.identity
+        var resetsParentStack = false
+        if let record = context.specsByPath[primPath], record.specType == .prim {
+            let localTransform = try localTransform(
+                forPrimPath: primPath,
+                context: &context,
+                valueDecoder: valueDecoder
+            )
+            transform = localTransform.matrix
+            resetsParentStack = localTransform.resetsParentStack
+        }
+        if !resetsParentStack, let parentPath = parentPrimPath(from: primPath), parentPath != "/" {
+            transform = try transform.concatenating(
+                worldTransform(forPrimPath: parentPath, context: &context, valueDecoder: valueDecoder)
+            )
+        }
+        context.worldTransforms[primPath] = transform
         return transform
     }
 
     private func localTransform(
         forPrimPath primPath: String,
-        specsByPath: [String: USDCSpecRecord],
+        context: inout USDCTransformContext,
         valueDecoder: USDCCrateValueDecoder
     ) throws -> USDCLocalTransform {
-        let attributeRecords = attributeRecords(forPrimPath: primPath, specsByPath: specsByPath)
+        if let cached = context.localTransforms[primPath] {
+            return cached
+        }
+        let computed = try computeLocalTransform(
+            forPrimPath: primPath,
+            attributeRecords: context.attributes(forPrimPath: primPath),
+            valueDecoder: valueDecoder
+        )
+        context.localTransforms[primPath] = computed
+        return computed
+    }
+
+    private func computeLocalTransform(
+        forPrimPath primPath: String,
+        attributeRecords: [String: USDCSpecRecord],
+        valueDecoder: USDCCrateValueDecoder
+    ) throws -> USDCLocalTransform {
         guard let xformOpOrderRep = attributeRecords["xformOpOrder"]?.fields["default"] else {
             return USDCLocalTransform(matrix: .identity, resetsParentStack: false)
         }
@@ -365,7 +391,7 @@ struct USDCSceneMaterializer {
                 valueDecoder: valueDecoder
             )
             let effectiveTransform = orderedOp.isInverted ? try opTransform.inverted() : opTransform
-            transform = try transform.validatedConcatenating(effectiveTransform)
+            transform = try transform.concatenating(effectiveTransform)
         }
         return USDCLocalTransform(matrix: transform, resetsParentStack: resetsParentStack)
     }
@@ -388,10 +414,10 @@ struct USDCSceneMaterializer {
         valueDecoder: USDCCrateValueDecoder
     ) throws -> USDCMatrix4x4 {
         guard let defaultValue = try resolvedValueRep(record: record, valueDecoder: valueDecoder) else {
-            throw USDImportError.invalidData("USDC xform op \(opName) has no default value.")
+            throw USDError.invalidData("USDC xform op \(opName) has no default value.")
         }
         guard let operationType = xformOperationType(from: opName) else {
-            throw USDImportError.invalidData("USDC xform op \(opName) is malformed.")
+            throw USDError.invalidData("USDC xform op \(opName) is malformed.")
         }
         switch operationType {
         case "translate":
@@ -424,7 +450,7 @@ struct USDCSceneMaterializer {
         case "transform":
             return try valueDecoder.readMatrix4x4(defaultValue)
         default:
-            throw USDImportError.unsupportedFeature("USDC xform op \(operationType) is not supported yet.")
+            throw USDError.unsupportedFeature("USDC xform op \(operationType) is not supported yet.")
         }
     }
 
@@ -437,19 +463,36 @@ struct USDCSceneMaterializer {
         return opName[suffixStart...].split(separator: ":", maxSplits: 1).first.map(String.init)
     }
 
-    private func attributeRecords(
-        forPrimPath primPath: String,
-        specsByPath: [String: USDCSpecRecord]
-    ) -> [String: USDCSpecRecord] {
-        let prefix = "\(primPath)."
-        var attributes: [String: USDCSpecRecord] = [:]
-        for (path, record) in specsByPath where record.specType == .attribute && path.hasPrefix(prefix) {
-            let name = String(path.dropFirst(prefix.count))
-            if !name.contains("/") && !name.contains(".") {
-                attributes[name] = record
+    /// Shared per-read lookup state: a prim-to-attributes index built in one
+    /// pass over the specs, plus memoized local and world transforms so
+    /// ancestor chains are never recomputed per prim.
+    private struct USDCTransformContext {
+        let specsByPath: [String: USDCSpecRecord]
+        var localTransforms: [String: USDCLocalTransform] = [:]
+        var worldTransforms: [String: USDCMatrix4x4] = [:]
+        private let attributesByPrimPath: [String: [String: USDCSpecRecord]]
+
+        init(specsByPath: [String: USDCSpecRecord]) {
+            self.specsByPath = specsByPath
+            var index: [String: [String: USDCSpecRecord]] = [:]
+            for (path, record) in specsByPath where record.specType == .attribute {
+                guard let lastSlash = path.lastIndex(of: "/"),
+                      let dotIndex = path[lastSlash...].firstIndex(of: ".") else {
+                    continue
+                }
+                let primPath = String(path[..<dotIndex])
+                let name = String(path[path.index(after: dotIndex)...])
+                guard !name.contains("/"), !name.contains(".") else {
+                    continue
+                }
+                index[primPath, default: [:]][name] = record
             }
+            attributesByPrimPath = index
         }
-        return attributes
+
+        func attributes(forPrimPath primPath: String) -> [String: USDCSpecRecord] {
+            attributesByPrimPath[primPath] ?? [:]
+        }
     }
 
     private func requiredPointArray(
@@ -461,10 +504,10 @@ struct USDCSceneMaterializer {
             let record = attributeRecords[name],
             let points = try resolvedPointArray(record: record, valueDecoder: valueDecoder)
         else {
-            throw USDImportError.missingRequiredField(name)
+            throw USDError.missingRequiredField(name)
         }
         guard !points.isEmpty else {
-            throw USDImportError.invalidData("USDC Mesh \(name) contains no points.")
+            throw USDError.invalidData("USDC Mesh \(name) contains no points.")
         }
         return points
     }
@@ -530,11 +573,11 @@ struct USDCSceneMaterializer {
             let record = attributeRecords[name],
             let valueRep = try resolvedIntArrayValueRep(record: record, valueDecoder: valueDecoder)
         else {
-            throw USDImportError.missingRequiredField(name)
+            throw USDError.missingRequiredField(name)
         }
         let values = try valueDecoder.readIntArray(valueRep)
         guard !values.isEmpty else {
-            throw USDImportError.invalidData("USDC Mesh \(name) is empty.")
+            throw USDError.invalidData("USDC Mesh \(name) is empty.")
         }
         return values
     }
@@ -676,7 +719,7 @@ struct USDCSceneMaterializer {
             return nil
         }
         guard let orientation = USDOrientation(rawValue: value) else {
-            throw USDImportError.invalidData("Unsupported USDC orientation \(value).")
+            throw USDError.invalidData("Unsupported USDC orientation \(value).")
         }
         return orientation
     }
@@ -732,7 +775,7 @@ struct USDCSceneMaterializer {
 
     private func isDefSpecifier(_ valueRep: USDCCrateValueRep) throws -> Bool {
         guard valueRep.type == .specifier, valueRep.isInlined, !valueRep.isArray else {
-            throw USDImportError.invalidData("USDC specifier field is malformed.")
+            throw USDError.invalidData("USDC specifier field is malformed.")
         }
         return valueRep.payload == 0
     }

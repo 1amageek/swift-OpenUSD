@@ -1,4 +1,4 @@
-public struct USDLayerOffset: Sendable, Equatable, Hashable {
+public struct SdfLayerOffset: Sendable, Equatable, Hashable {
     public var offset: Double
     public var scale: Double
 
@@ -7,7 +7,7 @@ public struct USDLayerOffset: Sendable, Equatable, Hashable {
         self.scale = scale
     }
 
-    public static let identity = USDLayerOffset()
+    public static let identity = SdfLayerOffset()
 
     public var isIdentity: Bool {
         offset == 0 && scale == 1
@@ -19,13 +19,13 @@ public struct USDLayerOffset: Sendable, Equatable, Hashable {
 
     public func layerTime(forStageTime stageTime: Double) throws -> Double {
         guard scale != 0 else {
-            throw USDImportError.invalidData("USD layer offset scale must be non-zero to invert.")
+            throw USDError.invalidData("USD layer offset scale must be non-zero to invert.")
         }
         return (stageTime - offset) / scale
     }
 
-    public func concatenating(_ rhs: USDLayerOffset) -> USDLayerOffset {
-        USDLayerOffset(
+    public func concatenating(_ rhs: SdfLayerOffset) -> SdfLayerOffset {
+        SdfLayerOffset(
             offset: rhs.offset * scale + offset,
             scale: scale * rhs.scale
         )

@@ -33,12 +33,12 @@ public struct USDZArchive: Sendable, Equatable {
         entry(at: path)?.data
     }
 
-    public func assetData(for path: String) throws -> Data {
+    public func assetData(at path: String) throws -> Data {
         try data(for: USDZLayerPath.parse(path), requiringUSDLayer: false)
     }
 
-    public func data(for path: String) throws -> Data {
-        try data(for: USDZLayerPath.parse(path))
+    public func layerData(at path: String) throws -> Data {
+        try layerData(for: USDZLayerPath.parse(path))
     }
 
     public func resolveLayerPath(for assetPath: String, referencedFrom sourceLayerPath: String) throws -> String? {
@@ -47,17 +47,17 @@ public struct USDZArchive: Sendable, Equatable {
             .stringValue
     }
 
-    public func data(for assetPath: String, referencedFrom sourceLayerPath: String) throws -> Data {
+    public func layerData(for assetPath: String, referencedFrom sourceLayerPath: String) throws -> Data {
         guard let layerPath = try USDZAssetResolver(archive: self)
             .resolveLayerPath(for: assetPath, referencedFrom: sourceLayerPath) else {
-            throw USDImportError.invalidData(
+            throw USDError.invalidData(
                 "USDZ package could not resolve asset \(assetPath) from \(sourceLayerPath)."
             )
         }
-        return try data(for: layerPath)
+        return try layerData(for: layerPath)
     }
 
-    private func data(for layerPath: USDZLayerPath) throws -> Data {
+    private func layerData(for layerPath: USDZLayerPath) throws -> Data {
         try data(for: layerPath, requiringUSDLayer: true)
     }
 
@@ -65,21 +65,21 @@ public struct USDZArchive: Sendable, Equatable {
         var archive = self
         for (index, entryPath) in layerPath.entryPaths.enumerated() {
             guard let entry = archive.entry(at: entryPath) else {
-                throw USDImportError.invalidData("USDZ package is missing entry \(entryPath).")
+                throw USDError.invalidData("USDZ package is missing entry \(entryPath).")
             }
             let isLastEntry = index == layerPath.entryPaths.count - 1
             if isLastEntry {
                 guard !requiringUSDLayer || entry.isUSDLayer else {
-                    throw USDImportError.unsupportedFeature("USDZ entry \(entry.path) is not a USD layer.")
+                    throw USDError.unsupportedFeature("USDZ entry \(entry.path) is not a USD layer.")
                 }
                 return entry.data
             }
             guard entry.fileExtension == "usdz" else {
-                throw USDImportError.unsupportedFeature("USDZ entry \(entry.path) is not a nested USDZ package.")
+                throw USDError.unsupportedFeature("USDZ entry \(entry.path) is not a nested USDZ package.")
             }
             archive = try USDZArchive(data: entry.data)
         }
-        throw USDImportError.invalidData("USDZ layer path is empty.")
+        throw USDError.invalidData("USDZ layer path is empty.")
     }
 }
 
@@ -96,7 +96,7 @@ private struct USDZBinaryReader {
     func readEndOfCentralDirectory() throws -> USDZEndOfCentralDirectory {
         let minimumByteCount = 22
         guard data.count >= minimumByteCount else {
-            throw USDImportError.invalidData("USDZ package is missing the end of central directory.")
+            throw USDError.invalidData("USDZ package is missing the end of central directory.")
         }
         let lowerBound = max(0, data.count - minimumByteCount - 65_535)
         var offset = data.count - minimumByteCount
@@ -109,7 +109,7 @@ private struct USDZBinaryReader {
             }
             offset -= 1
         }
-        throw USDImportError.invalidData("USDZ package is missing the end of central directory.")
+        throw USDError.invalidData("USDZ package is missing the end of central directory.")
     }
 
     func readLocalEntries(until centralDirectoryOffset: Int) throws -> [USDZArchiveEntry] {
@@ -119,13 +119,13 @@ private struct USDZBinaryReader {
         while offset < centralDirectoryOffset {
             let entry = try readLocalEntry(at: offset, centralDirectoryOffset: centralDirectoryOffset)
             guard seenPaths.insert(entry.path).inserted else {
-                throw USDImportError.invalidData("USDZ package contains a duplicate entry \(entry.path).")
+                throw USDError.invalidData("USDZ package contains a duplicate entry \(entry.path).")
             }
             entries.append(entry)
             offset = entry.dataOffset + entry.data.count
         }
         guard offset == centralDirectoryOffset else {
-            throw USDImportError.invalidData("USDZ local entries do not end at the central directory.")
+            throw USDError.invalidData("USDZ local entries do not end at the central directory.")
         }
         return entries
     }
@@ -135,22 +135,22 @@ private struct USDZBinaryReader {
         localEntries: [USDZArchiveEntry]
     ) throws {
         guard endRecord.entryCount == localEntries.count else {
-            throw USDImportError.invalidData("USDZ central directory entry count does not match local entries.")
+            throw USDError.invalidData("USDZ central directory entry count does not match local entries.")
         }
         let expectedEnd = endRecord.centralDirectoryOffset + endRecord.centralDirectorySize
         guard expectedEnd == endRecord.endOffset else {
-            throw USDImportError.invalidData("USDZ central directory size does not match the end record.")
+            throw USDError.invalidData("USDZ central directory size does not match the end record.")
         }
         var offset = endRecord.centralDirectoryOffset
         for localEntry in localEntries {
             guard try readUInt32(at: offset) == 0x02014b50 else {
-                throw USDImportError.invalidData("USDZ central directory is malformed.")
+                throw USDError.invalidData("USDZ central directory is malformed.")
             }
             let flags = try readUInt16(at: offset + 8)
             try validateGeneralPurposeFlags(flags, path: localEntry.path)
             let method = try readUInt16(at: offset + 10)
             guard method == 0 else {
-                throw USDImportError.unsupportedFeature("USDZ entry \(localEntry.path) is compressed.")
+                throw USDError.unsupportedFeature("USDZ entry \(localEntry.path) is compressed.")
             }
             let crc32 = try readUInt32(at: offset + 16)
             let compressedSize = try checkedInt(try readUInt32(at: offset + 20), label: "USDZ compressed size")
@@ -158,7 +158,7 @@ private struct USDZBinaryReader {
             guard compressedSize == uncompressedSize,
                   compressedSize == localEntry.data.count,
                   crc32 == localEntry.crc32 else {
-                throw USDImportError.invalidData("USDZ central directory does not match local entry \(localEntry.path).")
+                throw USDError.invalidData("USDZ central directory does not match local entry \(localEntry.path).")
             }
             let nameLength = Int(try readUInt16(at: offset + 28))
             let extraLength = Int(try readUInt16(at: offset + 30))
@@ -168,17 +168,17 @@ private struct USDZBinaryReader {
             let nameEnd = try checkedOffset(nameStart, adding: nameLength)
             let recordEnd = try checkedOffset(try checkedOffset(nameEnd, adding: extraLength), adding: commentLength)
             guard recordEnd <= endRecord.endOffset else {
-                throw USDImportError.invalidData("USDZ central directory record is truncated.")
+                throw USDError.invalidData("USDZ central directory record is truncated.")
             }
             let path = try readUTF8String(in: nameStart..<nameEnd)
             guard path == localEntry.path,
                   localHeaderOffset == localEntry.localHeaderOffset else {
-                throw USDImportError.invalidData("USDZ central directory order does not match local entries.")
+                throw USDError.invalidData("USDZ central directory order does not match local entries.")
             }
             offset = recordEnd
         }
         guard offset == endRecord.endOffset else {
-            throw USDImportError.invalidData("USDZ central directory has trailing bytes.")
+            throw USDError.invalidData("USDZ central directory has trailing bytes.")
         }
     }
 
@@ -191,14 +191,14 @@ private struct USDZBinaryReader {
               centralDirectoryDisk == 0,
               diskEntryCount == entryCount,
               commentLength == 0 else {
-            throw USDImportError.unsupportedFeature("USDZ package uses unsupported ZIP disk or comment fields.")
+            throw USDError.unsupportedFeature("USDZ package uses unsupported ZIP disk or comment fields.")
         }
         let centralDirectorySize = try checkedInt(try readUInt32(at: offset + 12), label: "USDZ central directory size")
         let centralDirectoryOffset = try checkedInt(try readUInt32(at: offset + 16), label: "USDZ central directory offset")
         guard centralDirectoryOffset <= data.count,
               centralDirectorySize <= data.count - centralDirectoryOffset,
               centralDirectoryOffset + centralDirectorySize == offset else {
-            throw USDImportError.invalidData("USDZ central directory range is invalid.")
+            throw USDError.invalidData("USDZ central directory range is invalid.")
         }
         return USDZEndOfCentralDirectory(
             entryCount: Int(entryCount),
@@ -210,7 +210,7 @@ private struct USDZBinaryReader {
 
     private func readLocalEntry(at offset: Int, centralDirectoryOffset: Int) throws -> USDZArchiveEntry {
         guard try readUInt32(at: offset) == 0x04034b50 else {
-            throw USDImportError.invalidData("USDZ local entry is missing a ZIP local header.")
+            throw USDError.invalidData("USDZ local entry is missing a ZIP local header.")
         }
         let flags = try readUInt16(at: offset + 6)
         let method = try readUInt16(at: offset + 8)
@@ -221,26 +221,26 @@ private struct USDZBinaryReader {
         let extraLength = Int(try readUInt16(at: offset + 28))
         try validateGeneralPurposeFlags(flags, path: "local entry at \(offset)")
         guard method == 0 else {
-            throw USDImportError.unsupportedFeature("USDZ local entry at \(offset) is compressed.")
+            throw USDError.unsupportedFeature("USDZ local entry at \(offset) is compressed.")
         }
         guard compressedSize == uncompressedSize else {
-            throw USDImportError.invalidData("USDZ local entry at \(offset) has mismatched stored sizes.")
+            throw USDError.invalidData("USDZ local entry at \(offset) has mismatched stored sizes.")
         }
         let nameStart = offset + 30
         let nameEnd = try checkedOffset(nameStart, adding: nameLength)
         let dataOffset = try checkedOffset(nameEnd, adding: extraLength)
         let dataEnd = try checkedOffset(dataOffset, adding: compressedSize)
         guard dataEnd <= centralDirectoryOffset else {
-            throw USDImportError.invalidData("USDZ local entry at \(offset) overlaps the central directory.")
+            throw USDError.invalidData("USDZ local entry at \(offset) overlaps the central directory.")
         }
         guard dataOffset.isMultiple(of: 64) else {
-            throw USDImportError.invalidData("USDZ local entry payload is not 64-byte aligned.")
+            throw USDError.invalidData("USDZ local entry payload is not 64-byte aligned.")
         }
         let path = try readUTF8String(in: nameStart..<nameEnd)
         try validateEntryPath(path)
         let payload = try readData(in: dataOffset..<dataEnd)
         guard USDZCRC32.checksum(payload) == crc32 else {
-            throw USDImportError.invalidData("USDZ local entry \(path) has a CRC mismatch.")
+            throw USDError.invalidData("USDZ local entry \(path) has a CRC mismatch.")
         }
         return USDZArchiveEntry(
             path: path,
@@ -256,10 +256,10 @@ private struct USDZBinaryReader {
         let encrypted = UInt16(1) << 0
         let dataDescriptor = UInt16(1) << 3
         guard flags & encrypted == 0 else {
-            throw USDImportError.unsupportedFeature("USDZ entry \(path) is encrypted.")
+            throw USDError.unsupportedFeature("USDZ entry \(path) is encrypted.")
         }
         guard flags & dataDescriptor == 0 else {
-            throw USDImportError.unsupportedFeature("USDZ entry \(path) uses a data descriptor.")
+            throw USDError.unsupportedFeature("USDZ entry \(path) uses a data descriptor.")
         }
     }
 
@@ -268,11 +268,11 @@ private struct USDZBinaryReader {
               !path.hasPrefix("/"),
               !path.hasSuffix("/"),
               !path.contains("\\") else {
-            throw USDImportError.invalidData("USDZ entry path \(path) is invalid.")
+            throw USDError.invalidData("USDZ entry path \(path) is invalid.")
         }
         let components = path.split(separator: "/", omittingEmptySubsequences: false)
         guard components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
-            throw USDImportError.invalidData("USDZ entry path \(path) is invalid.")
+            throw USDError.invalidData("USDZ entry path \(path) is invalid.")
         }
     }
 
@@ -295,7 +295,7 @@ private struct USDZBinaryReader {
     private func readUTF8String(in range: Range<Int>) throws -> String {
         let data = try readData(in: range)
         guard let string = String(data: data, encoding: .utf8) else {
-            throw USDImportError.invalidData("USDZ entry path is not UTF-8.")
+            throw USDError.invalidData("USDZ entry path is not UTF-8.")
         }
         return string
     }
@@ -304,7 +304,7 @@ private struct USDZBinaryReader {
         guard range.lowerBound >= 0,
               range.upperBound <= data.count,
               range.lowerBound <= range.upperBound else {
-            throw USDImportError.invalidData("USDZ read is outside the package.")
+            throw USDError.invalidData("USDZ read is outside the package.")
         }
         guard !range.isEmpty else {
             return Data()
@@ -322,20 +322,20 @@ private struct USDZBinaryReader {
         guard offset >= 0,
               byteCount >= 0,
               offset <= data.count - byteCount else {
-            throw USDImportError.invalidData("USDZ read is outside the package.")
+            throw USDError.invalidData("USDZ read is outside the package.")
         }
     }
 
     private func checkedInt(_ value: UInt32, label: String) throws -> Int {
         guard UInt64(value) <= UInt64(Int.max) else {
-            throw USDImportError.invalidData("\(label) exceeds platform range.")
+            throw USDError.invalidData("\(label) exceeds platform range.")
         }
         return Int(value)
     }
 
     private func checkedOffset(_ offset: Int, adding value: Int) throws -> Int {
         guard value >= 0, offset <= Int.max - value else {
-            throw USDImportError.invalidData("USDZ offset exceeds platform range.")
+            throw USDError.invalidData("USDZ offset exceeds platform range.")
         }
         return offset + value
     }

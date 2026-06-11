@@ -1,4 +1,4 @@
-public enum USDSpecType: Sendable, Equatable, Hashable, CaseIterable {
+public enum SdfSpecType: Sendable, Equatable, Hashable, CaseIterable {
     case attribute
     case connection
     case expression

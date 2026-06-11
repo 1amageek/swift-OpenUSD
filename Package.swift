@@ -38,10 +38,17 @@ let package = Package(
         .testTarget(
             name: "OpenUSDTests",
             dependencies: ["OpenUSD", "OpenUSDC", "OpenUSDZ"],
-            exclude: ["UPSTREAM_TEST_PARITY.md"],
+            exclude: ["UPSTREAM_TEST_PARITY.md", "UNSUPPORTED_FEATURES.json"],
             resources: [
                 .copy("Fixtures"),
             ]
+        ),
+        // Performance benchmarks. Gated behind OPENUSD_BENCHMARKS=1 so normal
+        // test runs and CI skip them; run locally with:
+        //   OPENUSD_BENCHMARKS=1 swift test -c release --filter OpenUSDBenchmarks
+        .testTarget(
+            name: "OpenUSDBenchmarks",
+            dependencies: ["OpenUSD", "OpenUSDC", "OpenUSDZ"]
         ),
     ],
     swiftLanguageModes: [.v6]

@@ -3,13 +3,13 @@ import OpenUSD
 public struct USDCReference: Sendable, Equatable {
     public var assetPath: String
     public var primPath: String
-    public var layerOffset: USDLayerOffset
+    public var layerOffset: SdfLayerOffset
     public var customData: [String: USDCLayerFieldValue]
 
     public init(
         assetPath: String,
         primPath: String,
-        layerOffset: USDLayerOffset = .identity,
+        layerOffset: SdfLayerOffset = .identity,
         customData: [String: USDCLayerFieldValue] = [:]
     ) {
         self.assetPath = assetPath

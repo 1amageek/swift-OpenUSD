@@ -15,11 +15,11 @@ public struct USDDisplayColorPrimvar: Sendable, Hashable {
 
     public func validate(pointCount: Int, faceVertexCounts: [Int]) throws {
         guard !values.isEmpty else {
-            throw USDImportError.invalidData("USD primvars:displayColor contains no color values.")
+            throw USDError.invalidData("USD primvars:displayColor contains no color values.")
         }
         for value in values {
             guard value.r.isFinite, value.g.isFinite, value.b.isFinite else {
-                throw USDImportError.invalidData("USD primvars:displayColor contains a non-finite color component.")
+                throw USDError.invalidData("USD primvars:displayColor contains a non-finite color component.")
             }
         }
         try validateUSDPrimvarIndices(indices, valueCount: values.count, name: "primvars:displayColor")

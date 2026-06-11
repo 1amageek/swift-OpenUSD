@@ -62,14 +62,14 @@ public struct USDZReader: USDSceneReader {
 
     private func readArchive(from data: Data) throws -> USDZArchive {
         guard data.starts(with: Self.fileSignature) else {
-            throw USDImportError.invalidData("USDZ data is missing the ZIP signature.")
+            throw USDError.invalidData("USDZ data is missing the ZIP signature.")
         }
         return try USDZArchive(data: data)
     }
 
     private func defaultLayerPath(in archive: USDZArchive) throws -> String {
         guard let defaultLayer = archive.defaultLayer else {
-            throw USDImportError.invalidData("USDZ package contains no entries.")
+            throw USDError.invalidData("USDZ package contains no entries.")
         }
         if defaultLayer.isUSDLayer {
             return defaultLayer.path
@@ -78,19 +78,19 @@ public struct USDZReader: USDSceneReader {
             let nestedArchive = try USDZArchive(data: defaultLayer.data)
             guard let nestedDefaultLayer = nestedArchive.defaultLayer,
                   nestedDefaultLayer.isUSDLayer else {
-                throw USDImportError.unsupportedFeature(
+                throw USDError.unsupportedFeature(
                     "USDZ nested default package \(defaultLayer.path) must contain a USD default layer."
                 )
             }
             return "\(defaultLayer.path)[\(nestedDefaultLayer.path)]"
         }
-        throw USDImportError.unsupportedFeature("USDZ default layer must be the first file and use a USD extension.")
+        throw USDError.unsupportedFeature("USDZ default layer must be the first file and use a USD extension.")
     }
 
     private func resolveRootLayerPath(_ rootLayerPath: String, in archive: USDZArchive) throws -> String {
         let layerPath = try USDZLayerPath.parse(rootLayerPath)
         guard !layerPath.entryPaths.isEmpty else {
-            throw USDImportError.invalidData("USDZ layer path is empty.")
+            throw USDError.invalidData("USDZ layer path is empty.")
         }
         return try resolveRootLayerPath(entryPaths: layerPath.entryPaths, in: archive).stringValue
     }
@@ -100,7 +100,7 @@ public struct USDZReader: USDSceneReader {
         var resolvedEntryPaths: [String] = []
         for (index, entryPath) in entryPaths.enumerated() {
             guard let entry = currentArchive.entry(at: entryPath) else {
-                throw USDImportError.invalidData("USDZ package is missing entry \(entryPath).")
+                throw USDError.invalidData("USDZ package is missing entry \(entryPath).")
             }
 
             resolvedEntryPaths.append(entry.path)
@@ -110,7 +110,7 @@ public struct USDZReader: USDSceneReader {
                     return USDZLayerPath(entryPaths: resolvedEntryPaths)
                 }
                 guard entry.fileExtension == "usdz" else {
-                    throw USDImportError.unsupportedFeature("USDZ entry \(entry.path) is not a USD layer.")
+                    throw USDError.unsupportedFeature("USDZ entry \(entry.path) is not a USD layer.")
                 }
                 let nestedArchive = try USDZArchive(data: entry.data)
                 let nestedDefaultLayerPath = try defaultLayerPath(in: nestedArchive)
@@ -121,12 +121,12 @@ public struct USDZReader: USDSceneReader {
             }
 
             guard entry.fileExtension == "usdz" else {
-                throw USDImportError.unsupportedFeature("USDZ entry \(entry.path) is not a nested USDZ package.")
+                throw USDError.unsupportedFeature("USDZ entry \(entry.path) is not a nested USDZ package.")
             }
             currentArchive = try USDZArchive(data: entry.data)
         }
 
-        throw USDImportError.invalidData("USDZ layer path is empty.")
+        throw USDError.invalidData("USDZ layer path is empty.")
     }
 
     private func readResolvedScene(
@@ -143,7 +143,7 @@ public struct USDZReader: USDSceneReader {
             try materializedMeshes(in: layerInstance)
         }
         guard !meshes.isEmpty else {
-            throw USDImportError.invalidData("USDZ scene contains no Mesh prims.")
+            throw USDError.invalidData("USDZ scene contains no Mesh prims.")
         }
         let rootLayer = resolvedLayerInstances.first?.layer
         let firstScene = resolvedLayerInstances.compactMap(\.layer.scene).first
@@ -172,14 +172,32 @@ public struct USDZReader: USDSceneReader {
             )
         ]
         var resolvedLayerInstances: [USDZResolvedLayerInstance] = []
+        // The visited check below cannot run before parsing: the instance key
+        // depends on the parsed layer's defaultPrim. Caching parsed layers
+        // keeps repeatedly referenced layers from being re-parsed per instance.
+        var parsedLayersByKey: [USDZLayerParseKey: USDZResolvedLayer] = [:]
 
         while let pendingLayerInstance = pendingLayerInstances.first {
             pendingLayerInstances.removeFirst()
-            let layer = try readLayer(
-                at: pendingLayerInstance.layerPath,
-                in: archive,
-                options: layerOptions(from: options, applying: pendingLayerInstance.layerOffset)
+            let layerReadingOptions = try layerOptions(
+                from: options,
+                applying: pendingLayerInstance.layerOffset
             )
+            let parseKey = USDZLayerParseKey(
+                layerPath: pendingLayerInstance.layerPath,
+                options: layerReadingOptions
+            )
+            let layer: USDZResolvedLayer
+            if let parsedLayer = parsedLayersByKey[parseKey] {
+                layer = parsedLayer
+            } else {
+                layer = try readLayer(
+                    at: pendingLayerInstance.layerPath,
+                    in: archive,
+                    options: layerReadingOptions
+                )
+                parsedLayersByKey[parseKey] = layer
+            }
             let effectiveTargetPrimPath = effectiveTargetPrimPath(
                 targetPrimPath: pendingLayerInstance.targetPrimPath,
                 sitePrimPath: pendingLayerInstance.sitePrimPath,
@@ -194,7 +212,7 @@ public struct USDZReader: USDSceneReader {
                 targetPrimPath: effectiveTargetPrimPath
             )
             if pendingLayerInstance.ancestorKeys.contains(instanceKey) {
-                throw USDImportError.invalidData("USDZ composition cycle detected.")
+                throw USDError.invalidData("USDZ composition cycle detected.")
             }
             guard visitedLayerInstances.insert(instanceKey).inserted else {
                 continue
@@ -213,7 +231,7 @@ public struct USDZReader: USDSceneReader {
                     for: sublayer.assetPath,
                     referencedFrom: pendingLayerInstance.layerPath
                 ) else {
-                    throw USDImportError.invalidData(
+                    throw USDError.invalidData(
                         "USDZ package could not resolve asset \(sublayer.assetPath) from \(pendingLayerInstance.layerPath)."
                     )
                 }
@@ -235,13 +253,13 @@ public struct USDZReader: USDSceneReader {
                     continue
                 }
                 let arcSiteTransform = arc.sitePrimPath.flatMap { layer.primTransforms[$0] } ?? .identity
-                let composedSiteTransform = try arcSiteTransform.validatedConcatenating(pendingLayerInstance.siteTransform)
+                let composedSiteTransform = try arcSiteTransform.concatenating(pendingLayerInstance.siteTransform)
                 guard let resolvedLayerPath = try resolvedLayerPath(
                     forArcAssetPath: arc.assetPath,
                     referencedFrom: pendingLayerInstance.layerPath,
                     in: archive
                 ) else {
-                    throw USDImportError.invalidData(
+                    throw USDError.invalidData(
                         "USDZ package could not resolve asset \(arc.assetPath) from \(pendingLayerInstance.layerPath)."
                     )
                 }
@@ -278,7 +296,7 @@ public struct USDZReader: USDSceneReader {
             )
             let rewriteTransform = try sourceAncestorTransform
                 .inverted()
-                .validatedConcatenating(layerInstance.siteTransform)
+                .concatenating(layerInstance.siteTransform)
             return try rewriting(
                 mesh,
                 sourceTargetPrimPath: targetPrimPath,
@@ -335,7 +353,7 @@ public struct USDZReader: USDSceneReader {
             rewrittenMesh.name = lastPrimName(in: rewrittenPrimPath) ?? rewrittenMesh.name
         }
         rewrittenMesh.points = try rewrittenMesh.points.map { try rewriteTransform.transform($0) }
-        rewrittenMesh.normals = try rewrittenMesh.normals.map { try rewriteTransform.transformNormal($0) }
+        rewrittenMesh.normals = try rewrittenMesh.normals.map { try rewriteTransform.transform(normal: $0) }
         rewrittenMesh.extent = try rewrittenExtent(rewrittenMesh.extent, applying: rewriteTransform)
         return rewrittenMesh
     }
@@ -473,7 +491,7 @@ public struct USDZReader: USDSceneReader {
                     referencedFrom: layerPath,
                     in: archive
                 ) else {
-                    throw USDImportError.invalidData(
+                    throw USDError.invalidData(
                         "USDZ package could not resolve asset \(assetPath) from \(layerPath)."
                     )
                 }
@@ -500,7 +518,7 @@ public struct USDZReader: USDSceneReader {
         options: USDReadingOptions = .default
     ) throws -> USDZResolvedLayer {
         let entryPath = try resolvedEntryPath(for: layerPath)
-        let data = try archive.data(for: layerPath)
+        let data = try archive.layerData(at: layerPath)
         switch fileExtension(for: entryPath) {
         case "usda":
             return try readUSDA(data, layerPath: layerPath, options: options)
@@ -512,7 +530,7 @@ public struct USDZReader: USDSceneReader {
         case "usdc":
             return try readUSDC(data, layerPath: layerPath, options: options)
         default:
-            throw USDImportError.unsupportedFeature("USDZ layer \(layerPath) is not a USD layer.")
+            throw USDError.unsupportedFeature("USDZ layer \(layerPath) is not a USD layer.")
         }
     }
 
@@ -568,7 +586,7 @@ public struct USDZReader: USDSceneReader {
 
     private func layerOptions(
         from options: USDReadingOptions,
-        applying layerOffset: USDLayerOffset
+        applying layerOffset: SdfLayerOffset
     ) throws -> USDReadingOptions {
         guard let timeCode = options.timeCode else {
             return options
@@ -581,7 +599,7 @@ public struct USDZReader: USDSceneReader {
 
     private func resolvedEntryPath(for layerPath: String) throws -> String {
         guard let entryPath = try USDZLayerPath.parse(layerPath).entryPaths.last else {
-            throw USDImportError.invalidData("USDZ layer path is empty.")
+            throw USDError.invalidData("USDZ layer path is empty.")
         }
         return entryPath
     }
@@ -611,7 +629,7 @@ private struct USDZResolvedLayerInstance: Sendable {
     var sitePrimPath: String?
     var siteTransform: USDTransformMatrix4x4
     var targetPrimPath: String?
-    var layerOffset: USDLayerOffset
+    var layerOffset: SdfLayerOffset
 }
 
 private struct USDZPendingLayerInstance: Sendable {
@@ -619,7 +637,7 @@ private struct USDZPendingLayerInstance: Sendable {
     var sitePrimPath: String?
     var siteTransform: USDTransformMatrix4x4
     var targetPrimPath: String?
-    var layerOffset: USDLayerOffset
+    var layerOffset: SdfLayerOffset
     var ancestorKeys: Set<USDZLayerInstanceKey>
 }
 
@@ -627,6 +645,11 @@ private struct USDZLayerInstanceKey: Sendable, Hashable {
     var layerPath: String
     var sitePrimPath: String?
     var targetPrimPath: String?
+}
+
+private struct USDZLayerParseKey: Sendable, Hashable {
+    var layerPath: String
+    var options: USDReadingOptions
 }
 
 private enum USDCReaderSignature {

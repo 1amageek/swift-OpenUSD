@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 import OpenUSD
-import OpenUSDC
+@testable import OpenUSDC
 import OpenUSDZ
 
 @Suite("OpenUSD")
@@ -200,7 +200,8 @@ struct OpenUSDTests {
 
         let scene = try USDAReader().read(from: data)
 
-        #expect(scene.metersPerUnit == 1)
+        // Upstream USD falls back to 0.01 (centimeters) when metersPerUnit is unauthored.
+        #expect(scene.metersPerUnit == 0.01)
         #expect(scene.upAxis == .z)
         #expect(scene.meshes.map(\.name) == ["Triangle"])
     }
@@ -383,14 +384,14 @@ struct OpenUSDTests {
     func transformMatrixReportsInvalidValueCountAsTypedError() throws {
         let matrix = USDTransformMatrix4x4(values: [1])
 
-        #expect(throws: USDImportError.self) {
+        #expect(throws: USDError.self) {
             _ = try matrix.transform(USDPoint3D(x: 0, y: 0, z: 0))
         }
-        #expect(throws: USDImportError.self) {
-            _ = try matrix.transformNormal(USDPoint3D(x: 0, y: 0, z: 1))
+        #expect(throws: USDError.self) {
+            _ = try matrix.transform(normal: USDPoint3D(x: 0, y: 0, z: 1))
         }
-        #expect(throws: USDImportError.self) {
-            _ = try matrix.validatedConcatenating(.identity)
+        #expect(throws: USDError.self) {
+            _ = try matrix.concatenating(.identity)
         }
     }
 
@@ -919,7 +920,7 @@ struct OpenUSDTests {
         }
         """.utf8)
 
-        #expect(throws: USDImportError.self) {
+        #expect(throws: USDError.self) {
             _ = try USDAReader().read(from: data)
         }
     }
@@ -1699,7 +1700,7 @@ struct OpenUSDTests {
         do {
             _ = try USDAReader().read(from: data, options: USDReadingOptions(timeCode: 1))
             Issue.record("Expected blocked points to be reported as a missing required field.")
-        } catch USDImportError.missingRequiredField(let field) {
+        } catch USDError.missingRequiredField(let field) {
             #expect(field == "points")
         } catch {
             Issue.record("Expected missingRequiredField(\"points\"), got \(error).")
@@ -1753,7 +1754,7 @@ struct OpenUSDTests {
             do {
                 _ = try USDAReader().read(from: data)
                 Issue.record("Expected \(testCase.field) to be reported as a missing required field.")
-            } catch USDImportError.missingRequiredField(let field) {
+            } catch USDError.missingRequiredField(let field) {
                 #expect(field == testCase.field)
             } catch {
                 Issue.record("Expected missingRequiredField(\"\(testCase.field)\"), got \(error).")
@@ -1808,9 +1809,9 @@ struct OpenUSDTests {
             do {
                 _ = try USDAReader().read(from: data, options: USDReadingOptions(timeCode: 1))
                 Issue.record("Expected malformed timeSamples to fail.")
-            } catch USDImportError.invalidData {
+            } catch USDError.invalidData {
             } catch {
-                Issue.record("Expected USDImportError.invalidData, got \(error).")
+                Issue.record("Expected USDError.invalidData, got \(error).")
             }
         }
     }
@@ -1875,9 +1876,9 @@ struct OpenUSDTests {
             do {
                 _ = try USDAReader().read(from: data)
                 Issue.record("Expected malformed \(testCase.label) tuple content to fail.")
-            } catch USDImportError.invalidData {
+            } catch USDError.invalidData {
             } catch {
-                Issue.record("Expected USDImportError.invalidData for \(testCase.label), got \(error).")
+                Issue.record("Expected USDError.invalidData for \(testCase.label), got \(error).")
             }
         }
     }
@@ -1889,7 +1890,7 @@ struct OpenUSDTests {
         do {
             _ = try USDCReader().read(from: fixture, options: USDReadingOptions(timeCode: 1))
             Issue.record("Expected blocked points to be reported as a missing required field.")
-        } catch USDImportError.missingRequiredField(let field) {
+        } catch USDError.missingRequiredField(let field) {
             #expect(field == "points")
         } catch {
             Issue.record("Expected missingRequiredField(\"points\"), got \(error).")
@@ -1903,7 +1904,7 @@ struct OpenUSDTests {
         do {
             _ = try USDCReader().read(from: fixture)
             Issue.record("Expected blocked points to be reported as a missing required field.")
-        } catch USDImportError.missingRequiredField(let field) {
+        } catch USDError.missingRequiredField(let field) {
             #expect(field == "points")
         } catch {
             Issue.record("Expected missingRequiredField(\"points\"), got \(error).")
@@ -1918,7 +1919,7 @@ struct OpenUSDTests {
             do {
                 _ = try USDCReader().read(from: fixture, options: USDReadingOptions(timeCode: 1))
                 Issue.record("Expected blocked \(field) to be reported as a missing required field.")
-            } catch USDImportError.missingRequiredField(let missingField) {
+            } catch USDError.missingRequiredField(let missingField) {
                 #expect(missingField == field)
             } catch {
                 Issue.record("Expected missingRequiredField(\"\(field)\"), got \(error).")
@@ -2733,6 +2734,11 @@ struct OpenUSDTests {
         #expect(foo.fieldNames.contains("variability"))
         #expect(foo.fieldNames.contains("default"))
         #expect(foo.fieldNames.contains("connectionPaths"))
+        #expect(foo.fields["connectionPaths"] == .pathListOperation(SdfListOperation(
+            addedItems: ["/bool_tests/Foo/Blah.blah"],
+            deletedItems: ["/bool_tests/Foo/Blah.blah"],
+            orderedItems: ["/bool_tests/Foo/Blah.blah", "/bool_tests/Foo/Bar.blah"]
+        )))
         #expect(uniformLayer.spec(at: "/bool_tests.foo[/bool_tests/Foo/Blah.blah]") == nil)
         #expect(uniformLayer.spec(at: "/bool_tests.foo[/bool_tests/Foo/Bar.blah]") == nil)
 
@@ -2775,6 +2781,23 @@ struct OpenUSDTests {
             layer.spec(at: "/attribute_rel_connect_tests.a3[../Blah/Blah.boo]")
         )
         #expect(relativeListConnection.specType == .connection)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingRelationshipListOperationsReadLayer() throws {
+        let layer = try USDAReader().readLayer(
+            from: openUSDFixture("testSdfParsing.testenv/127_varyingRelationship.usda")
+        )
+
+        let relationship = try #require(layer.spec(at: "/Sphere.constraintTarget"))
+        #expect(relationship.specType == .relationship)
+        #expect(relationship.fields["targetPaths"] == .pathListOperation(SdfListOperation(
+            isExplicit: true,
+            explicitItems: ["/Pivot"],
+            addedItems: ["/Pivot3", "/Pivot2"],
+            deletedItems: ["/Pivot3"],
+            orderedItems: ["/Pivot2", "/Pivot"]
+        )))
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -2855,6 +2878,14 @@ struct OpenUSDTests {
         #expect(prim.fieldNames.contains("properties"))
         let child = try #require(layer.spec(at: "/Prim/Child"))
         #expect(!child.fieldNames.contains("properties"))
+        #expect(prim.fields["properties"] == .pathListOperation(SdfListOperation(
+            orderedItems: [
+                "/Prim.bar:baz",
+                "/Prim.foo:baz",
+                "/Prim.foo:argle",
+                "/Prim.bar:argle",
+            ]
+        )))
         let fooBaz = try #require(layer.spec(at: "/Prim.foo:baz"))
         #expect(fooBaz.specType == .attribute)
         #expect(fooBaz.typeName == "double")
@@ -2872,6 +2903,11 @@ struct OpenUSDTests {
         #expect(fooBargle.typeName == "double")
         #expect(!fooBargle.fieldNames.contains("default"))
         #expect(fooBargle.fieldNames.contains("connectionPaths"))
+        #expect(fooBargle.fields["connectionPaths"] == .pathListOperation(SdfListOperation(
+            addedItems: ["/Prim.foo:argle"],
+            deletedItems: ["/Prim.foo:argle"],
+            orderedItems: ["/Prim.foo:argle"]
+        )))
         #expect(layer.spec(at: "/Prim.foo:bargle[/Prim.foo:argle]") == nil)
         let barArgle = try #require(layer.spec(at: "/Prim.bar:argle"))
         #expect(barArgle.specType == .attribute)
@@ -2886,6 +2922,13 @@ struct OpenUSDTests {
         #expect(varyingRelationship.specType == .relationship)
         #expect(varyingRelationship.fieldNames.contains("variability"))
         #expect(varyingRelationship.fieldNames.contains("targetPaths"))
+        #expect(varyingRelationship.fields["targetPaths"] == .pathListOperation(SdfListOperation(
+            isExplicit: true,
+            explicitItems: ["/Prim"],
+            addedItems: ["/Prim", "/Prim/Child"],
+            deletedItems: ["/Prim/Child"],
+            orderedItems: ["/Prim", "/Prim/Child"]
+        )))
         let varyingTarget = try #require(layer.spec(at: "/Prim.a:b:d[/Prim]"))
         #expect(varyingTarget.specType == .relationshipTarget)
         #expect(layer.spec(at: "/Prim.a:b:d[/Prim/Child]") == nil)
@@ -3002,11 +3045,11 @@ struct OpenUSDTests {
         do {
             _ = try USDAReader().readLayer(from: data)
             Issue.record("Expected invalid UTF-8 prim identifier to fail.")
-        } catch USDImportError.invalidData(let message) {
+        } catch USDError.invalidData(let message) {
             #expect(message.contains("valid identifier"))
             #expect(message.contains("㤼01৪∫"))
         } catch {
-            Issue.record("Expected USDImportError.invalidData, got \(error).")
+            Issue.record("Expected USDError.invalidData, got \(error).")
         }
     }
 
@@ -3042,6 +3085,2304 @@ struct OpenUSDTests {
         let layer = try USDAReader().readLayer(from: data)
 
         #expect(layer.prims.map(\.path).sorted() == ["/RefComp", "/RefComp2", "/RefComp3"])
+        #expect(layer.spec(at: "/")?.fields["framesPerSecond"] == .authored("24"))
+        #expect(layer.spec(at: "/RefComp2")?.fields["hidden"] == .authored("true"))
+        #expect(layer.spec(at: "/RefComp2")?.fields["permission"] == .authored("private"))
+        #expect(layer.spec(at: "/RefComp2.attr")?.fields["hidden"] == .authored("false"))
+        #expect(layer.spec(at: "/RefComp2.myRel")?.fields["permission"] == .authored("private"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaWriterRoundTripsAuthoredLayerFields() throws {
+        let data = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Root"
+            metersPerUnit = 0.01
+            upAxis = "Z"
+            customLayerData = {
+                string owner = "tools"
+            }
+        )
+
+        def Xform "Root" (
+            displayName = "Hero Root"
+            variants = {
+                string modelingVariant = "high"
+            }
+        )
+        {
+            token zeta = "last"
+
+            double driven.connect = </Source.value>
+
+            point3f[] points.timeSamples = {
+                1: [(0, 0, 0)],
+                2: [(1, 0, 0)]
+            }
+
+            add rel extraTargets = [</TargetA>, </TargetB>]
+
+            delete rel extraTargets = [</TargetC>]
+
+            add double linked.connect = [</Source.extra>]
+
+            double compound = 1
+
+            double compound.connect = </Source.compound>
+
+            double compound.timeSamples = {
+                1: 1,
+                2: 2
+            }
+
+            custom uniform double width (
+                displayName = "Width"
+            ) = 2.5
+
+            variantSet "modelingVariant" = {
+                "high" {
+                    def Scope "HighGeom"
+                    {
+                    }
+                }
+            }
+        }
+        """.utf8)
+        let layer = try USDAReader().readLayer(from: data)
+
+        let written = try USDAWriter().string(for: layer)
+        let roundTripped = try USDAReader().readLayer(from: written)
+
+        #expect(written.contains("customLayerData = {"))
+        #expect(written.contains("variants = {"))
+        #expect(written.contains("variantSet \"modelingVariant\""))
+        #expect(written.contains("custom uniform double width"))
+        let zetaRange = try #require(written.range(of: "token zeta"))
+        let widthRange = try #require(written.range(of: "custom uniform double width"))
+        #expect(zetaRange.lowerBound < widthRange.lowerBound)
+        #expect(written.contains("double driven.connect = </Source.value>"))
+        #expect(written.contains("point3f[] points.timeSamples = {"))
+        #expect(written.contains("add rel extraTargets = [</TargetA>, </TargetB>]"))
+        #expect(written.contains("delete rel extraTargets = [</TargetC>]"))
+        #expect(written.contains("add double linked.connect = [</Source.extra>]"))
+        #expect(written.contains("double compound = 1"))
+        #expect(written.contains("double compound.connect = </Source.compound>"))
+        #expect(written.contains("double compound.timeSamples = {"))
+        #expect(roundTripped.defaultPrim == "Root")
+        #expect(roundTripped.upAxis == .z)
+        #expect(roundTripped.spec(at: "/")?.fields["customLayerData"] == .dictionary([
+            "owner": .string("tools"),
+        ]))
+        #expect(roundTripped.spec(at: "/Root")?.fields["displayName"] == .authored("\"Hero Root\""))
+        #expect(roundTripped.spec(at: "/Root")?.fields["variants"] == .dictionary([
+            "modelingVariant": .string("high"),
+        ]))
+        #expect(roundTripped.spec(at: "/Root{modelingVariant}")?.specType == .variantSet)
+        #expect(roundTripped.spec(at: "/Root{modelingVariant=high}")?.specType == .variant)
+        #expect(roundTripped.spec(at: "/Root{modelingVariant=high}")?.fields["body"] == nil)
+        #expect(roundTripped.spec(at: "/Root{modelingVariant=high}/HighGeom")?.specType == .prim)
+        #expect(roundTripped.spec(at: "/Root")?.fields["properties"] == .authored(
+            "/Root.zeta, /Root.driven, /Root.driven[/Source.value], /Root.points, /Root.extraTargets, /Root.linked, /Root.compound, /Root.compound[/Source.compound], /Root.width"
+        ))
+        #expect(roundTripped.spec(at: "/Root.zeta")?.fields["default"] == .authored("\"last\""))
+        #expect(roundTripped.spec(at: "/Root.driven")?.fields["connectionPaths"] == .pathListOperation(SdfListOperation(
+            isExplicit: true,
+            explicitItems: ["/Source.value"]
+        )))
+        #expect(roundTripped.spec(at: "/Root.points")?.fields["timeSamples"] == .authored(
+            "{\n        1: [(0, 0, 0)],\n        2: [(1, 0, 0)]\n    }"
+        ))
+        #expect(roundTripped.spec(at: "/Root.extraTargets")?.fields["targetPaths"] == .pathListOperation(SdfListOperation(
+            addedItems: ["/TargetA", "/TargetB"],
+            deletedItems: ["/TargetC"]
+        )))
+        #expect(roundTripped.spec(at: "/Root.linked")?.fields["connectionPaths"] == .pathListOperation(SdfListOperation(
+            addedItems: ["/Source.extra"]
+        )))
+        #expect(roundTripped.spec(at: "/Root.linked[/Source.extra]") == nil)
+        #expect(roundTripped.spec(at: "/Root.compound")?.fields["default"] == .authored("1"))
+        #expect(roundTripped.spec(at: "/Root.compound")?.fields["connectionPaths"] == .pathListOperation(SdfListOperation(
+            isExplicit: true,
+            explicitItems: ["/Source.compound"]
+        )))
+        #expect(roundTripped.spec(at: "/Root.compound")?.fields["timeSamples"] == .authored(
+            "{\n        1: 1,\n        2: 2\n    }"
+        ))
+        #expect(roundTripped.spec(at: "/Root.width")?.fields["default"] == .authored("2.5"))
+        #expect(roundTripped.spec(at: "/Root.width")?.fields["displayName"] == .authored("\"Width\""))
+        #expect(roundTripped.spec(at: "/Root.width")?.fields["variability"] == .authored("uniform"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaWriterSynthesizesAllPropertyValueFieldsWithoutRawStatements() throws {
+        let layer = USDALayer(specs: [
+            USDLayerSpec(
+                path: "/Root",
+                specType: .prim,
+                specifier: .def,
+                typeName: "Xform"
+            ),
+            USDLayerSpec(
+                path: "/Root.multi",
+                specType: .attribute,
+                typeName: "double",
+                fieldNames: ["typeName", "default", "connectionPaths", "timeSamples"],
+                fields: [
+                    "typeName": .authored("double"),
+                    "default": .authored("1"),
+                    "connectionPaths": .pathListOperation(SdfListOperation(
+                        isExplicit: true,
+                        explicitItems: ["/Source.output"]
+                    )),
+                    "timeSamples": .authored("""
+                    {
+                        1: 1,
+                        2: 2
+                    }
+                    """),
+                ]
+            ),
+            USDLayerSpec(
+                path: "/Root.targets",
+                specType: .relationship,
+                fieldNames: ["targetPaths"],
+                fields: [
+                    "targetPaths": .pathListOperation(SdfListOperation(addedItems: ["/A", "/B"])),
+                ]
+            ),
+        ])
+
+        let written = try USDAWriter().string(for: layer)
+        let roundTripped = try USDAReader().readLayer(from: written)
+
+        #expect(written.contains("double multi = 1"))
+        #expect(written.contains("double multi.connect = </Source.output>"))
+        #expect(written.contains("double multi.timeSamples = {"))
+        #expect(written.contains("add rel targets = [</A>, </B>]"))
+        #expect(roundTripped.spec(at: "/Root.multi")?.fields["default"] == .authored("1"))
+        #expect(roundTripped.spec(at: "/Root.multi")?.fields["connectionPaths"] == .pathListOperation(SdfListOperation(
+            isExplicit: true,
+            explicitItems: ["/Source.output"]
+        )))
+        #expect(roundTripped.spec(at: "/Root.multi")?.fields["timeSamples"] != nil)
+        #expect(roundTripped.spec(at: "/Root.targets")?.fields["targetPaths"] == .pathListOperation(SdfListOperation(
+            addedItems: ["/A", "/B"]
+        )))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaWriterPropertyOrderExplicitListEmitsReorderSyntax() throws {
+        let layer = USDALayer(specs: [
+            USDLayerSpec(
+                path: "/Root",
+                specType: .prim,
+                specifier: .def,
+                typeName: "Xform",
+                fieldNames: ["properties"],
+                fields: [
+                    "properties": .pathListOperation(SdfListOperation(
+                        isExplicit: true,
+                        explicitItems: ["/Root.b", "/Root.a"]
+                    )),
+                ]
+            ),
+            USDLayerSpec(
+                path: "/Root.a",
+                specType: .attribute,
+                typeName: "double",
+                fields: ["default": .authored("1")]
+            ),
+            USDLayerSpec(
+                path: "/Root.b",
+                specType: .attribute,
+                typeName: "double",
+                fields: ["default": .authored("2")]
+            ),
+        ])
+
+        let written = try USDAWriter().string(for: layer)
+        let roundTripped = try USDAReader().readLayer(from: written)
+
+        #expect(written.contains("reorder properties = [\"b\", \"a\"]"))
+        #expect(roundTripped.spec(at: "/Root")?.fields["properties"] == .pathListOperation(SdfListOperation(
+            orderedItems: ["/Root.b", "/Root.a"]
+        )))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaWriterPreservesRawVariantSetBodyWhenVariantsAreNotMaterialized() throws {
+        let layer = USDALayer(specs: [
+            USDLayerSpec(
+                path: "/Root",
+                specType: .prim,
+                specifier: .def,
+                typeName: "Xform"
+            ),
+            USDLayerSpec(
+                path: "/Root{modelingVariant}",
+                specType: .variantSet,
+                fields: [
+                    "body": .authored("""
+                    "low" {
+                        def Scope "Low"
+                        {
+                        }
+                    }
+                    """),
+                ]
+            ),
+        ])
+
+        let written = try USDAWriter().string(for: layer)
+        let roundTripped = try USDAReader().readLayer(from: written)
+
+        #expect(written.contains("variantSet \"modelingVariant\""))
+        #expect(written.contains("\"low\" {"))
+        #expect(written.contains("def Scope \"Low\""))
+        #expect(roundTripped.spec(at: "/Root{modelingVariant=low}")?.fields["body"] == nil)
+        #expect(roundTripped.spec(at: "/Root{modelingVariant=low}/Low")?.specType == .prim)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaReaderMaterializesStructuredVariantBodySpecs() throws {
+        let layer = try SdfLayer.importUSDA(from: Data("""
+        #usda 1.0
+
+        def Xform "Root"
+        {
+            variantSet "modelingVariant" = {
+                "high" {
+                    reorder properties = ["width"]
+                    double width = 2.5
+                    def Scope "Geom"
+                    {
+                        token purpose = "render"
+                    }
+                    variantSet "lod" = {
+                        "low" {
+                            token detail = "proxy"
+                        }
+                    }
+                }
+            }
+        }
+        """.utf8))
+        let variantPath = try SdfPath("/Root{modelingVariant=high}")
+        let widthPath = try SdfPath("/Root{modelingVariant=high}.width")
+        let geomPath = try SdfPath("/Root{modelingVariant=high}/Geom")
+        let purposePath = try SdfPath("/Root{modelingVariant=high}/Geom.purpose")
+        let lodVariantSetPath = try SdfPath("/Root{modelingVariant=high}{lod}")
+        let lodVariantPath = try SdfPath("/Root{modelingVariant=high}{lod=low}")
+        let detailPath = try SdfPath("/Root{modelingVariant=high}{lod=low}.detail")
+
+        #expect(layer.spec(at: variantPath)?.fields["body"] == nil)
+        #expect(layer.spec(at: variantPath)?.fields["properties"] == .pathListOperation(SdfListOperation(
+            orderedItems: [widthPath]
+        )))
+        #expect(layer.spec(at: widthPath)?.fields["default"] == .authored("2.5"))
+        #expect(layer.spec(at: geomPath)?.specType == .prim)
+        #expect(layer.spec(at: purposePath)?.fields["default"] == .authored("\"render\""))
+        #expect(layer.spec(at: lodVariantSetPath)?.specType == .variantSet)
+        #expect(layer.spec(at: lodVariantPath)?.fields["body"] == nil)
+        #expect(layer.spec(at: detailPath)?.fields["default"] == .authored("\"proxy\""))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaReaderPreservesRawVariantBodyWhenDirectStatementsAreUnsupported() throws {
+        let layer = try USDAReader().readLayer(from: Data("""
+        #usda 1.0
+
+        def Xform "Root"
+        {
+            variantSet "modelingVariant" = {
+                "high" {
+                    unknownStatement = {
+                        string owner = "raw"
+                    }
+                    def Scope "Known"
+                    {
+                    }
+                }
+            }
+        }
+        """.utf8))
+        let bodyField = try #require(layer.spec(at: "/Root{modelingVariant=high}")?.fields["body"])
+
+        #expect(layer.spec(at: "/Root{modelingVariant=high}/Known") == nil)
+        if case .authored(let body) = bodyField {
+            #expect(body.contains("unknownStatement = {"))
+            #expect(body.contains("def Scope \"Known\""))
+        } else {
+            Issue.record("Expected unsupported variant body to be preserved as authored text.")
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaWriterWritesStructuredVariantSpecsWithoutRawBody() throws {
+        let variantPath = try SdfPath("/Root{modelingVariant=high}")
+        let widthPath = try SdfPath("/Root{modelingVariant=high}.width")
+        let layer = try SdfLayer(
+            defaultPrim: "Root",
+            specs: [
+                SdfSpec(path: .absoluteRoot, specType: .pseudoRoot),
+                SdfSpec(path: "/Root", specType: .prim, specifier: .def, typeName: "Xform"),
+                SdfSpec(path: "/Root{modelingVariant}", specType: .variantSet),
+                SdfSpec(
+                    path: variantPath,
+                    specType: .variant,
+                    fieldNames: ["name", "properties"],
+                    fields: [
+                        "name": .authored("\"high\""),
+                        "properties": .pathListOperation(SdfListOperation(orderedItems: [widthPath])),
+                    ]
+                ),
+                SdfSpec(
+                    path: widthPath,
+                    specType: .attribute,
+                    typeName: "double",
+                    fields: [
+                        "default": .authored("2.5"),
+                        "typeName": .authored("double"),
+                    ]
+                ),
+                SdfSpec(path: "/Root{modelingVariant=high}/Geom", specType: .prim, specifier: .def, typeName: "Scope"),
+                SdfSpec(
+                    path: "/Root{modelingVariant=high}/Geom.purpose",
+                    specType: .attribute,
+                    typeName: "token",
+                    fields: [
+                        "default": .authored("\"render\""),
+                        "typeName": .authored("token"),
+                    ]
+                ),
+            ]
+        )
+
+        let written = try layer.exportUSDA()
+        let roundTripped = try USDAReader().readLayer(from: written)
+
+        #expect(written.contains("variantSet \"modelingVariant\""))
+        #expect(written.contains("\"high\" {"))
+        #expect(written.contains("reorder properties = [\"width\"]"))
+        #expect(written.contains("double width = 2.5"))
+        #expect(written.contains("def Scope \"Geom\""))
+        #expect(written.contains("token purpose = \"render\""))
+        #expect(roundTripped.spec(at: variantPath.rawValue)?.fields["body"] == nil)
+        #expect(roundTripped.spec(at: variantPath.rawValue)?.fields["properties"] == .pathListOperation(SdfListOperation(
+            orderedItems: [widthPath.rawValue]
+        )))
+        #expect(roundTripped.spec(at: widthPath.rawValue)?.fields["default"] == .authored("2.5"))
+        #expect(roundTripped.spec(at: "/Root{modelingVariant=high}/Geom")?.specType == .prim)
+        #expect(roundTripped.spec(at: "/Root{modelingVariant=high}/Geom.purpose")?.fields["default"] == .authored("\"render\""))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaWriterRejectsVariantRawBodyMixedWithStructuredSpecs() throws {
+        let layer = try SdfLayer(specs: [
+            SdfSpec(path: .absoluteRoot, specType: .pseudoRoot),
+            SdfSpec(path: "/Root", specType: .prim, specifier: .def, typeName: "Xform"),
+            SdfSpec(path: "/Root{modelingVariant}", specType: .variantSet),
+            SdfSpec(
+                path: "/Root{modelingVariant=high}",
+                specType: .variant,
+                fieldNames: ["name", "body"],
+                fields: [
+                    "name": .authored("\"high\""),
+                    "body": .authored("""
+                    def Scope "RawGeom"
+                    {
+                    }
+                    """),
+                ]
+            ),
+            SdfSpec(path: "/Root{modelingVariant=high}/StructuredGeom", specType: .prim, specifier: .def),
+        ])
+
+        #expect(throws: USDError.self) {
+            _ = try layer.exportUSDA()
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaWriterRejectsVariantSetRawBodyMixedWithStructuredVariants() throws {
+        let layer = try SdfLayer(specs: [
+            SdfSpec(path: .absoluteRoot, specType: .pseudoRoot),
+            SdfSpec(path: "/Root", specType: .prim, specifier: .def, typeName: "Xform"),
+            SdfSpec(
+                path: "/Root{modelingVariant}",
+                specType: .variantSet,
+                fields: [
+                    "body": .authored("""
+                    "low" {
+                        def Scope "Low"
+                        {
+                        }
+                    }
+                    """),
+                ]
+            ),
+            SdfSpec(path: "/Root{modelingVariant=high}", specType: .variant),
+        ])
+
+        #expect(throws: USDError.self) {
+            _ = try layer.exportUSDA()
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaWriterRejectsUnsupportedVariantSetFields() throws {
+        let layer = try SdfLayer(specs: [
+            SdfSpec(path: .absoluteRoot, specType: .pseudoRoot),
+            SdfSpec(path: "/Root", specType: .prim, specifier: .def, typeName: "Xform"),
+            SdfSpec(
+                path: "/Root{modelingVariant}",
+                specType: .variantSet,
+                fields: [
+                    "displayName": .string("Modeling"),
+                ]
+            ),
+        ])
+
+        #expect(throws: USDError.self) {
+            _ = try layer.exportUSDA()
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaWriterRejectsUnknownPrimSpecifier() throws {
+        let layer = USDALayer(specs: [
+            USDLayerSpec(path: "/Root", specType: .prim, specifier: .unknown(255), typeName: "Xform"),
+        ])
+
+        #expect(throws: USDError.self) {
+            _ = try USDAWriter().string(for: layer)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaWriterRejectsDuplicatePropertySpecs() throws {
+        let layer = USDALayer(specs: [
+            USDLayerSpec(path: "/Root", specType: .prim, specifier: .def, typeName: "Xform"),
+            USDLayerSpec(
+                path: "/Root.value",
+                specType: .attribute,
+                typeName: "double",
+                fields: ["default": .authored("1")]
+            ),
+            USDLayerSpec(
+                path: "/Root.value",
+                specType: .attribute,
+                typeName: "double",
+                fields: ["default": .authored("2")]
+            ),
+        ])
+
+        #expect(throws: USDError.self) {
+            _ = try USDAWriter().string(for: layer)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaWriterRejectsOrphanAndUnsupportedLayerSpecs() throws {
+        let orphanPropertyLayer = USDALayer(specs: [
+            USDLayerSpec(
+                path: "/Missing.value",
+                specType: .attribute,
+                typeName: "double",
+                fields: ["default": .authored("1")]
+            ),
+        ])
+        let orphanVariantLayer = USDALayer(specs: [
+            USDLayerSpec(path: "/Root{modelingVariant=high}", specType: .variant),
+        ])
+        let unsupportedTargetMetadataLayer = USDALayer(specs: [
+            USDLayerSpec(path: "/Root", specType: .prim, specifier: .def),
+            USDLayerSpec(
+                path: "/Root.target",
+                specType: .relationship,
+                fieldNames: ["targetPaths"],
+                fields: [
+                    "targetPaths": .pathListOperation(SdfListOperation(isExplicit: true, explicitItems: ["/Target"])),
+                ]
+            ),
+            USDLayerSpec(
+                path: "/Root.target[/Target]",
+                specType: .relationshipTarget,
+                fieldNames: ["displayName"],
+                fields: ["displayName": .authored("\"Target\"")]
+            ),
+        ])
+
+        #expect(throws: USDError.self) {
+            _ = try USDAWriter().string(for: orphanPropertyLayer)
+        }
+        #expect(throws: USDError.self) {
+            _ = try USDAWriter().string(for: orphanVariantLayer)
+        }
+        #expect(throws: USDError.self) {
+            _ = try USDAWriter().string(for: unsupportedTargetMetadataLayer)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func sdfPathClassifiesSceneDescriptionPaths() throws {
+        let root = SdfPath.absoluteRoot
+        let world = try SdfPath("/World")
+        let geom = try world.appendingChild("Geom")
+        let points = try geom.appendingProperty("points")
+        let binding = try world.appendingProperty("look:binding")
+        let target = try SdfPath("/World.look:binding[/Looks/Mat.preview]")
+        let variantSet = try SdfPath("/World{modelingVariant}")
+        let variantSelection = try SdfPath("/World{modelingVariant=high}")
+        let chainedVariantSet = try SdfPath("/World{modelingVariant=high}{lod}")
+        let chainedVariantSelection = try SdfPath("/World{modelingVariant=high}{lod=low}")
+        let variantPrim = try SdfPath("/World{modelingVariant=high}/Geom")
+        let targetPrim = try SdfPath("/Looks/Mat.preview")
+        let relativePrim = try SdfPath("World")
+        let relativeTargetPath = try SdfPath("/World.rel[Target]")
+        let relativeTarget = try SdfPath("Target")
+
+        #expect(root.kind == .pseudoRoot)
+        #expect(root.parentPath == nil)
+        #expect(world.kind == .prim)
+        #expect(world.parentPath == root)
+        #expect(geom.rawValue == "/World/Geom")
+        #expect(points.kind == .property)
+        #expect(points.primPath == geom)
+        #expect(points.propertyName == "points")
+        #expect(binding.propertyName == "look:binding")
+        #expect(target.kind == .propertyTarget)
+        #expect(target.propertyPath == binding)
+        #expect(target.targetPath == targetPrim)
+        #expect(relativePrim.isRelative)
+        #expect(relativeTargetPath.targetPath == relativeTarget)
+        #expect(variantSet.kind == .variantSet)
+        #expect(variantSet.parentPath == world)
+        #expect(chainedVariantSet.kind == .variantSet)
+        #expect(chainedVariantSet.parentPath == variantSelection)
+        #expect(chainedVariantSelection.kind == .variantSelection)
+        #expect(variantPrim.kind == .prim)
+        #expect(variantPrim.containsVariantSelection)
+        #expect(variantPrim.parentPath == variantSelection)
+
+        for invalidPath in ["", "/World/", "/World..bad", "/World{variant}/Geom"] {
+            #expect(throws: USDError.self) {
+                _ = try SdfPath(invalidPath)
+            }
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func sdfSpecFieldsPreserveOrderAndTypedListOperations() throws {
+        let sourcePath = try SdfPath("/Source.output")
+        var spec = try SdfSpec(path: "/Root.input", specType: .attribute, typeName: "double")
+        spec.setField(.authored("double"), for: "typeName")
+        spec.setField(.authored("1"), for: "default")
+        spec.setField(.pathListOperation(SdfListOperation(isExplicit: true, explicitItems: [sourcePath])), for: "connectionPaths")
+
+        let usdSpec = spec.toUSDLayerSpec()
+        let restored = try SdfSpec(layerSpec: usdSpec)
+
+        #expect(spec.listFields() == ["typeName", "default", "connectionPaths"])
+        #expect(spec.hasField(named: "default"))
+        #expect(usdSpec.fields["connectionPaths"] == .pathListOperation(SdfListOperation(
+            isExplicit: true,
+            explicitItems: ["/Source.output"]
+        )))
+        #expect(restored.field(named: "connectionPaths")?.pathListOperation?.explicitItems == [sourcePath])
+
+        spec.clearField(named: "default")
+
+        #expect(!spec.hasField(named: "default"))
+        #expect(spec.listFields() == ["typeName", "connectionPaths"])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdListOperationEffectiveItemsApplyListEdits() {
+        let operation = SdfListOperation(
+            isExplicit: true,
+            explicitItems: ["A", "B", "B"],
+            addedItems: ["D", "C"],
+            prependedItems: ["C", "A"],
+            appendedItems: ["A", "E"],
+            deletedItems: ["B"],
+            orderedItems: ["E", "C", "Missing"]
+        )
+
+        #expect(operation.effectiveItems == ["A", "B"])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func sdfLayerExportRejectsNonRoundTrippableMetadataValues() throws {
+        let listOperationLayer = try SdfLayer(specs: [
+            SdfSpec(path: .absoluteRoot, specType: .pseudoRoot),
+            SdfSpec(
+                path: "/Root",
+                specType: .prim,
+                specifier: .def,
+                typeName: "Xform",
+                fields: [
+                    "labels": .stringListOperation(SdfListOperation(prependedItems: ["hero"])),
+                ]
+            ),
+        ])
+        let arbitraryReferenceFieldLayer = try SdfLayer(specs: [
+            SdfSpec(path: .absoluteRoot, specType: .pseudoRoot),
+            SdfSpec(
+                path: "/Root",
+                specType: .prim,
+                specifier: .def,
+                typeName: "Xform",
+                fields: [
+                    "customReferences": .referenceListOperation(SdfListOperation(
+                        isExplicit: true,
+                        explicitItems: [
+                            SdfReference(assetPath: "asset.usda"),
+                        ]
+                    )),
+                ]
+            ),
+        ])
+
+        #expect(throws: USDError.self) {
+            _ = try listOperationLayer.exportUSDA()
+        }
+        #expect(throws: USDError.self) {
+            _ = try arbitraryReferenceFieldLayer.exportUSDA()
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func sdfLayerExportsStructuredDictionaryMetadataWithoutLoss() throws {
+        let dictionaryValue = SdfFieldValue.dictionary([
+            "asset": .assetPath("textures/@albedo@.png"),
+            "nested value": .dictionary([
+                "enabled": .bool(true),
+                "origin": .point2(USDPoint2D(x: 0.25, y: 0.75)),
+                "samples": .doubleArray([1.25, 2]),
+                "startTime": .timeCode(24),
+            ]),
+            "owner": .string("tools"),
+            "stValues": .point2Array([
+                USDPoint2D(x: 0, y: 0),
+                USDPoint2D(x: 1, y: 1),
+            ]),
+            "tags": .tokenArray(["hero", "render"]),
+        ])
+        let layer = try SdfLayer(specs: [
+            SdfSpec(path: .absoluteRoot, specType: .pseudoRoot),
+            SdfSpec(
+                path: "/Root",
+                specType: .prim,
+                specifier: .def,
+                typeName: "Xform",
+                fieldNames: ["specifier", "typeName", "customData"],
+                fields: [
+                    "specifier": .specifier(.def),
+                    "typeName": .token("Xform"),
+                    "customData": dictionaryValue,
+                ]
+            ),
+        ])
+
+        let written = try layer.exportUSDA()
+        let roundTripped = try SdfLayer.importUSDA(from: written)
+
+        #expect(written.contains("customData = {"))
+        #expect(written.contains("asset asset = @@@textures/@albedo@.png@@@"))
+        #expect(written.contains("dictionary \"nested value\" = {"))
+        #expect(written.contains("double2 origin = (0.25, 0.75)"))
+        #expect(written.contains("double2[] stValues = [(0.0, 0.0), (1.0, 1.0)]"))
+        #expect(written.contains("timecode startTime = 24.0"))
+        #expect(roundTripped.field(named: "customData", at: try SdfPath("/Root")) == dictionaryValue)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaReaderMaterializesDictionaryPoint2Aliases() throws {
+        let layer = try SdfLayer.importUSDA(from: """
+        #usda 1.0
+
+        def Xform "Root" (
+            customData = {
+                float2 st = (0.5, 1)
+                texCoord2f[] uvSet = [(0, 0), (1, 1)]
+            }
+        )
+        {
+        }
+        """)
+
+        #expect(layer.field(named: "customData", at: try SdfPath("/Root")) == .dictionary([
+            "st": .point2(USDPoint2D(x: 0.5, y: 1)),
+            "uvSet": .point2Array([
+                USDPoint2D(x: 0, y: 0),
+                USDPoint2D(x: 1, y: 1),
+            ]),
+        ]))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func sdfLayerExportsStringSubstitutionMetadataWithoutLoss() throws {
+        let substitutionFields: [String: SdfFieldValue] = [
+            "prefixSubstitutions": .dictionary([
+                "$Left": .string("Right"),
+                "Left": .string("Right"),
+            ]),
+            "suffixSubstitutions": .dictionary([
+                "$NUM": .string("1"),
+            ]),
+        ]
+        let layer = try SdfLayer(specs: [
+            SdfSpec(path: .absoluteRoot, specType: .pseudoRoot),
+            SdfSpec(
+                path: "/RightLeg",
+                specType: .prim,
+                specifier: .def,
+                typeName: "MfScope",
+                fieldNames: ["specifier", "typeName", "prefixSubstitutions", "suffixSubstitutions"],
+                fields: [
+                    "specifier": .specifier(.def),
+                    "typeName": .token("MfScope"),
+                ].merging(substitutionFields) { _, new in new }
+            ),
+        ])
+
+        let written = try layer.exportUSDA()
+        let roundTripped = try SdfLayer.importUSDA(from: written)
+
+        #expect(written.contains("prefixSubstitutions = {"))
+        #expect(written.contains("\"$Left\": \"Right\","))
+        #expect(written.contains("\"Left\": \"Right\","))
+        #expect(written.contains("suffixSubstitutions = {"))
+        #expect(written.contains("\"$NUM\": \"1\","))
+        #expect(roundTripped.field(named: "prefixSubstitutions", at: try SdfPath("/RightLeg")) == substitutionFields["prefixSubstitutions"])
+        #expect(roundTripped.field(named: "suffixSubstitutions", at: try SdfPath("/RightLeg")) == substitutionFields["suffixSubstitutions"])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func sdfLayerExportRejectsInvalidStringSubstitutionMetadata() throws {
+        let nonStringValueLayer = try SdfLayer(specs: [
+            SdfSpec(path: .absoluteRoot, specType: .pseudoRoot),
+            SdfSpec(
+                path: "/Root",
+                specType: .prim,
+                specifier: .def,
+                typeName: "Xform",
+                fields: [
+                    "prefixSubstitutions": .dictionary([
+                        "$Left": .token("Right"),
+                    ]),
+                ]
+            ),
+        ])
+        let emptyKeyLayer = try SdfLayer(specs: [
+            SdfSpec(path: .absoluteRoot, specType: .pseudoRoot),
+            SdfSpec(
+                path: "/Root",
+                specType: .prim,
+                specifier: .def,
+                typeName: "Xform",
+                fields: [
+                    "suffixSubstitutions": .dictionary([
+                        "": .string("1"),
+                    ]),
+                ]
+            ),
+        ])
+
+        #expect(throws: USDError.self) {
+            _ = try nonStringValueLayer.exportUSDA()
+        }
+        #expect(throws: USDError.self) {
+            _ = try emptyKeyLayer.exportUSDA()
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func sdfLayerExportsKnownTokenMetadataListOperationsWithoutLoss() throws {
+        let operation = SdfListOperation(
+            isExplicit: true,
+            explicitItems: ["CollectionAPI"],
+            prependedItems: ["PhysicsAPI"],
+            appendedItems: ["MaterialBindingAPI"],
+            deletedItems: ["OldAPI"],
+            orderedItems: ["PhysicsAPI", "CollectionAPI"]
+        )
+        let layer = try SdfLayer(specs: [
+            SdfSpec(path: .absoluteRoot, specType: .pseudoRoot),
+            SdfSpec(
+                path: "/Root",
+                specType: .prim,
+                specifier: .def,
+                typeName: "Xform",
+                fieldNames: ["specifier", "typeName", "apiSchemas"],
+                fields: [
+                    "specifier": .specifier(.def),
+                    "typeName": .token("Xform"),
+                    "apiSchemas": .tokenListOperation(operation),
+                ]
+            ),
+        ])
+
+        let written = try layer.exportUSDA()
+        let roundTripped = try SdfLayer.importUSDA(from: written)
+
+        #expect(written.contains("apiSchemas = \"CollectionAPI\""))
+        #expect(written.contains("prepend apiSchemas = \"PhysicsAPI\""))
+        #expect(written.contains("append apiSchemas = \"MaterialBindingAPI\""))
+        #expect(written.contains("delete apiSchemas = \"OldAPI\""))
+        #expect(written.contains("reorder apiSchemas = [\"PhysicsAPI\", \"CollectionAPI\"]"))
+        #expect(roundTripped.field(named: "apiSchemas", at: try SdfPath("/Root")) == .tokenListOperation(operation))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func sdfLayerExportsVariantSetNamesMetadataListOperationsWithoutLoss() throws {
+        let rootPath = try SdfPath("/Root")
+        let operation = SdfListOperation(
+            isExplicit: true,
+            explicitItems: ["modelingVariant", "lookVariant"],
+            addedItems: ["renderVariant"],
+            prependedItems: ["lod"],
+            deletedItems: ["oldVariant"],
+            orderedItems: ["lod", "modelingVariant"]
+        )
+        let layer = SdfLayer(specs: [
+            SdfSpec(path: .absoluteRoot, specType: .pseudoRoot),
+            SdfSpec(
+                path: rootPath,
+                specType: .prim,
+                specifier: .def,
+                typeName: "Xform",
+                fieldNames: ["specifier", "typeName", "variantSetNames"],
+                fields: [
+                    "specifier": .specifier(.def),
+                    "typeName": .token("Xform"),
+                    "variantSetNames": .stringListOperation(operation),
+                ]
+            ),
+        ])
+
+        let written = try layer.exportUSDA()
+        let roundTripped = try SdfLayer.importUSDA(from: written)
+
+        #expect(written.contains("variantSets = [\"modelingVariant\", \"lookVariant\"]"))
+        #expect(written.contains("add variantSets = \"renderVariant\""))
+        #expect(written.contains("prepend variantSets = \"lod\""))
+        #expect(written.contains("delete variantSets = \"oldVariant\""))
+        #expect(written.contains("reorder variantSets = [\"lod\", \"modelingVariant\"]"))
+        #expect(roundTripped.field(named: "variantSetNames", at: rootPath) == .stringListOperation(operation))
+        #expect(roundTripped.spec(at: try SdfPath("/Root{modelingVariant}"))?.specType == .variantSet)
+        #expect(roundTripped.spec(at: try SdfPath("/Root{lookVariant}"))?.specType == .variantSet)
+        #expect(roundTripped.spec(at: try SdfPath("/Root{renderVariant}"))?.specType == .variantSet)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func sdfLayerExportRejectsInvalidVariantSetNamesMetadata() throws {
+        let layer = try SdfLayer(specs: [
+            SdfSpec(path: .absoluteRoot, specType: .pseudoRoot),
+            SdfSpec(
+                path: "/Root",
+                specType: .prim,
+                specifier: .def,
+                typeName: "Xform",
+                fields: [
+                    "variantSetNames": .stringListOperation(SdfListOperation(
+                        isExplicit: true,
+                        explicitItems: ["bad name"]
+                    )),
+                ]
+            ),
+        ])
+
+        #expect(throws: USDError.self) {
+            _ = try layer.exportUSDA()
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func sdfLayerExportsInheritsAndSpecializesPathListOperationsWithoutLoss() throws {
+        let rootPath = try SdfPath("/Root")
+        let rigPath = try SdfPath("/Rig")
+        let mixinPath = try SdfPath("/Mixin")
+        let oldRigPath = try SdfPath("/OldRig")
+        let specializedPath = try SdfPath("/Specialized")
+        let inheritOperation = SdfListOperation(
+            isExplicit: true,
+            explicitItems: [rigPath],
+            prependedItems: [mixinPath],
+            deletedItems: [oldRigPath],
+            orderedItems: [mixinPath, rigPath]
+        )
+        let specializesOperation = SdfListOperation(appendedItems: [specializedPath])
+        let layer = SdfLayer(specs: [
+            SdfSpec(path: .absoluteRoot, specType: .pseudoRoot),
+            SdfSpec(
+                path: rootPath,
+                specType: .prim,
+                specifier: .def,
+                typeName: "Xform",
+                fieldNames: ["specifier", "typeName", "inheritPaths", "specializes"],
+                fields: [
+                    "specifier": .specifier(.def),
+                    "typeName": .token("Xform"),
+                    "inheritPaths": .pathListOperation(inheritOperation),
+                    "specializes": .pathListOperation(specializesOperation),
+                ]
+            ),
+            SdfSpec(path: rigPath, specType: .prim, specifier: .class),
+            SdfSpec(path: mixinPath, specType: .prim, specifier: .class),
+            SdfSpec(path: oldRigPath, specType: .prim, specifier: .class),
+            SdfSpec(path: specializedPath, specType: .prim, specifier: .class),
+        ])
+
+        let written = try layer.exportUSDA()
+        let roundTripped = try SdfLayer.importUSDA(from: written)
+
+        #expect(written.contains("inherits = </Rig>"))
+        #expect(written.contains("delete inherits = </OldRig>"))
+        #expect(written.contains("prepend inherits = </Mixin>"))
+        #expect(written.contains("reorder inherits = [</Mixin>, </Rig>]"))
+        #expect(written.contains("append specializes = </Specialized>"))
+        #expect(roundTripped.field(named: "inheritPaths", at: rootPath) == .pathListOperation(inheritOperation))
+        #expect(roundTripped.field(named: "specializes", at: rootPath) == .pathListOperation(specializesOperation))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func sdfLayerExportWritesTokenEnumsAndEscapedAssetPaths() throws {
+        let layer = try SdfLayer(specs: [
+            SdfSpec(path: .absoluteRoot, specType: .pseudoRoot),
+            SdfSpec(
+                path: "/Root",
+                specType: .prim,
+                specifier: .def,
+                typeName: "Xform",
+                fieldNames: ["specifier", "typeName", "permission", "assetPath", "references"],
+                fields: [
+                    "specifier": .specifier(.def),
+                    "typeName": .token("Xform"),
+                    "permission": .permission(.privateAccess),
+                    "assetPath": .assetPath("textures/@albedo@.png"),
+                    "references": .referenceListOperation(SdfListOperation(
+                        isExplicit: true,
+                        explicitItems: [
+                            SdfReference(assetPath: "assets/@hero@.usda", primPath: try SdfPath("/Hero")),
+                        ]
+                    )),
+                ]
+            ),
+        ])
+
+        let written = try layer.exportUSDA()
+        let roundTripped = try SdfLayer.importUSDA(from: written)
+
+        #expect(written.contains("permission = private"))
+        #expect(!written.contains("permission = \"private\""))
+        #expect(written.contains("@@@textures/@albedo@.png@@@"))
+        #expect(written.contains("@@@assets/@hero@.usda@@@</Hero>"))
+        #expect(roundTripped.field(named: "permission", at: try SdfPath("/Root")) == .authored("private"))
+        #expect(roundTripped.field(named: "references", at: try SdfPath("/Root")) == .referenceListOperation(SdfListOperation(
+            isExplicit: true,
+            explicitItems: [
+                SdfReference(assetPath: "assets/@hero@.usda", primPath: try SdfPath("/Hero")),
+            ]
+        )))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdPluginRegistryParsesPlugInfoAndSchemaRegistryBuildsDefinitions() throws {
+        let plugInfo = Data("""
+        {
+            # Hash comments are accepted by OpenUSD plugInfo files.
+            "Plugins": [
+                {
+                    "Type": "resource",
+                    "Name": "ExampleSchemas",
+                    "Root": "schemas",
+                    "ResourcePath": "resources",
+                    "Info": {
+                        "Types": {
+                            "Hair": {
+                                "schemaKind": "concreteTyped",
+                                "fallbackPrimTypes": ["Xform"],
+                                "propertyNames": ["points", "widths"],
+                                "fallbackFields": {
+                                    "purpose": "render"
+                                }
+                            },
+                            "PhysicsAPI": {
+                                "apiSchemaType": "singleApply",
+                                "propertyNames": ["physics:mass"],
+                                "fallbackFields": {
+                                    "physics:mass": 1.0
+                                }
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+        """.utf8)
+        var pluginRegistry = USDPluginRegistry()
+
+        let plugins = try pluginRegistry.registerPlugInfo(from: plugInfo)
+        let schemaRegistry = try USDSchemaRegistry(plugins: pluginRegistry.plugins)
+
+        #expect(plugins.count == 1)
+        #expect(pluginRegistry.plugin(named: "ExampleSchemas")?.type == .resource)
+        #expect(pluginRegistry.declaredTypeNames == ["Hair", "PhysicsAPI"])
+        #expect(pluginRegistry.pluginsDeclaring(typeName: "Hair").map(\.name) == ["ExampleSchemas"])
+        #expect(schemaRegistry.isConcrete("Hair"))
+        #expect(schemaRegistry.isA("Hair", "Xform"))
+        #expect(schemaRegistry.isA("Hair", "Scope"))
+        #expect(schemaRegistry.isAppliedAPISchema("PhysicsAPI"))
+        #expect(schemaRegistry.definition(for: "Hair")?.propertyNames == ["points", "widths"])
+        #expect(schemaRegistry.definition(for: "Hair")?.fallbackFields["purpose"] == .string("render"))
+
+        let composed = try schemaRegistry.composedDefinition(primType: "Hair", appliedAPISchemas: ["PhysicsAPI"])
+        #expect(composed.typeName == "Hair")
+        #expect(composed.appliedAPISchemas == ["PhysicsAPI"])
+        #expect(composed.propertyNames.contains("points"))
+        #expect(composed.propertyNames.contains("physics:mass"))
+        #expect(composed.fallbackFields["physics:mass"] == .double(1))
+
+        var stage = USDStage.createInMemory()
+        let prim = try stage.definePrim(at: SdfPath("/Groom"), typeName: "Hair")
+        #expect(prim.isA("Xform", registry: schemaRegistry))
+        #expect(!prim.isA("PhysicsAPI", registry: schemaRegistry))
+        #expect(throws: USDError.self) {
+            _ = try schemaRegistry.composedDefinition(primType: "Hair", appliedAPISchemas: ["Hair"])
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdPluginRegistryResolvesIncludesAndGeneratedSchemaDefinitions() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("swift-openusd-plugin-\(UUID().uuidString)")
+        let schemaDirectory = directory.appendingPathComponent("schemas")
+        try FileManager.default.createDirectory(at: schemaDirectory, withIntermediateDirectories: true)
+        defer {
+            do {
+                try FileManager.default.removeItem(at: directory)
+            } catch {
+            }
+        }
+
+        let rootPlugInfoURL = directory.appendingPathComponent("plugInfo.json")
+        let schemaPlugInfoURL = schemaDirectory.appendingPathComponent("plugInfo.json")
+        let generatedSchemaURL = schemaDirectory.appendingPathComponent("generatedSchema.usda")
+        try Data("""
+        {
+            "Includes": [
+                "schemas/"
+            ]
+        }
+        """.utf8).write(to: rootPlugInfoURL)
+        try Data("""
+        {
+            "Plugins": [
+                {
+                    "Type": "resource",
+                    "Name": "GeneratedSchemas",
+                    "Root": ".",
+                    "ResourcePath": ".",
+                    "Info": {
+                        "Types": {
+                            "UsdGeomImageable": {
+                                "autoGenerated": true,
+                                "bases": ["UsdTyped"],
+                                "schemaIdentifier": "Imageable",
+                                "schemaKind": "abstractTyped"
+                            },
+                            "UsdGeomXform": {
+                                "autoGenerated": true,
+                                "bases": ["UsdGeomImageable"],
+                                "schemaIdentifier": "Xform",
+                                "schemaKind": "concreteTyped"
+                            },
+                            "UsdGeomMesh": {
+                                "autoGenerated": true,
+                                "bases": ["UsdGeomXform"],
+                                "schemaIdentifier": "Mesh",
+                                "schemaKind": "concreteTyped"
+                            },
+                            "UsdGeomVisibilityAPI": {
+                                "autoGenerated": true,
+                                "bases": ["UsdAPISchemaBase"],
+                                "schemaIdentifier": "VisibilityAPI",
+                                "schemaKind": "singleApplyAPI"
+                            },
+                            "UsdCollectionAPI": {
+                                "apiSchemaPropertyNamespacePrefix": "collection",
+                                "autoGenerated": true,
+                                "bases": ["UsdAPISchemaBase"],
+                                "schemaIdentifier": "CollectionAPI",
+                                "schemaKind": "multipleApplyAPI"
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+        """.utf8).write(to: schemaPlugInfoURL)
+        try Data("""
+        #usda 1.0
+
+        class "Imageable"
+        {
+            token visibility = "inherited"
+        }
+
+        class Xform "Xform"
+        {
+            uniform token[] xformOpOrder
+        }
+
+        class Mesh "Mesh"
+        {
+            point3f[] points
+            uniform token subdivisionScheme = "catmullClark"
+        }
+
+        class "VisibilityAPI"
+        {
+            token visibility = "inherited"
+        }
+
+        class "CollectionAPI"
+        {
+            bool includeRoot = false
+            rel includes
+        }
+        """.utf8).write(to: generatedSchemaURL)
+        var pluginRegistry = USDPluginRegistry()
+
+        let plugins = try pluginRegistry.registerPlugInfo(at: rootPlugInfoURL)
+        let schemaRegistry = try USDSchemaRegistry(plugins: plugins, includeBuiltInDefinitions: false)
+        let mesh = try #require(schemaRegistry.definition(for: "Mesh"))
+        let composed = try schemaRegistry.composedDefinition(
+            primType: "Mesh",
+            appliedAPISchemas: ["VisibilityAPI", "CollectionAPI:hero"]
+        )
+
+        #expect(plugins.map(\.name) == ["GeneratedSchemas"])
+        #expect(pluginRegistry.declaredTypeNames.contains("UsdGeomMesh"))
+        #expect(schemaRegistry.definition(for: "UsdGeomMesh") == nil)
+        #expect(schemaRegistry.isA("Mesh", "Xform"))
+        #expect(schemaRegistry.isA("Mesh", "Imageable"))
+        #expect(mesh.schemaKind == .concreteTyped)
+        #expect(mesh.fallbackPrimTypes == ["Xform"])
+        #expect(mesh.propertyNames.contains("points"))
+        #expect(mesh.fallbackFields["subdivisionScheme"] == .token("catmullClark"))
+        #expect(schemaRegistry.isAppliedAPISchema("CollectionAPI:hero"))
+        #expect(composed.propertyNames.contains("visibility"))
+        #expect(composed.propertyNames.contains("collection:hero:includeRoot"))
+        #expect(composed.fallbackFields["collection:hero:includeRoot"] == .bool(false))
+        #expect(throws: USDError.self) {
+            _ = try schemaRegistry.composedDefinition(primType: "Mesh", appliedAPISchemas: ["CollectionAPI"])
+        }
+        #expect(throws: USDError.self) {
+            _ = try schemaRegistry.composedDefinition(primType: "Mesh", appliedAPISchemas: ["VisibilityAPI:hero"])
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdPluginRegistryRejectsInvalidPlugInfoContracts() throws {
+        var registry = USDPluginRegistry()
+
+        #expect(throws: USDError.self) {
+            _ = try registry.registerPlugInfo(from: Data("""
+            {
+                "Plugins": [
+                    {
+                        "Type": "library",
+                        "Name": "MissingLibraryPath",
+                        "Info": {}
+                    }
+                ]
+            }
+            """.utf8))
+        }
+        #expect(throws: USDError.self) {
+            _ = try registry.registerPlugInfo(from: Data("""
+            {
+                "Type": "resource",
+                "Name": "MissingInfo"
+            }
+            """.utf8))
+        }
+        #expect(throws: USDError.self) {
+            _ = try registry.registerPlugInfo(from: Data("""
+            {
+                "Includes": ["child/plugInfo.json"]
+            }
+            """.utf8))
+        }
+        #expect(throws: USDError.self) {
+            _ = try registry.registerPlugInfo(from: Data("""
+            {
+                "Plugins": {
+                    "Type": "resource"
+                }
+            }
+            """.utf8))
+        }
+        let malformedTypesPlugin = USDPlugin(
+            type: .resource,
+            name: "MalformedTypes",
+            info: [
+                "Types": .array([]),
+            ]
+        )
+        #expect(throws: USDError.self) {
+            _ = try USDSchemaRegistry(plugins: [malformedTypesPlugin], includeBuiltInDefinitions: false)
+        }
+        let missingSchemaKindPlugin = USDPlugin(
+            type: .resource,
+            name: "MissingSchemaKind",
+            info: [
+                "Types": .dictionary([
+                    "UsdGeomMesh": .dictionary([
+                        "schemaIdentifier": .string("Mesh"),
+                    ]),
+                ]),
+            ]
+        )
+        #expect(throws: USDError.self) {
+            _ = try USDSchemaRegistry(plugins: [missingSchemaKindPlugin], includeBuiltInDefinitions: false)
+        }
+        let badStringArrayPlugin = USDPlugin(
+            type: .resource,
+            name: "BadStringArray",
+            info: [
+                "Types": .dictionary([
+                    "Hair": .dictionary([
+                        "schemaKind": .string("concreteTyped"),
+                        "propertyNames": .array([.string("points"), .number(1)]),
+                    ]),
+                ]),
+            ]
+        )
+        #expect(throws: USDError.self) {
+            _ = try USDSchemaRegistry(plugins: [badStringArrayPlugin], includeBuiltInDefinitions: false)
+        }
+        let generatedWithoutSchemaFilePlugin = USDPlugin(
+            type: .resource,
+            name: "GeneratedWithoutSchemaFile",
+            info: [
+                "Types": .dictionary([
+                    "UsdGeomMesh": .dictionary([
+                        "autoGenerated": .bool(true),
+                        "schemaIdentifier": .string("Mesh"),
+                        "schemaKind": .string("concreteTyped"),
+                    ]),
+                ]),
+            ]
+        )
+        #expect(throws: USDError.self) {
+            _ = try USDSchemaRegistry(plugins: [generatedWithoutSchemaFilePlugin], includeBuiltInDefinitions: false)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func sdfSpecAndLayerValidateAuthoringInvariants() throws {
+        #expect(throws: USDError.self) {
+            try SdfSpec(path: "/Root", specType: .attribute).validate()
+        }
+        #expect(throws: USDError.self) {
+            try SdfSpec(path: "/Root.value", specType: .prim).validate()
+        }
+        #expect(throws: USDError.self) {
+            try SdfSpec(path: "/Root.target", specType: .relationshipTarget).validate()
+        }
+        #expect(throws: USDError.self) {
+            try SdfSpec(
+                path: "/Root",
+                specType: .prim,
+                fieldNames: ["displayName", "displayName"],
+                fields: ["displayName": .authored("\"Root\"")]
+            ).validate()
+        }
+
+        let duplicateLayer = try SdfLayer(specs: [
+            SdfSpec(path: .absoluteRoot, specType: .pseudoRoot),
+            SdfSpec(path: "/Root", specType: .prim, specifier: .def),
+            SdfSpec(path: "/Root", specType: .prim, specifier: .over),
+        ])
+        let orphanPropertyLayer = try SdfLayer(specs: [
+            SdfSpec(path: .absoluteRoot, specType: .pseudoRoot),
+            SdfSpec(
+                path: "/Missing.value",
+                specType: .attribute,
+                typeName: "double",
+                fields: ["default": .authored("1")]
+            ),
+        ])
+
+        #expect(throws: USDError.self) {
+            try duplicateLayer.validate()
+        }
+        #expect(throws: USDError.self) {
+            try orphanPropertyLayer.exportUSDA()
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func sdfLayerRejectsUnmaterializedFieldsOnUSDAExport() throws {
+        let layer = try SdfLayer(specs: [
+            SdfSpec(path: .absoluteRoot, specType: .pseudoRoot),
+            SdfSpec(path: "/Root", specType: .prim, specifier: .def),
+            SdfSpec(
+                path: "/Root.unsupported",
+                specType: .attribute,
+                typeName: "matrix2d",
+                fieldNames: ["default"],
+                fields: ["default": .unmaterializedValue]
+            ),
+        ])
+
+        #expect(throws: USDError.self) {
+            _ = try layer.exportUSDA()
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func sdfLayerImportsEditsAndExportsUSDAWithoutLosingFields() throws {
+        let data = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "Root"
+            metersPerUnit = 0.01
+            upAxis = "Z"
+        )
+
+        def Xform "Root" (
+            displayName = "Hero Root"
+        )
+        {
+            custom uniform double width (
+                displayName = "Width"
+            ) = 2.5
+
+            add rel look:binding = [</Looks/Mat>]
+
+            variantSet "modelingVariant" = {
+                "high" {
+                    def Scope "HighGeom"
+                    {
+                    }
+                }
+            }
+        }
+        """.utf8)
+        var layer = try SdfLayer.importUSDA(from: data, identifier: "anon:test")
+        let rootPath = try SdfPath("/Root")
+        let widthPath = try SdfPath("/Root.width")
+        let relationshipPath = try SdfPath("/Root.look:binding")
+        let materialPath = try SdfPath("/Looks/Mat")
+        let variantSetPath = try SdfPath("/Root{modelingVariant}")
+        let variantPath = try SdfPath("/Root{modelingVariant=high}")
+
+        #expect(layer.identifier == "anon:test")
+        #expect(layer.defaultPrim == "Root")
+        #expect(layer.metersPerUnit == 0.01)
+        #expect(layer.upAxis == .z)
+        #expect(layer.listFields(at: rootPath).contains("specifier"))
+        #expect(layer.field(named: "displayName", at: rootPath)?.authoredText == "\"Hero Root\"")
+        #expect(layer.field(named: "displayName", at: widthPath)?.authoredText == "\"Width\"")
+        #expect(layer.field(named: "targetPaths", at: relationshipPath)?.pathListOperation?.addedItems == [materialPath])
+        #expect(layer.spec(at: variantSetPath)?.specType == .variantSet)
+        #expect(layer.spec(at: variantPath)?.specType == .variant)
+
+        try layer.setField(.authored("\"tool-authored\""), for: "documentation", at: rootPath)
+        try layer.clearField(named: "displayName", at: rootPath)
+        try layer.setField(
+            .pathListOperation(SdfListOperation(isExplicit: true, explicitItems: [materialPath])),
+            for: "targetPaths",
+            at: relationshipPath
+        )
+
+        let written = try layer.exportUSDA()
+        let roundTripped = try SdfLayer.importUSDA(from: written, identifier: "anon:roundtrip")
+
+        #expect(written.contains("documentation = \"tool-authored\""))
+        #expect(!written.contains("displayName = \"Hero Root\""))
+        #expect(written.contains("rel look:binding = </Looks/Mat>"))
+        #expect(roundTripped.field(named: "documentation", at: rootPath)?.authoredText == "\"tool-authored\"")
+        #expect(roundTripped.field(named: "displayName", at: rootPath) == nil)
+        #expect(roundTripped.field(named: "targetPaths", at: relationshipPath)?.pathListOperation?.explicitItems == [materialPath])
+        #expect(roundTripped.spec(at: variantPath)?.specType == .variant)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func sdfLayerImportsRelationshipTargetsWithRelativePaths() throws {
+        let layer = try SdfLayer.importUSDA(
+            from: openUSDFixture("testSdfParsing.testenv/32_relationship_syntax.usda")
+        )
+        let relationshipPath = try SdfPath("/foo/Scope.rel_relative_path")
+        let targetPath = try SdfPath("/foo/Scope.rel_relative_path[..]")
+        let relativeTarget = try SdfPath("..")
+        let relationship = try #require(layer.spec(at: relationshipPath))
+
+        #expect(relationship.specType == .relationship)
+        #expect(layer.spec(at: targetPath)?.specType == .relationshipTarget)
+        #expect(relationship.field(named: "targetPaths")?.pathListOperation == SdfListOperation(
+            isExplicit: true,
+            explicitItems: [relativeTarget]
+        ))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func sdfLayerPreservesTypedUSDCFieldValues() throws {
+        let metadataLayer = try SdfLayer(
+            usdcLayer: try USDCReader().readLayer(from: makeUSDCLayerMetadataFieldFixture())
+        )
+        let rootPath = SdfPath.absoluteRoot
+        let scopePath = try SdfPath("/Scope")
+        let scopeTargetPath = try SdfPath("/Scope.target")
+        let payloadTargetPath = try SdfPath("/PayloadTarget")
+
+        #expect(metadataLayer.field(named: "subLayers", at: rootPath) == .stringVector([
+            "layers/base.usda",
+            "layers/anim.usdc",
+        ]))
+        #expect(metadataLayer.field(named: "subLayerOffsets", at: rootPath) == .layerOffsetVector([
+            SdfLayerOffset(offset: 10, scale: 0.5),
+            .identity,
+        ]))
+        #expect(metadataLayer.field(named: "variantSelections", at: scopePath) == .variantSelectionMap([
+            "lod": "render",
+            "modelingVariant": "high",
+        ]))
+
+        let listLayer = try SdfLayer(
+            usdcLayer: try USDCReader().readLayer(from: makeUSDCLayerListOperationFixture())
+        )
+        #expect(listLayer.field(named: "tokenListOperation", at: scopePath) == .tokenListOperation(SdfListOperation(
+            isExplicit: true,
+            explicitItems: ["tokenExplicit"],
+            addedItems: ["tokenAdded"],
+            prependedItems: ["tokenPrepended"],
+            appendedItems: ["tokenAppended"],
+            deletedItems: ["tokenDeleted"],
+            orderedItems: ["tokenOrdered"]
+        )))
+        #expect(listLayer.field(named: "pathListOperation", at: scopePath) == .pathListOperation(SdfListOperation(
+            prependedItems: [rootPath],
+            appendedItems: [scopeTargetPath],
+            deletedItems: [scopePath],
+            orderedItems: [scopeTargetPath]
+        )))
+
+        let compositionLayer = try SdfLayer(
+            usdcLayer: try USDCReader().readLayer(from: makeUSDCLayerCompositionArcFixture())
+        )
+        let reference = SdfReference(
+            assetPath: "assets/ref.usda",
+            primPath: scopeTargetPath,
+            layerOffset: SdfLayerOffset(offset: 1.5, scale: 2),
+            customData: [
+                "displayName": .string("friendlyRef"),
+                "referencePurpose": .string("render"),
+            ]
+        )
+        let secondReference = SdfReference(assetPath: "assets/second.usda", primPath: scopeTargetPath)
+        #expect(compositionLayer.field(named: "references", at: scopePath) == .referenceListOperation(SdfListOperation(
+            addedItems: [reference, secondReference],
+            deletedItems: [secondReference],
+            orderedItems: [reference]
+        )))
+        #expect(compositionLayer.field(named: "payload", at: scopePath) == .payloadListOperation(SdfListOperation(
+            prependedItems: [
+                SdfPayload(
+                    assetPath: "assets/payload.usdc",
+                    primPath: payloadTargetPath,
+                    layerOffset: SdfLayerOffset(offset: -2, scale: 0.5)
+                ),
+            ]
+        )))
+        #expect(compositionLayer.field(named: "singlePayload", at: scopePath) == .payload(SdfPayload(
+            assetPath: "assets/single.usda",
+            primPath: scopePath
+        )))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func sdfLayerExportsTypedCompositionListOperationsWithoutLoss() throws {
+        let scopePath = try SdfPath("/Scope")
+        let modelPath = try SdfPath("/Model")
+        let payloadTargetPath = try SdfPath("/PayloadTarget")
+        let primaryReference = SdfReference(
+            assetPath: "assets/ref.usda",
+            primPath: modelPath,
+            layerOffset: SdfLayerOffset(offset: 1.5, scale: 2),
+            customData: [
+                "displayName": .string("friendlyRef"),
+                "samples": .doubleArray([1.25, 2]),
+                "visible": .bool(true),
+            ]
+        )
+        let deleteReference = SdfReference(assetPath: "assets/delete.usda")
+        let appendReference = SdfReference(assetPath: "assets/append.usda", primPath: modelPath)
+        let payload = SdfPayload(
+            assetPath: "assets/payload.usdc",
+            primPath: payloadTargetPath,
+            layerOffset: SdfLayerOffset(offset: -2, scale: 0.5)
+        )
+        let appendedPayload = SdfPayload(assetPath: "assets/appendedPayload.usda")
+        let referenceOperation = SdfListOperation(
+            isExplicit: true,
+            explicitItems: [primaryReference],
+            appendedItems: [appendReference],
+            deletedItems: [deleteReference],
+            orderedItems: [primaryReference]
+        )
+        let payloadOperation = SdfListOperation(
+            prependedItems: [payload],
+            appendedItems: [appendedPayload],
+            deletedItems: [SdfPayload(assetPath: "assets/oldPayload.usda")]
+        )
+        let layer = SdfLayer(specs: [
+            SdfSpec(path: .absoluteRoot, specType: .pseudoRoot),
+            SdfSpec(
+                path: scopePath,
+                specType: .prim,
+                specifier: .def,
+                typeName: "Scope",
+                fieldNames: ["references", "payload"],
+                fields: [
+                    "references": .referenceListOperation(referenceOperation),
+                    "payload": .payloadListOperation(payloadOperation),
+                ]
+            ),
+            SdfSpec(path: modelPath, specType: .prim, specifier: .def),
+            SdfSpec(path: payloadTargetPath, specType: .prim, specifier: .def),
+        ])
+
+        let written = try layer.exportUSDA()
+        let roundTripped = try SdfLayer.importUSDA(from: written)
+
+        #expect(written.contains("references = @assets/ref.usda@</Model>"))
+        #expect(written.contains("customData = { string displayName = \"friendlyRef\"; double[] samples = [1.25, 2.0]; bool visible = true }"))
+        #expect(written.contains("delete references = @assets/delete.usda@"))
+        #expect(written.contains("append references = @assets/append.usda@</Model>"))
+        #expect(written.contains("prepend payload = @assets/payload.usdc@</PayloadTarget> (offset = -2.0; scale = 0.5)"))
+        #expect(roundTripped.field(named: "references", at: scopePath) == .referenceListOperation(referenceOperation))
+        #expect(roundTripped.field(named: "payload", at: scopePath) == .payloadListOperation(payloadOperation))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdStageFromSdfLayerRejectsUnsupportedSdfFieldsOnExport() throws {
+        let layer = try SdfLayer(specs: [
+            SdfSpec(path: .absoluteRoot, specType: .pseudoRoot),
+            SdfSpec(path: "/Root", specType: .prim, specifier: .def),
+            SdfSpec(
+                path: "/Root.unsupported",
+                specType: .attribute,
+                typeName: "matrix2d",
+                fieldNames: ["default"],
+                fields: ["default": .unmaterializedValue]
+            ),
+        ])
+        let stage = USDStage(rootLayer: layer)
+
+        #expect(throws: USDError.self) {
+            _ = try layer.exportUSDA()
+        }
+        #expect(throws: USDError.self) {
+            _ = try stage.exportUSDA()
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func sdfLayerExportPreservesStructuredCompositionArcs() throws {
+        var layer = try SdfLayer(
+            defaultPrim: "Scene",
+            metersPerUnit: 1,
+            upAxis: .z,
+            specs: [
+                SdfSpec(path: .absoluteRoot, specType: .pseudoRoot),
+                SdfSpec(path: "/Scene", specType: .prim, specifier: .def),
+            ]
+        )
+        let scenePath = try SdfPath("/Scene")
+        try layer.setSublayers([
+            USDSublayer(
+                assetPath: "./layers/base.usda",
+                layerOffset: SdfLayerOffset(offset: 10, scale: 0.5)
+            ),
+        ])
+        try layer.setField(
+            .referenceListOperation(SdfListOperation(isExplicit: true, explicitItems: [
+                SdfReference(
+                    assetPath: "./refs/model.usda",
+                    primPath: try SdfPath("/Model"),
+                    layerOffset: SdfLayerOffset(offset: 24, scale: 2)
+                ),
+            ])),
+            for: "references",
+            at: scenePath
+        )
+        try layer.setField(
+            .payloadListOperation(SdfListOperation(isExplicit: true, explicitItems: [
+                SdfPayload(
+                    assetPath: "./payloads/heavy.usdc",
+                    primPath: try SdfPath("/Payload"),
+                    layerOffset: SdfLayerOffset(offset: -3, scale: 0.25)
+                ),
+            ])),
+            for: "payload",
+            at: scenePath
+        )
+
+        let written = try layer.exportUSDA()
+        let roundTripped = try USDAReader().readLayer(from: written)
+
+        #expect(written.contains("subLayers = [@./layers/base.usda@ (offset = 10.0; scale = 0.5)]"))
+        #expect(written.contains("references = @./refs/model.usda@</Model> (offset = 24.0; scale = 2.0)"))
+        #expect(written.contains("payload = @./payloads/heavy.usdc@</Payload> (offset = -3.0; scale = 0.25)"))
+        #expect(roundTripped.composition.sublayers == layer.composition.sublayers)
+        #expect(roundTripped.composition.references == layer.composition.references)
+        #expect(roundTripped.composition.payloads == layer.composition.payloads)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdStageDefinesUsdGeomMeshAndExportsUSDA() throws {
+        var stage = USDStage.createInMemory(metersPerUnit: 0.01, upAxis: .z)
+        let world = try USDGeomXform.define(in: &stage, at: SdfPath("/World"))
+        try world.setTranslate(USDTransformVector3D(x: 10, y: 0, z: 0), in: &stage)
+        let mesh = try USDGeomMesh.define(in: &stage, at: SdfPath("/World/Geom/Triangle"))
+        try mesh.setTopology(
+            points: [
+                USDPoint3D(x: 0, y: 0, z: 0),
+                USDPoint3D(x: 1, y: 0, z: 0),
+                USDPoint3D(x: 0, y: 1, z: 0),
+            ],
+            faceVertexCounts: [3],
+            faceVertexIndices: [0, 1, 2],
+            in: &stage
+        )
+        try mesh.setSubdivisionScheme("none", in: &stage)
+        let worldPath = try SdfPath("/World")
+        try stage.setDefaultPrim(try #require(stage.prim(at: worldPath)))
+
+        let written = try stage.exportUSDA()
+        let sdfLayer = try stage.exportSdfLayer()
+        let stageFromSdf = USDStage(rootLayer: sdfLayer)
+        let geomPath = try SdfPath("/World/Geom")
+        let trianglePath = try SdfPath("/World/Geom/Triangle")
+        let layer = try USDAReader().readLayer(from: written)
+        let scene = try USDAReader().read(from: written)
+
+        #expect(written.contains("defaultPrim = \"World\""))
+        #expect(written.contains("def Xform \"World\""))
+        #expect(written.contains("def \"Geom\""))
+        #expect(written.contains("def Mesh \"Triangle\""))
+        #expect(written.contains("double3 xformOp:translate = (10.0, 0.0, 0.0)"))
+        #expect(written.contains("uniform token[] xformOpOrder = [\"xformOp:translate\"]"))
+        #expect(written.contains("point3f[] points = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)]"))
+        #expect(written.contains("int[] faceVertexCounts = [3]"))
+        #expect(written.contains("int[] faceVertexIndices = [0, 1, 2]"))
+        #expect(written.contains("uniform token subdivisionScheme = \"none\""))
+        #expect(stage.prim(at: geomPath)?.isDefined == true)
+        #expect(layer.defaultPrim == "World")
+        #expect(layer.spec(at: "/World")?.typeName == "Xform")
+        #expect(layer.spec(at: "/World/Geom")?.specifier == .def)
+        #expect(layer.spec(at: "/World/Geom")?.typeName == nil)
+        #expect(layer.spec(at: "/World/Geom/Triangle")?.typeName == "Mesh")
+        #expect(layer.spec(at: "/World/Geom/Triangle.points")?.fields["default"] != nil)
+        #expect(sdfLayer.defaultPrim == "World")
+        #expect(sdfLayer.spec(at: trianglePath)?.typeName == "Mesh")
+        #expect(try stageFromSdf.exportUSDA() == written)
+        #expect(scene.meshes.count == 1)
+        #expect(scene.meshes.first?.primPath == "/World/Geom/Triangle")
+        #expect(scene.meshes.first?.points == [
+            USDPoint3D(x: 10, y: 0, z: 0),
+            USDPoint3D(x: 11, y: 0, z: 0),
+            USDPoint3D(x: 10, y: 1, z: 0),
+        ])
+        #expect(scene.meshes.first?.faceVertexCounts == [3])
+        #expect(scene.meshes.first?.faceVertexIndices == [0, 1, 2])
+        #expect(scene.meshes.first?.subdivisionScheme == "none")
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdStageResolvesSublayersReferencesAndPayloadsWithLayerProvider() throws {
+        let modelPath = try SdfPath("/Model")
+        let payloadRootPath = try SdfPath("/PayloadRoot")
+        let baseLayer = USDALayer(specs: [
+            USDLayerSpec(path: "/", specType: .pseudoRoot),
+            USDLayerSpec(path: "/World", specType: .prim, specifier: .def, typeName: "Xform"),
+            USDLayerSpec(
+                path: "/World/Base",
+                specType: .prim,
+                specifier: .def,
+                typeName: "Scope",
+                fields: ["displayName": .authored("\"base\"")]
+            ),
+        ])
+        let referenceLayer = USDALayer(defaultPrim: "Model", specs: [
+            USDLayerSpec(path: "/", specType: .pseudoRoot),
+            USDLayerSpec(path: "/Model", specType: .prim, specifier: .def, typeName: "Xform"),
+            USDLayerSpec(path: "/Model/Geom", specType: .prim, specifier: .def, typeName: "Mesh"),
+        ])
+        let payloadLayer = USDALayer(defaultPrim: "PayloadRoot", specs: [
+            USDLayerSpec(path: "/", specType: .pseudoRoot),
+            USDLayerSpec(path: "/PayloadRoot", specType: .prim, specifier: .def, typeName: "Xform"),
+            USDLayerSpec(path: "/PayloadRoot/Heavy", specType: .prim, specifier: .def, typeName: "Mesh"),
+        ])
+        let rootLayer = USDALayer(
+            defaultPrim: "World",
+            composition: USDLayerComposition(sublayers: [USDSublayer(assetPath: "base.usda")]),
+            specs: [
+                USDLayerSpec(path: "/", specType: .pseudoRoot),
+                USDLayerSpec(path: "/World", specType: .prim, specifier: .def, typeName: "Xform"),
+                USDLayerSpec(
+                    path: "/World/Base",
+                    specType: .prim,
+                    specifier: .over,
+                    fields: ["displayName": .authored("\"root\"")]
+                ),
+                USDLayerSpec(
+                    path: "/World/Referenced",
+                    specType: .prim,
+                    specifier: .over,
+                    fieldNames: ["references"],
+                    fields: [
+                        "references": .referenceListOperation(SdfListOperation(
+                            prependedItems: [SdfReference(assetPath: "refs/model.usda", primPath: modelPath)]
+                        )),
+                    ]
+                ),
+                USDLayerSpec(
+                    path: "/World/Payloaded",
+                    specType: .prim,
+                    specifier: .over,
+                    fieldNames: ["payload"],
+                    fields: [
+                        "payload": .payloadListOperation(SdfListOperation(
+                            prependedItems: [SdfPayload(assetPath: "payloads/heavy.usda", primPath: payloadRootPath)]
+                        )),
+                    ]
+                ),
+            ]
+        )
+        let provider = try makeInMemoryProvider([
+            "base.usda": baseLayer,
+            "refs/model.usda": referenceLayer,
+            "payloads/heavy.usda": payloadLayer,
+        ])
+        let stage = USDStage(rootLayer: rootLayer)
+        let referencedGeomPath = try SdfPath("/World/Referenced/Geom")
+        let payloadedHeavyPath = try SdfPath("/World/Payloaded/Heavy")
+
+        #expect(stage.prim(at: referencedGeomPath) == nil)
+
+        let flattened = try stage.flattenedLayer(resolvingWith: provider, rootIdentifier: "root.usda")
+        let resolvedStage = try stage.resolved(resolvingWith: provider, rootIdentifier: "root.usda")
+
+        #expect(try stage.prim(at: referencedGeomPath, resolvingWith: provider, rootIdentifier: "root.usda") == USDPrim(
+            path: referencedGeomPath,
+            specifier: .def,
+            typeName: "Mesh"
+        ))
+        #expect(resolvedStage.prim(at: payloadedHeavyPath) == USDPrim(
+            path: payloadedHeavyPath,
+            specifier: .def,
+            typeName: "Mesh"
+        ))
+        #expect(flattened.spec(at: "/World/Base")?.specifier == .def)
+        #expect(flattened.spec(at: "/World/Base")?.fields["displayName"] == .authored("\"root\""))
+        #expect(flattened.spec(at: "/World/Referenced")?.typeName == "Xform")
+        #expect(flattened.spec(at: "/World/Referenced")?.fields["references"] == nil)
+        #expect(flattened.spec(at: "/World/Payloaded")?.fields["payload"] == nil)
+        #expect(flattened.composition.isEmpty)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdStageComposesCrossLayerReferenceAndPayloadListOperations() throws {
+        let modelPath = try SdfPath("/Model")
+        let payloadPath = try SdfPath("/Payload")
+        let referenceA = SdfReference(assetPath: "../assets/referenceA.usda", primPath: modelPath)
+        let referenceB = SdfReference(assetPath: "../assets/referenceB.usda", primPath: modelPath)
+        let payloadA = SdfPayload(assetPath: "../assets/payloadA.usda", primPath: payloadPath)
+        let payloadB = SdfPayload(assetPath: "../assets/payloadB.usda", primPath: payloadPath)
+        let weakLayer = USDALayer(specs: [
+            USDLayerSpec(path: "/", specType: .pseudoRoot),
+            USDLayerSpec(
+                path: "/World/SublayerOnly",
+                specType: .prim,
+                specifier: .def,
+                fields: ["displayName": .authored("\"weak\"")]
+            ),
+            USDLayerSpec(
+                path: "/World/RootOpinion",
+                specType: .prim,
+                specifier: .def,
+                fields: ["displayName": .authored("\"weak\"")]
+            ),
+            USDLayerSpec(
+                path: "/World/DeleteReference",
+                specType: .prim,
+                specifier: .over,
+                fields: [
+                    "references": .referenceListOperation(SdfListOperation(isExplicit: true, explicitItems: [referenceA, referenceB])),
+                ]
+            ),
+            USDLayerSpec(
+                path: "/World/ReorderReference",
+                specType: .prim,
+                specifier: .over,
+                fields: [
+                    "references": .referenceListOperation(SdfListOperation(isExplicit: true, explicitItems: [referenceA, referenceB])),
+                ]
+            ),
+            USDLayerSpec(
+                path: "/World/ExplicitReference",
+                specType: .prim,
+                specifier: .over,
+                fields: [
+                    "references": .referenceListOperation(SdfListOperation(isExplicit: true, explicitItems: [referenceA])),
+                ]
+            ),
+            USDLayerSpec(
+                path: "/World/DeletePayload",
+                specType: .prim,
+                specifier: .over,
+                fields: [
+                    "payload": .payloadListOperation(SdfListOperation(isExplicit: true, explicitItems: [payloadA, payloadB])),
+                ]
+            ),
+            USDLayerSpec(
+                path: "/World/ReorderPayload",
+                specType: .prim,
+                specifier: .over,
+                fields: [
+                    "payload": .payloadListOperation(SdfListOperation(isExplicit: true, explicitItems: [payloadA, payloadB])),
+                ]
+            ),
+            USDLayerSpec(
+                path: "/World/ExplicitPayload",
+                specType: .prim,
+                specifier: .over,
+                fields: [
+                    "payload": .payloadListOperation(SdfListOperation(isExplicit: true, explicitItems: [payloadA])),
+                ]
+            ),
+            USDLayerSpec(
+                path: "/World/ReferenceBeatsPayload",
+                specType: .prim,
+                specifier: .over,
+                fields: [
+                    "references": .referenceListOperation(SdfListOperation(prependedItems: [referenceB])),
+                    "payload": .payloadListOperation(SdfListOperation(prependedItems: [payloadA])),
+                ]
+            ),
+        ])
+        let strongLayer = USDALayer(specs: [
+            USDLayerSpec(path: "/", specType: .pseudoRoot),
+            USDLayerSpec(
+                path: "/World/SublayerOnly",
+                specType: .prim,
+                specifier: .over,
+                fields: ["displayName": .authored("\"strong\"")]
+            ),
+            USDLayerSpec(
+                path: "/World/RootOpinion",
+                specType: .prim,
+                specifier: .over,
+                fields: ["displayName": .authored("\"strong\"")]
+            ),
+            USDLayerSpec(
+                path: "/World/DeleteReference",
+                specType: .prim,
+                specifier: .over,
+                fields: [
+                    "references": .referenceListOperation(SdfListOperation(deletedItems: [referenceA])),
+                ]
+            ),
+            USDLayerSpec(
+                path: "/World/ReorderReference",
+                specType: .prim,
+                specifier: .over,
+                fields: [
+                    "references": .referenceListOperation(SdfListOperation(orderedItems: [referenceB, referenceA])),
+                ]
+            ),
+            USDLayerSpec(
+                path: "/World/ExplicitReference",
+                specType: .prim,
+                specifier: .over,
+                fields: [
+                    "references": .referenceListOperation(SdfListOperation(isExplicit: true, explicitItems: [referenceB])),
+                ]
+            ),
+            USDLayerSpec(
+                path: "/World/DeletePayload",
+                specType: .prim,
+                specifier: .over,
+                fields: [
+                    "payload": .payloadListOperation(SdfListOperation(deletedItems: [payloadA])),
+                ]
+            ),
+            USDLayerSpec(
+                path: "/World/ReorderPayload",
+                specType: .prim,
+                specifier: .over,
+                fields: [
+                    "payload": .payloadListOperation(SdfListOperation(orderedItems: [payloadB, payloadA])),
+                ]
+            ),
+            USDLayerSpec(
+                path: "/World/ExplicitPayload",
+                specType: .prim,
+                specifier: .over,
+                fields: [
+                    "payload": .payloadListOperation(SdfListOperation(isExplicit: true, explicitItems: [payloadB])),
+                ]
+            ),
+        ])
+        let rootLayer = USDALayer(
+            composition: USDLayerComposition(sublayers: [
+                USDSublayer(assetPath: "./layers/strong.usda"),
+                USDSublayer(assetPath: "./layers/weak.usda"),
+            ]),
+            specs: [
+                USDLayerSpec(path: "/", specType: .pseudoRoot),
+                USDLayerSpec(path: "/World", specType: .prim, specifier: .def, typeName: "Xform"),
+                USDLayerSpec(
+                    path: "/World/RootOpinion",
+                    specType: .prim,
+                    specifier: .over,
+                    fields: ["displayName": .authored("\"root\"")]
+                ),
+            ]
+        )
+        let provider = try makeInMemoryProvider([
+            "scene/layers/weak.usda": weakLayer,
+            "scene/layers/strong.usda": strongLayer,
+            "scene/assets/referenceA.usda": referenceLayer(name: "referenceA", rootPath: "/Model", uniqueChildName: "OnlyA"),
+            "scene/assets/referenceB.usda": referenceLayer(name: "referenceB", rootPath: "/Model", uniqueChildName: "OnlyB"),
+            "scene/assets/payloadA.usda": referenceLayer(name: "payloadA", rootPath: "/Payload", uniqueChildName: "OnlyA"),
+            "scene/assets/payloadB.usda": referenceLayer(name: "payloadB", rootPath: "/Payload", uniqueChildName: "OnlyB"),
+        ])
+
+        let flattened = try USDStage(rootLayer: rootLayer).flattenedLayer(
+            resolvingWith: provider,
+            rootIdentifier: "scene/root.usda"
+        )
+
+        #expect(flattened.spec(at: "/World/SublayerOnly")?.fields["displayName"] == .authored("\"strong\""))
+        #expect(flattened.spec(at: "/World/RootOpinion")?.fields["displayName"] == .authored("\"root\""))
+        #expect(flattened.spec(at: "/World/DeleteReference/OnlyA") == nil)
+        #expect(flattened.spec(at: "/World/DeleteReference/OnlyB")?.typeName == "Mesh")
+        #expect(flattened.spec(at: "/World/ReorderReference/Shared")?.fields["displayName"] == .authored("\"referenceB\""))
+        #expect(flattened.spec(at: "/World/ExplicitReference/OnlyA") == nil)
+        #expect(flattened.spec(at: "/World/ExplicitReference/OnlyB")?.typeName == "Mesh")
+        #expect(flattened.spec(at: "/World/DeletePayload/OnlyA") == nil)
+        #expect(flattened.spec(at: "/World/DeletePayload/OnlyB")?.typeName == "Mesh")
+        #expect(flattened.spec(at: "/World/ReorderPayload/Shared")?.fields["displayName"] == .authored("\"payloadB\""))
+        #expect(flattened.spec(at: "/World/ExplicitPayload/OnlyA") == nil)
+        #expect(flattened.spec(at: "/World/ExplicitPayload/OnlyB")?.typeName == "Mesh")
+        #expect(flattened.spec(at: "/World/ReferenceBeatsPayload/Shared")?.fields["displayName"] == .authored("\"referenceB\""))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdStageResolvesInternalReferencesAndDefaultPrimFromTargetLayerStacks() throws {
+        let prototypePath = try SdfPath("/Prototype")
+        let rootLayer = USDALayer(specs: [
+            USDLayerSpec(path: "/", specType: .pseudoRoot),
+            USDLayerSpec(path: "/Prototype", specType: .prim, specifier: .def, typeName: "Xform"),
+            USDLayerSpec(path: "/Prototype/Geom", specType: .prim, specifier: .def, typeName: "Mesh"),
+            USDLayerSpec(path: "/Outside", specType: .prim, specifier: .def, typeName: "Mesh"),
+            USDLayerSpec(
+                path: "/Instance",
+                specType: .prim,
+                specifier: .over,
+                fields: [
+                    "references": .referenceListOperation(SdfListOperation(prependedItems: [
+                        SdfReference(assetPath: "", primPath: prototypePath),
+                    ])),
+                ]
+            ),
+            USDLayerSpec(
+                path: "/DefaultFromRoot",
+                specType: .prim,
+                specifier: .over,
+                fields: [
+                    "references": .referenceListOperation(SdfListOperation(prependedItems: [
+                        SdfReference(assetPath: "targets/defaultFromRoot.usda"),
+                    ])),
+                ]
+            ),
+        ])
+        let provider = try makeInMemoryProvider([
+            "targets/base.usda": USDALayer(defaultPrim: "Model", specs: [
+                USDLayerSpec(path: "/", specType: .pseudoRoot),
+                USDLayerSpec(path: "/Model", specType: .prim, specifier: .def, typeName: "Xform"),
+                USDLayerSpec(path: "/Model/Geom", specType: .prim, specifier: .def, typeName: "Mesh"),
+            ]),
+            "targets/defaultFromRoot.usda": USDALayer(
+                defaultPrim: "RootModel",
+                composition: USDLayerComposition(sublayers: [USDSublayer(assetPath: "base.usda")]),
+                specs: [
+                    USDLayerSpec(path: "/", specType: .pseudoRoot),
+                    USDLayerSpec(path: "/RootModel", specType: .prim, specifier: .def, typeName: "Xform"),
+                    USDLayerSpec(path: "/RootModel/RootGeom", specType: .prim, specifier: .def, typeName: "Mesh"),
+                ]
+            ),
+        ])
+
+        let flattened = try USDStage(rootLayer: rootLayer).flattenedLayer(
+            resolvingWith: provider,
+            rootIdentifier: "root.usda"
+        )
+
+        #expect(flattened.spec(at: "/Instance/Geom")?.typeName == "Mesh")
+        #expect(flattened.spec(at: "/Instance/Outside") == nil)
+        #expect(flattened.spec(at: "/DefaultFromRoot/RootGeom")?.typeName == "Mesh")
+        #expect(flattened.spec(at: "/DefaultFromRoot/Geom") == nil)
+
+        let missingDefaultPrimLayer = USDALayer(specs: [
+            USDLayerSpec(path: "/", specType: .pseudoRoot),
+            USDLayerSpec(
+                path: "/Broken",
+                specType: .prim,
+                specifier: .over,
+                fields: [
+                    "references": .referenceListOperation(SdfListOperation(prependedItems: [
+                        SdfReference(assetPath: "targets/noDefault.usda"),
+                    ])),
+                ]
+            ),
+        ])
+        let missingDefaultPrimProvider = try makeInMemoryProvider([
+            "targets/noDefault.usda": USDALayer(specs: [
+                USDLayerSpec(path: "/", specType: .pseudoRoot),
+                USDLayerSpec(path: "/Model", specType: .prim, specifier: .def, typeName: "Xform"),
+            ]),
+        ])
+        #expect(throws: USDError.self) {
+            _ = try USDStage(rootLayer: missingDefaultPrimLayer).flattenedLayer(
+                resolvingWith: missingDefaultPrimProvider,
+                rootIdentifier: "root.usda"
+            )
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdStageCompositionReportsMissingAssetsAndCycles() throws {
+        let missingLayer = USDALayer(specs: [
+            USDLayerSpec(path: "/", specType: .pseudoRoot),
+            USDLayerSpec(
+                path: "/Root",
+                specType: .prim,
+                specifier: .over,
+                fields: [
+                    "references": .referenceListOperation(SdfListOperation(
+                        prependedItems: [SdfReference(assetPath: "missing.usda", primPath: try SdfPath("/Missing"))]
+                    )),
+                ]
+            ),
+        ])
+        let missingStage = USDStage(rootLayer: missingLayer)
+
+        #expect(throws: USDError.self) {
+            _ = try missingStage.flattenedLayer(resolvingWith: USDInMemoryLayerProvider(), rootIdentifier: "root.usda")
+        }
+
+        let rootLayer = USDALayer(
+            composition: USDLayerComposition(sublayers: [USDSublayer(assetPath: "loop.usda")]),
+            specs: [USDLayerSpec(path: "/", specType: .pseudoRoot)]
+        )
+        let loopLayer = USDALayer(
+            composition: USDLayerComposition(sublayers: [USDSublayer(assetPath: "root.usda")]),
+            specs: [USDLayerSpec(path: "/", specType: .pseudoRoot)]
+        )
+        let cycleStage = USDStage(rootLayer: rootLayer)
+        let provider = try makeInMemoryProvider([
+            "root.usda": rootLayer,
+            "loop.usda": loopLayer,
+        ])
+
+        #expect(throws: USDError.self) {
+            _ = try cycleStage.flattenedLayer(resolvingWith: provider, rootIdentifier: "root.usda")
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdStageAuthorsOverridesClassesAndRelationships() throws {
+        var stage = USDStage.createInMemory()
+        _ = try stage.createClassPrim(at: SdfPath("/_ModelBase"))
+        _ = try stage.overridePrim(at: SdfPath("/World/Looks"))
+        _ = try stage.createRelationship(
+            at: SdfPath("/World"),
+            name: "look:binding",
+            targetPaths: SdfListOperation(addedItems: [SdfPath("/World/Looks")])
+        )
+
+        let written = try stage.exportUSDA()
+        let layer = try USDAReader().readLayer(from: written)
+
+        #expect(written.contains("class \"_ModelBase\""))
+        #expect(written.contains("over \"Looks\""))
+        #expect(written.contains("add rel look:binding = [</World/Looks>]"))
+        #expect(layer.spec(at: "/_ModelBase")?.specifier == .class)
+        #expect(layer.spec(at: "/World")?.specifier == .def)
+        #expect(layer.spec(at: "/World/Looks")?.specifier == .over)
+        #expect(layer.spec(at: "/World.look:binding")?.fields["targetPaths"] == .pathListOperation(SdfListOperation(
+            addedItems: ["/World/Looks"]
+        )))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdStageAuthoringRejectsInvalidSpecs() throws {
+        var stage = USDStage.createInMemory()
+
+        #expect(throws: USDError.self) {
+            _ = try stage.definePrim(at: SdfPath("Relative"), typeName: "Xform")
+        }
+        #expect(throws: USDError.self) {
+            _ = try stage.createClassPrim(at: SdfPath("/World/Class"))
+        }
+        #expect(throws: USDError.self) {
+            _ = try stage.createAttribute(at: SdfPath("/Missing"), name: "value", typeName: "double", defaultValue: "1")
+        }
+
+        let mesh = try USDGeomMesh.define(in: &stage, at: SdfPath("/World/Triangle"))
+        #expect(throws: USDError.self) {
+            try mesh.setTopology(
+                points: [USDPoint3D(x: 0, y: 0, z: 0)],
+                faceVertexCounts: [3],
+                faceVertexIndices: [0, 1, 2],
+                in: &stage
+            )
+        }
+        #expect(throws: USDError.self) {
+            try mesh.setPoints([USDPoint3D(x: .nan, y: 0, z: 0)], in: &stage)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdStageDefinePrimPreservesExistingFields() throws {
+        var stage = USDStage.createInMemory()
+        _ = try stage.definePrim(at: SdfPath("/World"), typeName: "Xform")
+        _ = try stage.createAttribute(at: SdfPath("/World"), name: "width", typeName: "double", defaultValue: "2")
+        _ = try stage.createRelationship(
+            at: SdfPath("/World"),
+            name: "look:binding",
+            targetPaths: SdfListOperation(addedItems: [SdfPath("/Looks/Mat")])
+        )
+
+        _ = try stage.definePrim(at: SdfPath("/World"), typeName: "Xform")
+        let layer = try stage.exportSdfLayer()
+        let worldPath = try SdfPath("/World")
+        let widthPath = try SdfPath("/World.width")
+        let relationshipPath = try SdfPath("/World.look:binding")
+        let materialPath = try SdfPath("/Looks/Mat")
+        let world = try #require(layer.spec(at: worldPath))
+
+        #expect(world.field(named: "properties")?.authoredText == "/World.width, /World.look:binding")
+        #expect(layer.spec(at: widthPath)?.field(named: "default") == .authored("2"))
+        #expect(layer.spec(at: relationshipPath)?.field(named: "targetPaths") == .pathListOperation(SdfListOperation(
+            addedItems: [materialPath]
+        )))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdStageRelationshipRejectsInvalidTargets() throws {
+        var stage = USDStage.createInMemory()
+        _ = try stage.definePrim(at: SdfPath("/World"))
+
+        for invalidTarget in ["", "bad target", "/World.rel[/Nested]"] {
+            #expect(throws: USDError.self) {
+                _ = try stage.createRelationship(
+                    at: SdfPath("/World"),
+                    name: "target",
+                    targetPaths: SdfListOperation(addedItems: [SdfPath(invalidTarget)])
+                )
+            }
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdGeomXformPreservesExistingXformOpOrder() throws {
+        var stage = USDStage.createInMemory()
+        let xform = try USDGeomXform.define(in: &stage, at: SdfPath("/World"))
+        _ = try stage.createAttribute(
+            at: SdfPath("/World"),
+            name: "xformOpOrder",
+            typeName: "token[]",
+            defaultValue: "[\"!resetXformStack!\", \"xformOp:rotateXYZ\"]",
+            variability: .uniform
+        )
+
+        try xform.setTranslate(USDTransformVector3D(x: 1, y: 2, z: 3), in: &stage)
+        try xform.setTranslate(USDTransformVector3D(x: 4, y: 5, z: 6), in: &stage)
+
+        let orderSpec = try #require(stage.rootLayer.spec(at: "/World.xformOpOrder"))
+        let translateSpec = try #require(stage.rootLayer.spec(at: "/World.xformOp:translate"))
+
+        #expect(orderSpec.fields["default"] == .authored("[\"!resetXformStack!\", \"xformOp:rotateXYZ\", \"xformOp:translate\"]"))
+        #expect(translateSpec.fields["default"] == .authored("(4.0, 5.0, 6.0)"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdGeomMeshIndividualSettersValidateAuthoredTopology() throws {
+        var stage = USDStage.createInMemory()
+        let mesh = try USDGeomMesh.define(in: &stage, at: SdfPath("/World/Triangle"))
+
+        try mesh.setPoints([USDPoint3D(x: 0, y: 0, z: 0)], in: &stage)
+        try mesh.setFaceVertexCounts([3], in: &stage)
+        #expect(throws: USDError.self) {
+            try mesh.setFaceVertexIndices([0, 1, 2], in: &stage)
+        }
+        #expect(stage.rootLayer.spec(at: "/World/Triangle.faceVertexIndices") == nil)
+
+        try mesh.setPoints([
+            USDPoint3D(x: 0, y: 0, z: 0),
+            USDPoint3D(x: 1, y: 0, z: 0),
+            USDPoint3D(x: 0, y: 1, z: 0),
+        ], in: &stage)
+        try mesh.setFaceVertexIndices([0, 1, 2], in: &stage)
+
+        #expect(stage.rootLayer.spec(at: "/World/Triangle.faceVertexIndices")?.fields["default"] == .authored("[0, 1, 2]"))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaWriterRoundTripsSceneMesh() throws {
+        let scene = USDScene(
+            defaultPrim: "Triangle",
+            metersPerUnit: 0.01,
+            upAxis: .z,
+            meshes: [
+                USDMesh(
+                    name: "Triangle",
+                    points: [
+                        USDPoint3D(x: 0, y: 0, z: 0),
+                        USDPoint3D(x: 1, y: 0, z: 0),
+                        USDPoint3D(x: 0, y: 1, z: 0),
+                    ],
+                    faceVertexCounts: [3],
+                    faceVertexIndices: [0, 1, 2],
+                    orientation: .rightHanded,
+                    subdivisionScheme: "none"
+                )
+            ]
+        )
+
+        let written = try USDAWriter().string(for: scene)
+        let roundTripped = try USDAReader().read(from: written)
+
+        #expect(written.contains("def Mesh \"Triangle\""))
+        #expect(roundTripped.defaultPrim == "Triangle")
+        #expect(roundTripped.metersPerUnit == 0.01)
+        #expect(roundTripped.upAxis == .z)
+        #expect(roundTripped.meshes.first?.points == scene.meshes.first?.points)
+        #expect(roundTripped.meshes.first?.faceVertexCounts == [3])
+        #expect(roundTripped.meshes.first?.faceVertexIndices == [0, 1, 2])
+        #expect(roundTripped.meshes.first?.orientation == .rightHanded)
+        #expect(roundTripped.meshes.first?.subdivisionScheme == "none")
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -3059,6 +5400,20 @@ struct OpenUSDTests {
 
             #expect(layer.prims.map(\.path).sorted() == testCase.primPaths.sorted())
         }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func openUSDSDFParsingStringSubstitutionMetadataFixturePreservesMaps() throws {
+        let layer = try SdfLayer.importUSDA(from: openUSDFixture("testSdfParsing.testenv/113_displayName_metadata.usda"))
+        let primPath = try SdfPath("/RightLeg")
+
+        #expect(layer.field(named: "prefixSubstitutions", at: primPath) == .dictionary([
+            "$Left": .string("Right"),
+            "Left": .string("Right"),
+        ]))
+        #expect(layer.field(named: "suffixSubstitutions", at: primPath) == .dictionary([
+            "$NUM": .string("1"),
+        ]))
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -3254,7 +5609,7 @@ struct OpenUSDTests {
             assetPath: "///test/layer.usda",
             sitePrimPath: "/TestPrim3",
             targetPrimPath: "/Prim",
-            layerOffset: USDLayerOffset(offset: 11, scale: 22)
+            layerOffset: SdfLayerOffset(offset: 11, scale: 22)
         )))
         #expect(references.contains(USDCompositionArc(
             assetPath: "///test/layer.usda",
@@ -3265,25 +5620,25 @@ struct OpenUSDTests {
             assetPath: "///test/layer.usda",
             sitePrimPath: "/TestFile5",
             targetPrimPath: nil,
-            layerOffset: USDLayerOffset(offset: 11, scale: 22)
+            layerOffset: SdfLayerOffset(offset: 11, scale: 22)
         )))
         #expect(references.contains(USDCompositionArc(
-            assetPath: "@/test/layer3.usda@",
+            assetPath: "/test/layer3.usda",
             sitePrimPath: "/TestMixed2",
             targetPrimPath: "/Prim"
         )))
         #expect(references.contains(USDCompositionArc(
-            assetPath: "@/test/layer4.usda@",
+            assetPath: "/test/layer4.usda",
             sitePrimPath: "/TestMixed2",
             targetPrimPath: nil
         )))
         #expect(references.contains(USDCompositionArc(
-            assetPath: "@/test/layer3.usda@",
+            assetPath: "/test/layer3.usda",
             sitePrimPath: "/TestMixed3",
             targetPrimPath: "/Prim"
         )))
         #expect(references.contains(USDCompositionArc(
-            assetPath: "@/test/layer4.usda@",
+            assetPath: "/test/layer4.usda",
             sitePrimPath: "/TestMixed3",
             targetPrimPath: nil
         )))
@@ -3302,7 +5657,7 @@ struct OpenUSDTests {
                 assetPath: "///test1/layer1.usda",
                 sitePrimPath: "/TestFile3",
                 targetPrimPath: nil,
-                layerOffset: USDLayerOffset(offset: 0.1, scale: 0.2)
+                layerOffset: SdfLayerOffset(offset: 0.1, scale: 0.2)
             ),
             USDCompositionArc(
                 assetPath: "///test/layer.usda",
@@ -3318,13 +5673,13 @@ struct OpenUSDTests {
                 assetPath: "///test/layer.usda",
                 sitePrimPath: "/TestSubrootPrim3",
                 targetPrimPath: "/Prim/Child",
-                layerOffset: USDLayerOffset(offset: 11, scale: 22)
+                layerOffset: SdfLayerOffset(offset: 11, scale: 22)
             ),
             USDCompositionArc(
                 assetPath: "///test1/layer1.usda",
                 sitePrimPath: "/TestSubrootPrim3",
                 targetPrimPath: "/Prim2/Child",
-                layerOffset: USDLayerOffset(offset: 0.1, scale: 0.2)
+                layerOffset: SdfLayerOffset(offset: 0.1, scale: 0.2)
             ),
         ]
         for expected in additionalReferences {
@@ -3515,6 +5870,48 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func usdaLayerReaderKeepsChildPrimAfterAssetLiteralContainingBrace() throws {
+        let data = Data("""
+        #usda 1.0
+
+        def Xform "Root"
+        {
+            asset source = @weird{path.usda@
+
+            def Scope "Child"
+            {
+            }
+        }
+        """.utf8)
+
+        let layer = try USDAReader().readLayer(from: data)
+
+        #expect(layer.spec(at: "/Root.source") != nil)
+        #expect(layer.spec(at: "/Root/Child") != nil)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func usdaLayerReaderTreatsPrimKeywordInsideDepthZeroAssetLiteralAsOpaque() throws {
+        let data = Data("""
+        #usda 1.0
+
+        def Xform "Root"
+        {
+            asset source = @my def model.usda@
+
+            def Scope "Child"
+            {
+            }
+        }
+        """.utf8)
+
+        let layer = try USDAReader().readLayer(from: data)
+
+        #expect(layer.spec(at: "/Root.source") != nil)
+        #expect(layer.spec(at: "/Root/Child") != nil)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func usdaLayerReaderIgnoresCompositionListEditsInsideNestedMetadata() throws {
         let data = Data("""
         #usda 1.0
@@ -3559,7 +5956,7 @@ struct OpenUSDTests {
             assetPath: "///test/layer.usda",
             sitePrimPath: "/TestPrim3",
             targetPrimPath: "/Prim",
-            layerOffset: USDLayerOffset(offset: 11, scale: 22)
+            layerOffset: SdfLayerOffset(offset: 11, scale: 22)
         )))
         #expect(payloads.contains(USDCompositionArc(
             assetPath: "///test/layer.usda",
@@ -3570,25 +5967,25 @@ struct OpenUSDTests {
             assetPath: "///test/layer.usda",
             sitePrimPath: "/TestFile5",
             targetPrimPath: nil,
-            layerOffset: USDLayerOffset(offset: 11, scale: 22)
+            layerOffset: SdfLayerOffset(offset: 11, scale: 22)
         )))
         #expect(payloads.contains(USDCompositionArc(
-            assetPath: "@/test/layer3.usda@",
+            assetPath: "/test/layer3.usda",
             sitePrimPath: "/TestMixed2",
             targetPrimPath: "/Prim"
         )))
         #expect(payloads.contains(USDCompositionArc(
-            assetPath: "@/test/layer4.usda@",
+            assetPath: "/test/layer4.usda",
             sitePrimPath: "/TestMixed2",
             targetPrimPath: nil
         )))
         #expect(payloads.contains(USDCompositionArc(
-            assetPath: "@/test/layer3.usda@",
+            assetPath: "/test/layer3.usda",
             sitePrimPath: "/TestMixed3",
             targetPrimPath: "/Prim"
         )))
         #expect(payloads.contains(USDCompositionArc(
-            assetPath: "@/test/layer4.usda@",
+            assetPath: "/test/layer4.usda",
             sitePrimPath: "/TestMixed3",
             targetPrimPath: nil
         )))
@@ -3607,7 +6004,7 @@ struct OpenUSDTests {
                 assetPath: "///test1/layer1.usda",
                 sitePrimPath: "/TestFile3",
                 targetPrimPath: nil,
-                layerOffset: USDLayerOffset(offset: 0.1, scale: 0.2)
+                layerOffset: SdfLayerOffset(offset: 0.1, scale: 0.2)
             ),
             USDCompositionArc(
                 assetPath: "///test/layer.usda",
@@ -3623,13 +6020,13 @@ struct OpenUSDTests {
                 assetPath: "///test/layer.usda",
                 sitePrimPath: "/TestSubrootPrim3",
                 targetPrimPath: "/Prim/Child",
-                layerOffset: USDLayerOffset(offset: 11, scale: 22)
+                layerOffset: SdfLayerOffset(offset: 11, scale: 22)
             ),
             USDCompositionArc(
                 assetPath: "///test1/layer1.usda",
                 sitePrimPath: "/TestSubrootPrim3",
                 targetPrimPath: "/Prim2/Child",
-                layerOffset: USDLayerOffset(offset: 0.1, scale: 0.2)
+                layerOffset: SdfLayerOffset(offset: 0.1, scale: 0.2)
             ),
         ]
         for expected in additionalPayloads {
@@ -3763,11 +6160,11 @@ struct OpenUSDTests {
         let root = try #require(layer.spec(at: "/"))
         #expect(root.fields["subLayers"] == .stringVector(["layers/base.usda", "layers/anim.usdc"]))
         #expect(root.fields["subLayerOffsets"] == .layerOffsetVector([
-            USDLayerOffset(offset: 10, scale: 0.5),
+            SdfLayerOffset(offset: 10, scale: 0.5),
             .identity,
         ]))
         #expect(layer.composition.sublayers == [
-            USDSublayer(assetPath: "layers/base.usda", layerOffset: USDLayerOffset(offset: 10, scale: 0.5)),
+            USDSublayer(assetPath: "layers/base.usda", layerOffset: SdfLayerOffset(offset: 10, scale: 0.5)),
             USDSublayer(assetPath: "layers/anim.usdc"),
         ])
 
@@ -3783,6 +6180,24 @@ struct OpenUSDTests {
         #expect(scope.fields["stringVector"] == .stringVector(["alpha", "beta"]))
         #expect(scope.fields["doubleVector"] == .doubleVector([1.25, 2.5]))
         #expect(scope.fields["dictionaryValue"] == .dictionary([:]))
+        #expect(scope.fields["unsupportedMatrix2d"] == .unmaterializedValue(USDCUnmaterializedValue(
+            typeName: "matrix2d",
+            rawType: USDCCrateValueType.matrix2d.rawValue,
+            payload: 123,
+            isArray: false,
+            isInlined: true,
+            isCompressed: false,
+            isArrayEdit: false
+        )))
+        #expect(scope.fields["unknownRawValue"] == .unmaterializedValue(USDCUnmaterializedValue(
+            typeName: "unknown(250)",
+            rawType: 250,
+            payload: 456,
+            isArray: true,
+            isInlined: true,
+            isCompressed: true,
+            isArrayEdit: true
+        )))
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -3871,7 +6286,7 @@ struct OpenUSDTests {
                 USDCReference(
                     assetPath: "assets/ref.usda",
                     primPath: "/Scope.target",
-                    layerOffset: USDLayerOffset(offset: 1.5, scale: 2),
+                    layerOffset: SdfLayerOffset(offset: 1.5, scale: 2),
                     customData: [
                         "displayName": .string("friendlyRef"),
                         "referencePurpose": .string("render"),
@@ -3892,7 +6307,7 @@ struct OpenUSDTests {
                 USDCReference(
                     assetPath: "assets/ref.usda",
                     primPath: "/Scope.target",
-                    layerOffset: USDLayerOffset(offset: 1.5, scale: 2),
+                    layerOffset: SdfLayerOffset(offset: 1.5, scale: 2),
                     customData: [
                         "displayName": .string("friendlyRef"),
                         "referencePurpose": .string("render"),
@@ -3905,7 +6320,7 @@ struct OpenUSDTests {
                 USDCPayload(
                     assetPath: "assets/payload.usdc",
                     primPath: "/PayloadTarget",
-                    layerOffset: USDLayerOffset(offset: -2, scale: 0.5)
+                    layerOffset: SdfLayerOffset(offset: -2, scale: 0.5)
                 ),
             ]
         )))
@@ -3918,7 +6333,7 @@ struct OpenUSDTests {
                 assetPath: "assets/ref.usda",
                 sitePrimPath: "/Scope",
                 targetPrimPath: "/Scope.target",
-                layerOffset: USDLayerOffset(offset: 1.5, scale: 2)
+                layerOffset: SdfLayerOffset(offset: 1.5, scale: 2)
             ),
             USDCompositionArc(
                 assetPath: "assets/second.usda",
@@ -3931,7 +6346,7 @@ struct OpenUSDTests {
                 assetPath: "assets/payload.usdc",
                 sitePrimPath: "/Scope",
                 targetPrimPath: "/PayloadTarget",
-                layerOffset: USDLayerOffset(offset: -2, scale: 0.5)
+                layerOffset: SdfLayerOffset(offset: -2, scale: 0.5)
             ),
             USDCompositionArc(
                 assetPath: "assets/single.usda",
@@ -3943,11 +6358,11 @@ struct OpenUSDTests {
 
     @Test(.timeLimit(.minutes(1)))
     func usdLayerOffsetMapsBetweenLayerAndStageTime() throws {
-        let offset = USDLayerOffset(offset: 10, scale: 2)
+        let offset = SdfLayerOffset(offset: 10, scale: 2)
 
         #expect(offset.stageTime(forLayerTime: 12) == 34)
         #expect(try offset.layerTime(forStageTime: 34) == 12)
-        #expect(offset.concatenating(USDLayerOffset(offset: 3, scale: 4)) == USDLayerOffset(offset: 16, scale: 8))
+        #expect(offset.concatenating(SdfLayerOffset(offset: 3, scale: 4)) == SdfLayerOffset(offset: 16, scale: 8))
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -3982,7 +6397,7 @@ struct OpenUSDTests {
         #expect(layer.composition.sublayers == [
             USDSublayer(
                 assetPath: "./layers/base.usda",
-                layerOffset: USDLayerOffset(offset: 10, scale: 0.5)
+                layerOffset: SdfLayerOffset(offset: 10, scale: 0.5)
             ),
         ])
         #expect(layer.composition.references == [
@@ -3990,7 +6405,7 @@ struct OpenUSDTests {
                 assetPath: "./refs/model.usda",
                 sitePrimPath: "/Scene",
                 targetPrimPath: "/Model",
-                layerOffset: USDLayerOffset(offset: 24, scale: 2)
+                layerOffset: SdfLayerOffset(offset: 24, scale: 2)
             ),
         ])
         #expect(layer.composition.payloads == [
@@ -3998,7 +6413,7 @@ struct OpenUSDTests {
                 assetPath: "./payloads/heavy.usdc",
                 sitePrimPath: "/Scene",
                 targetPrimPath: "/Payload",
-                layerOffset: USDLayerOffset(offset: -3, scale: 0.25)
+                layerOffset: SdfLayerOffset(offset: -3, scale: 0.25)
             ),
         ])
     }
@@ -4052,7 +6467,7 @@ struct OpenUSDTests {
     func openUSDUSDZFixtureRejectsFirstFileThatIsNotUSDLayer() throws {
         let data = try openUSDFixture("testUsdUsdzFileFormat/first_file_not_usd.usdz")
 
-        #expect(throws: USDImportError.self) {
+        #expect(throws: USDError.self) {
             _ = try USDZReader().read(from: data)
         }
     }
@@ -4130,7 +6545,7 @@ struct OpenUSDTests {
     func openUSDUSDZFixtureWithUSDCDefaultLayerThrowsTypedUSDError() throws {
         let data = try openUSDFixture("testUsdUsdzFileFormat/single_usdc.usdz")
 
-        #expect(throws: USDImportError.self) {
+        #expect(throws: USDError.self) {
             _ = try USDZReader().read(from: data)
         }
     }
@@ -4141,7 +6556,7 @@ struct OpenUSDTests {
             ("TOKENS", Data([0x01])),
         ])
 
-        #expect(throws: USDImportError.self) {
+        #expect(throws: USDError.self) {
             _ = try USDCReader().read(from: data)
         }
     }
@@ -4986,10 +7401,10 @@ struct OpenUSDTests {
         do {
             _ = try USDZReader().read(from: package)
             Issue.record("Expected reference cycle to fail.")
-        } catch USDImportError.invalidData(let message) {
+        } catch USDError.invalidData(let message) {
             #expect(message.contains("cycle"))
         } catch {
-            Issue.record("Expected USDImportError.invalidData, got \(error).")
+            Issue.record("Expected USDError.invalidData, got \(error).")
         }
     }
 
@@ -5020,10 +7435,10 @@ struct OpenUSDTests {
         do {
             _ = try USDZReader().read(from: package)
             Issue.record("Expected payload cycle to fail.")
-        } catch USDImportError.invalidData(let message) {
+        } catch USDError.invalidData(let message) {
             #expect(message.contains("cycle"))
         } catch {
-            Issue.record("Expected USDImportError.invalidData, got \(error).")
+            Issue.record("Expected USDError.invalidData, got \(error).")
         }
     }
 
@@ -5114,7 +7529,7 @@ struct OpenUSDTests {
             ("assets/meshes.usda", referencedLayer),
         ], alignPayloads: true)
 
-        #expect(throws: USDImportError.self) {
+        #expect(throws: USDError.self) {
             _ = try USDZReader().read(from: package)
         }
     }
@@ -5396,13 +7811,13 @@ struct OpenUSDTests {
             ("scene.usda", usda),
         ], alignPayloads: false)
 
-        #expect(throws: USDImportError.self) {
+        #expect(throws: USDError.self) {
             _ = try USDZArchive(data: package)
         }
     }
 }
 
-private func makeUSDCFixture(
+func makeUSDCFixture(
     version: USDCCrateVersion = USDCCrateVersion(major: 0, minor: 8, patch: 0),
     valueData: Data = Data(),
     sections: [(String, Data)]
@@ -5580,6 +7995,8 @@ private func makeUSDCLayerMetadataFieldFixture() -> Data {
         "stringVector",
         "doubleVector",
         "dictionaryValue",
+        "unsupportedMatrix2d",
+        "unknownRawValue",
         "layers/base.usda",
         "layers/anim.usdc",
         "modelingVariant",
@@ -5592,7 +8009,7 @@ private func makeUSDCLayerMetadataFieldFixture() -> Data {
     var valueData = Data()
     let subLayersOffset = appendUSDCStringVector([0, 1], to: &valueData)
     let subLayerOffsetsOffset = appendUSDCLayerOffsetVector([
-        USDLayerOffset(offset: 10, scale: 0.5),
+        SdfLayerOffset(offset: 10, scale: 0.5),
         .identity,
     ], to: &valueData)
     let variantSelectionMapOffset = appendUSDCVariantSelectionMap([
@@ -5603,6 +8020,14 @@ private func makeUSDCLayerMetadataFieldFixture() -> Data {
     let timeCodeArrayOffset = appendUSDCDoubleArray([1, 2.5], to: &valueData)
     let stringVectorOffset = appendUSDCStringVector([6, 7], to: &valueData)
     let doubleVectorOffset = appendUSDCDoubleVector([1.25, 2.5], to: &valueData)
+    let unknownRawValue = USDCCrateValueRep(
+        rawValue: USDCCrateValueRep.isArrayBit
+            | USDCCrateValueRep.isInlinedBit
+            | USDCCrateValueRep.isCompressedBit
+            | USDCCrateValueRep.isArrayEditBit
+            | (UInt64(250) << 48)
+            | 456
+    )
     let fields = [
         USDCCrateField(
             tokenIndex: 0,
@@ -5622,7 +8047,7 @@ private func makeUSDCLayerMetadataFieldFixture() -> Data {
         ),
         USDCCrateField(
             tokenIndex: 5,
-            valueRep: USDCCrateValueRep(type: .permission, isInlined: true, isArray: false, payload: UInt64(USDPermission.privateAccess.rawValue))
+            valueRep: USDCCrateValueRep(type: .permission, isInlined: true, isArray: false, payload: UInt64(SdfPermission.privateAccess.rawValue))
         ),
         USDCCrateField(
             tokenIndex: 6,
@@ -5648,6 +8073,14 @@ private func makeUSDCLayerMetadataFieldFixture() -> Data {
             tokenIndex: 11,
             valueRep: USDCCrateValueRep(type: .dictionary, isInlined: true, isArray: false, payload: 0)
         ),
+        USDCCrateField(
+            tokenIndex: 12,
+            valueRep: USDCCrateValueRep(type: .matrix2d, isInlined: true, isArray: false, payload: 123)
+        ),
+        USDCCrateField(
+            tokenIndex: 13,
+            valueRep: unknownRawValue
+        ),
     ]
     let specs = [
         USDCCrateSpec(pathIndex: 0, fieldSetIndex: 0, specType: .pseudoRoot),
@@ -5656,11 +8089,11 @@ private func makeUSDCLayerMetadataFieldFixture() -> Data {
 
     return makeUSDCFixture(version: version, valueData: valueData, sections: [
         ("TOKENS", makeUSDCTokenSection(version: version, tokenData: nullSeparatedTokenData(tokens))),
-        ("STRINGS", makeUSDCStringsSection([12, 13, 14, 15, 16, 17, 18, 19])),
+        ("STRINGS", makeUSDCStringsSection([14, 15, 16, 17, 18, 19, 20, 21])),
         ("FIELDS", makeUSDCFieldsSection(version: version, fields: fields)),
         ("FIELDSETS", makeUSDCFieldSetsSection(version: version, indexes: [
             1, 2, UInt32.max,
-            0, 3, 4, 5, 6, 7, 8, 9, 10, UInt32.max,
+            0, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, UInt32.max,
         ])),
         ("PATHS", makeUSDCCompressedPathsSection(
             pathCount: 2,
@@ -5900,7 +8333,7 @@ private func makeUSDCLayerCompositionArcFixture() -> Data {
             USDCEncodedReference(
                 assetPathStringIndex: 0,
                 primPathIndex: 2,
-                layerOffset: USDLayerOffset(offset: 1.5, scale: 2),
+                layerOffset: SdfLayerOffset(offset: 1.5, scale: 2),
                 customData: [
                     USDCEncodedDictionaryEntry(
                         keyStringIndex: 3,
@@ -5931,7 +8364,7 @@ private func makeUSDCLayerCompositionArcFixture() -> Data {
             USDCEncodedReference(
                 assetPathStringIndex: 0,
                 primPathIndex: 2,
-                layerOffset: USDLayerOffset(offset: 1.5, scale: 2),
+                layerOffset: SdfLayerOffset(offset: 1.5, scale: 2),
                 customData: [
                     USDCEncodedDictionaryEntry(
                         keyStringIndex: 3,
@@ -5953,7 +8386,7 @@ private func makeUSDCLayerCompositionArcFixture() -> Data {
             USDCEncodedPayload(
                 assetPathStringIndex: 1,
                 primPathIndex: 3,
-                layerOffset: USDLayerOffset(offset: -2, scale: 0.5)
+                layerOffset: SdfLayerOffset(offset: -2, scale: 0.5)
             ),
         ],
         to: &valueData
@@ -6728,7 +9161,7 @@ private func appendUSDCStringVector(_ stringIndexes: [UInt32], to data: inout Da
     return offset
 }
 
-private func appendUSDCLayerOffsetVector(_ values: [USDLayerOffset], to data: inout Data) -> UInt64 {
+private func appendUSDCLayerOffsetVector(_ values: [SdfLayerOffset], to data: inout Data) -> UInt64 {
     let offset = alignUSDCValueData(&data)
     data.appendLittleEndian(UInt64(values.count))
     for value in values {
@@ -6810,17 +9243,17 @@ private func appendUSDCListOperationItems(_ items: [UInt32], to data: inout Data
 private struct USDCEncodedReference {
     var assetPathStringIndex: UInt32
     var primPathIndex: UInt32
-    var layerOffset: USDLayerOffset
+    var layerOffset: SdfLayerOffset
     var customData: [USDCEncodedDictionaryEntry] = []
 }
 
 private struct USDCEncodedPayload {
     var assetPathStringIndex: UInt32
     var primPathIndex: UInt32
-    var layerOffset: USDLayerOffset
+    var layerOffset: SdfLayerOffset
 }
 
-private struct USDCEncodedDictionaryEntry {
+struct USDCEncodedDictionaryEntry {
     var keyStringIndex: UInt32
     var valueRep: USDCCrateValueRep
     var nestedPayload: Data = Data()
@@ -6858,7 +9291,7 @@ private func appendUSDCReferenceListOperation(
     }
 }
 
-private func appendUSDCDictionary(_ entries: [USDCEncodedDictionaryEntry], to data: inout Data) {
+func appendUSDCDictionary(_ entries: [USDCEncodedDictionaryEntry], to data: inout Data) {
     data.appendLittleEndian(UInt64(entries.count))
     for entry in entries {
         data.appendLittleEndian(entry.keyStringIndex)
@@ -6981,20 +9414,20 @@ private func openUSDFixture(_ relativePath: String) throws -> Data {
     try fixtureData(root: "OpenUSD", relativePath: relativePath)
 }
 
-private func generatedFixture(_ relativePath: String) throws -> Data {
+func generatedFixture(_ relativePath: String) throws -> Data {
     try fixtureData(root: "Generated", relativePath: relativePath)
 }
 
 private func usdImportFailureMessage(_ body: () throws -> Void) throws -> String {
     do {
         try body()
-    } catch let error as USDImportError {
+    } catch let error as USDError {
         return error.testMessage
     } catch {
-        Issue.record("Expected USDImportError, got \(error).")
+        Issue.record("Expected USDError, got \(error).")
         return ""
     }
-    Issue.record("Expected USDImportError.")
+    Issue.record("Expected USDError.")
     return ""
 }
 
@@ -7014,10 +9447,10 @@ private func defaultFieldValueRep(in crate: USDCCrateFile, atPath path: String) 
     let fields = try crate.readFields()
     let tokens = try crate.readTokens()
     guard let pathIndex = paths.firstIndex(of: path) else {
-        throw USDImportError.invalidData("USDC fixture is missing path \(path).")
+        throw USDError.invalidData("USDC fixture is missing path \(path).")
     }
     guard let spec = specs.first(where: { Int($0.pathIndex) == pathIndex }) else {
-        throw USDImportError.invalidData("USDC fixture is missing spec for path \(path).")
+        throw USDError.invalidData("USDC fixture is missing spec for path \(path).")
     }
     var cursor = Int(spec.fieldSetIndex)
     while cursor < fieldSetIndexes.count {
@@ -7027,20 +9460,20 @@ private func defaultFieldValueRep(in crate: USDCCrateFile, atPath path: String) 
             break
         }
         guard fieldIndex < UInt32(fields.count) else {
-            throw USDImportError.invalidData("USDC fixture field set references an out-of-range field.")
+            throw USDError.invalidData("USDC fixture field set references an out-of-range field.")
         }
         let field = fields[Int(fieldIndex)]
         guard field.tokenIndex < UInt32(tokens.count) else {
-            throw USDImportError.invalidData("USDC fixture field references an out-of-range token.")
+            throw USDError.invalidData("USDC fixture field references an out-of-range token.")
         }
         if tokens[Int(field.tokenIndex)] == "default" {
             return field.valueRep
         }
     }
-    throw USDImportError.invalidData("USDC fixture is missing a default field for path \(path).")
+    throw USDError.invalidData("USDC fixture is missing a default field for path \(path).")
 }
 
-private extension USDImportError {
+private extension USDError {
     var testMessage: String {
         switch self {
         case .invalidData(let message),
@@ -7072,7 +9505,7 @@ private func fixtureData(root: String, relativePath: String) throws -> Data {
     return try Data(contentsOf: fixturesURL.appendingPathComponent(relativePath))
 }
 
-private func makeUSDCTokenSection(version: USDCCrateVersion, tokenData: Data) -> Data {
+func makeUSDCTokenSection(version: USDCCrateVersion, tokenData: Data) -> Data {
     let tokens = tokenData.filter { $0 == 0 }.count
     var data = Data()
     data.appendLittleEndian(UInt64(tokens))
@@ -7088,7 +9521,7 @@ private func makeUSDCTokenSection(version: USDCCrateVersion, tokenData: Data) ->
     return data
 }
 
-private func makeUSDCStringsSection(_ tokenIndexes: [UInt32]) -> Data {
+func makeUSDCStringsSection(_ tokenIndexes: [UInt32]) -> Data {
     var data = Data()
     data.appendLittleEndian(UInt64(tokenIndexes.count))
     for tokenIndex in tokenIndexes {
@@ -7097,7 +9530,7 @@ private func makeUSDCStringsSection(_ tokenIndexes: [UInt32]) -> Data {
     return data
 }
 
-private func makeUSDCFieldsSection(version: USDCCrateVersion, fields: [USDCCrateField]) -> Data {
+func makeUSDCFieldsSection(version: USDCCrateVersion, fields: [USDCCrateField]) -> Data {
     var data = Data()
     data.appendLittleEndian(UInt64(fields.count))
     if version < USDCCrateVersion(major: 0, minor: 4, patch: 0) {
@@ -7119,7 +9552,7 @@ private func makeUSDCFieldsSection(version: USDCCrateVersion, fields: [USDCCrate
     return data
 }
 
-private func makeUSDCFieldSetsSection(version: USDCCrateVersion, indexes: [UInt32]) -> Data {
+func makeUSDCFieldSetsSection(version: USDCCrateVersion, indexes: [UInt32]) -> Data {
     var data = Data()
     data.appendLittleEndian(UInt64(indexes.count))
     if version < USDCCrateVersion(major: 0, minor: 4, patch: 0) {
@@ -7132,7 +9565,7 @@ private func makeUSDCFieldSetsSection(version: USDCCrateVersion, indexes: [UInt3
     return data
 }
 
-private func makeUSDCCompressedPathsSection(
+func makeUSDCCompressedPathsSection(
     pathCount: Int,
     pathIndexes: [UInt32],
     elementTokenIndexes: [Int32],
@@ -7147,7 +9580,7 @@ private func makeUSDCCompressedPathsSection(
     return data
 }
 
-private func makeUSDCSpecsSection(version: USDCCrateVersion, specs: [USDCCrateSpec]) -> Data {
+func makeUSDCSpecsSection(version: USDCCrateVersion, specs: [USDCCrateSpec]) -> Data {
     var data = Data()
     data.appendLittleEndian(UInt64(specs.count))
     if version == USDCCrateVersion(major: 0, minor: 0, patch: 1) {
@@ -7171,7 +9604,7 @@ private func makeUSDCSpecsSection(version: USDCCrateVersion, specs: [USDCCrateSp
     return data
 }
 
-private func nullSeparatedTokenData(_ tokens: [String]) -> Data {
+func nullSeparatedTokenData(_ tokens: [String]) -> Data {
     var data = Data()
     for token in tokens {
         data.append(contentsOf: token.utf8)
@@ -7271,6 +9704,21 @@ private func testLZ4LiteralBlock(_ bytes: [UInt8]) -> Data {
     }
     output.append(contentsOf: bytes)
     return output
+}
+
+private func referenceLayer(name: String, rootPath: String, uniqueChildName: String) -> USDALayer {
+    USDALayer(defaultPrim: String(rootPath.dropFirst()), specs: [
+        USDLayerSpec(path: "/", specType: .pseudoRoot),
+        USDLayerSpec(path: rootPath, specType: .prim, specifier: .def, typeName: "Xform"),
+        USDLayerSpec(path: "\(rootPath)/\(uniqueChildName)", specType: .prim, specifier: .def, typeName: "Mesh"),
+        USDLayerSpec(
+            path: "\(rootPath)/Shared",
+            specType: .prim,
+            specifier: .def,
+            typeName: "Mesh",
+            fields: ["displayName": .authored("\"\(name)\"")]
+        ),
+    ])
 }
 
 private func makeUSDZFixture(entries: [(String, Data)], alignPayloads: Bool) -> Data {

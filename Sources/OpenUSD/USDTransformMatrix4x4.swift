@@ -85,22 +85,14 @@ public struct USDTransformMatrix4x4: Sendable, Equatable {
             case "Z":
                 axisTransform = try rotationZ(angleInDegrees: angles.z)
             default:
-                throw USDImportError.invalidData("USDA Euler rotation order is malformed.")
+                throw USDError.invalidData("USDA Euler rotation order is malformed.")
             }
-            transform = try transform.validatedConcatenating(axisTransform)
+            transform = try transform.concatenating(axisTransform)
         }
         return transform
     }
 
-    @available(*, deprecated, message: "Use validatedConcatenating(_:) to receive typed errors for malformed matrices.")
-    public func concatenating(_ rhs: USDTransformMatrix4x4) -> USDTransformMatrix4x4 {
-        guard values.count == 16, rhs.values.count == 16 else {
-            return USDTransformMatrix4x4(values: [])
-        }
-        return USDTransformMatrix4x4(values: Self.multiplied(values, rhs.values))
-    }
-
-    public func validatedConcatenating(_ rhs: USDTransformMatrix4x4) throws -> USDTransformMatrix4x4 {
+    public func concatenating(_ rhs: USDTransformMatrix4x4) throws -> USDTransformMatrix4x4 {
         let lhsValues = try validatedValues(context: "left concatenation")
         let rhsValues = try rhs.validatedValues(context: "right concatenation")
         return USDTransformMatrix4x4(values: Self.multiplied(lhsValues, rhsValues))
@@ -136,7 +128,7 @@ public struct USDTransformMatrix4x4: Sendable, Equatable {
                 }
             }
             guard pivotMagnitude.isFinite, pivotMagnitude > Double.leastNormalMagnitude else {
-                throw USDImportError.invalidData("USDA inverse xform op is singular.")
+                throw USDError.invalidData("USDA inverse xform op is singular.")
             }
             if pivotRow != column {
                 swapRows(column, pivotRow, in: &matrix)
@@ -164,10 +156,10 @@ public struct USDTransformMatrix4x4: Sendable, Equatable {
             determinant = -determinant
         }
         guard determinant.isFinite, abs(determinant) > 1.0e-9 else {
-            throw USDImportError.invalidData("USDA inverse xform op is singular.")
+            throw USDError.invalidData("USDA inverse xform op is singular.")
         }
         guard inverse.allSatisfy(\.isFinite) else {
-            throw USDImportError.invalidData("USDA inverse xform op produced a non-finite matrix.")
+            throw USDError.invalidData("USDA inverse xform op produced a non-finite matrix.")
         }
         return USDTransformMatrix4x4(values: inverse)
     }
@@ -179,18 +171,18 @@ public struct USDTransformMatrix4x4: Sendable, Equatable {
         let z = point.x * values[2] + point.y * values[6] + point.z * values[10] + values[14]
         let w = point.x * values[3] + point.y * values[7] + point.z * values[11] + values[15]
         guard x.isFinite, y.isFinite, z.isFinite, w.isFinite else {
-            throw USDImportError.invalidData("USDA transform produced a non-finite point.")
+            throw USDError.invalidData("USDA transform produced a non-finite point.")
         }
         guard w != 0 else {
-            throw USDImportError.invalidData("USDA transform produced a point with zero homogeneous weight.")
+            throw USDError.invalidData("USDA transform produced a point with zero homogeneous weight.")
         }
         return USDPoint3D(x: x / w, y: y / w, z: z / w)
     }
 
-    public func transformNormal(_ normal: USDPoint3D) throws -> USDPoint3D {
+    public func transform(normal: USDPoint3D) throws -> USDPoint3D {
         let values = try validatedValues(context: "normal transform")
         guard values[3] == 0, values[7] == 0, values[11] == 0 else {
-            throw USDImportError.unsupportedFeature("USDA normal transforms require affine matrices.")
+            throw USDError.unsupportedFeature("USDA normal transforms require affine matrices.")
         }
         let m00 = values[0]
         let m01 = values[1]
@@ -206,7 +198,7 @@ public struct USDTransformMatrix4x4: Sendable, Equatable {
             m01 * (m10 * m22 - m12 * m20) +
             m02 * (m10 * m21 - m11 * m20)
         guard determinant.isFinite, determinant != 0 else {
-            throw USDImportError.invalidData("USDA normal transform is singular.")
+            throw USDError.invalidData("USDA normal transform is singular.")
         }
 
         let inverse00 = (m11 * m22 - m12 * m21) / determinant
@@ -223,25 +215,25 @@ public struct USDTransformMatrix4x4: Sendable, Equatable {
         let y = inverse10 * normal.x + inverse11 * normal.y + inverse12 * normal.z
         let z = inverse20 * normal.x + inverse21 * normal.y + inverse22 * normal.z
         guard x.isFinite, y.isFinite, z.isFinite else {
-            throw USDImportError.invalidData("USDA transform produced a non-finite normal.")
+            throw USDError.invalidData("USDA transform produced a non-finite normal.")
         }
         let length = sqrt(x * x + y * y + z * z)
         guard length.isFinite, length > 0 else {
-            throw USDImportError.invalidData("USDA transform produced a zero-length normal.")
+            throw USDError.invalidData("USDA transform produced a zero-length normal.")
         }
         return USDPoint3D(x: x / length, y: y / length, z: z / length)
     }
 
     private static func radians(fromDegrees angle: Double) throws -> Double {
         guard angle.isFinite else {
-            throw USDImportError.invalidData("USDA rotation angle is not finite.")
+            throw USDError.invalidData("USDA rotation angle is not finite.")
         }
         return angle * .pi / 180
     }
 
     private func validatedValues(context: String) throws -> [Double] {
         guard values.count == 16 else {
-            throw USDImportError.invalidData("USDA \(context) matrix must contain exactly 16 values.")
+            throw USDError.invalidData("USDA \(context) matrix must contain exactly 16 values.")
         }
         return values
     }

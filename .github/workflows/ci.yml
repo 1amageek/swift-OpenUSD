@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SWIFT_VERSION: "6.3.1"
+  SWIFT_WASM_SDK_ID: swift-6.3.1-RELEASE_wasm
+  SWIFT_WASM_SDK_URL: https://download.swift.org/swift-6.3.1-release/wasm-sdk/swift-6.3.1-RELEASE/swift-6.3.1-RELEASE_wasm.artifactbundle.tar.gz
+  SWIFT_WASM_SDK_CHECKSUM: bd47baa20771f366d8beed7970afaa30742b2210097afd15f85427226d8f4cf2
+
+jobs:
+  macos-build-test:
+    name: macOS build, test, and API symbols
+    # Pinned to macos-26 (not macos-latest) so the available Xcode versions are
+    # deterministic; macos-latest can lag behind and ship Xcode without Swift 6.3.
+    runs-on: macos-26
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Pin the toolchain instead of relying on the runner image default.
+      # Xcode 26.4.1 ships Swift 6.3.1 — the same Swift version this workflow
+      # pins for the wasm job (SWIFT_VERSION) — and is preinstalled on the
+      # macos-26 runner image. xcode-select fails loudly if the path is absent.
+      - name: Select Xcode (Swift 6.3.1)
+        run: |
+          sudo xcode-select -s /Applications/Xcode_26.4.1.app/Contents/Developer
+          xcodebuild -version
+          swift --version
+
+      - name: Build
+        run: swift build
+
+      # Benchmarks are intentionally excluded from CI. The OpenUSDBenchmarks
+      # test target is env-gated and only executes when OPENUSD_BENCHMARKS=1 is
+      # set in the test environment; this workflow must never set that variable.
+      # Run benchmarks locally with:
+      #   OPENUSD_BENCHMARKS=1 swift test -c release --filter OpenUSDBenchmarks
+      - name: Test
+        run: xcodebuild test -scheme swift-OpenUSD-Package -destination 'platform=macOS'
+
+      - name: Dump public symbol graph
+        run: swift package dump-symbol-graph --minimum-access-level public --skip-synthesized-members
+
+      - name: Verify public API symbols
+        run: python3 scripts/verify-public-api-symbols.py
+
+      - name: Verify unsupported feature inventory
+        run: python3 scripts/verify-unsupported-features.py
+
+      - name: Verify upstream parity tracking
+        run: python3 scripts/verify-upstream-parity.py
+
+  wasm-build:
+    name: Wasm build
+    # Pinned to macos-26 for deterministic tooling; the Swift toolchain itself
+    # is installed explicitly via swiftly below, so the image Xcode is unused.
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install swiftly
+        run: |
+          brew update
+          brew install swiftly
+          swiftly init --skip-install --no-modify-profile --assume-yes --quiet-shell-followup
+          echo "${HOME}/.swiftly/bin" >> "${GITHUB_PATH}"
+
+      - name: Install Swift toolchain
+        run: |
+          export PATH="${HOME}/.swiftly/bin:${PATH}"
+          swiftly install "${SWIFT_VERSION}" --use --assume-yes
+          swiftly use "${SWIFT_VERSION}" --assume-yes
+          swift --version
+
+      - name: Install Wasm SDK
+        run: |
+          export PATH="${HOME}/.swiftly/bin:${PATH}"
+          scripts/install-wasm-sdk.sh
+
+      - name: Build for Wasm
+        run: |
+          export PATH="${HOME}/.swiftly/bin:${PATH}"
+          swift build --swift-sdk "${SWIFT_WASM_SDK_ID}"

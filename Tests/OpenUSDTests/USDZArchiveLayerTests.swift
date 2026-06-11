@@ -47,8 +47,8 @@ struct USDZArchiveLayerTests {
         let packageData = try openSDFUSDZResolverFixture("test.usdz")
         let archive = try USDZArchive(data: packageData)
         #expect(archive.entry(at: "bogus.file") == nil)
-        #expect(throws: USDImportError.self) {
-            _ = try archive.assetData(for: "bogus.file")
+        #expect(throws: USDError.self) {
+            _ = try archive.assetData(at: "bogus.file")
         }
         #expect(archive.entryPaths == ["file_1.usdc", "nested.usdz", "file_2.usdc", "subdir/file_3.usdc"])
 
@@ -68,17 +68,17 @@ struct USDZArchiveLayerTests {
             )
         }
 
-        #expect(try archive.assetData(for: "nested.usdz") == openSDFUSDZResolverFixture("src/nested.usdz"))
-        #expect(try archive.data(for: "file_1.usdc") == openSDFUSDZResolverFixture("src/file_1.usdc"))
-        #expect(try archive.data(for: "file_2.usdc") == openSDFUSDZResolverFixture("src/file_2.usdc"))
+        #expect(try archive.assetData(at: "nested.usdz") == openSDFUSDZResolverFixture("src/nested.usdz"))
+        #expect(try archive.layerData(at: "file_1.usdc") == openSDFUSDZResolverFixture("src/file_1.usdc"))
+        #expect(try archive.layerData(at: "file_2.usdc") == openSDFUSDZResolverFixture("src/file_2.usdc"))
         #expect(
-            try archive.data(for: "subdir/file_3.usdc")
+            try archive.layerData(at: "subdir/file_3.usdc")
                 == openSDFUSDZResolverFixture("src/subdir/file_3.usdc")
         )
-        #expect(try archive.data(for: "nested.usdz[file_1.usdc]") == openSDFUSDZResolverFixture("src/file_1.usdc"))
-        #expect(try archive.data(for: "nested.usdz[file_2.usdc]") == openSDFUSDZResolverFixture("src/file_2.usdc"))
+        #expect(try archive.layerData(at: "nested.usdz[file_1.usdc]") == openSDFUSDZResolverFixture("src/file_1.usdc"))
+        #expect(try archive.layerData(at: "nested.usdz[file_2.usdc]") == openSDFUSDZResolverFixture("src/file_2.usdc"))
         #expect(
-            try archive.data(for: "nested.usdz[subdir/file_3.usdc]")
+            try archive.layerData(at: "nested.usdz[subdir/file_3.usdc]")
                 == openSDFUSDZResolverFixture("src/subdir/file_3.usdc")
         )
 
@@ -103,8 +103,8 @@ struct USDZArchiveLayerTests {
             #expect(entry.data == sourceData)
             #expect(entry.data.dropFirst(100).elementsEqual(sourceData.dropFirst(100)))
             try assertDataSlice(packageData, offset: testCase.dataOffset, equals: sourceData)
-            #expect(try archive.assetData(for: nestedPath) == sourceData)
-            #expect(try archive.data(for: nestedPath) == sourceData)
+            #expect(try archive.assetData(at: nestedPath) == sourceData)
+            #expect(try archive.layerData(at: nestedPath) == sourceData)
         }
     }
 
@@ -120,7 +120,7 @@ struct USDZArchiveLayerTests {
             let archive = try openUSDZArchive(testCase.archive)
 
             #expect(archive.defaultLayer?.path == testCase.layer)
-            #expect(try archive.data(for: testCase.layer) == openUSDZFixture(testCase.source))
+            #expect(try archive.layerData(at: testCase.layer) == openUSDZFixture(testCase.source))
         }
     }
 
@@ -129,10 +129,10 @@ struct USDZArchiveLayerTests {
         let archive = try openUSDZArchive("anchored_refs.usdz")
 
         #expect(archive.entries.map(\.path) == ["root.usd", "ref.usd", "sub/ref.usdc", "sub/ref.usda"])
-        #expect(try archive.data(for: "root.usd") == openUSDZFixture("anchored_refs/root.usd"))
-        #expect(try archive.data(for: "ref.usd") == openUSDZFixture("anchored_refs/ref.usd"))
-        #expect(try archive.data(for: "sub/ref.usdc") == openUSDZFixture("anchored_refs/sub/ref.usdc"))
-        #expect(try archive.data(for: "sub/ref.usda") == openUSDZFixture("anchored_refs/sub/ref.usda"))
+        #expect(try archive.layerData(at: "root.usd") == openUSDZFixture("anchored_refs/root.usd"))
+        #expect(try archive.layerData(at: "ref.usd") == openUSDZFixture("anchored_refs/ref.usd"))
+        #expect(try archive.layerData(at: "sub/ref.usdc") == openUSDZFixture("anchored_refs/sub/ref.usdc"))
+        #expect(try archive.layerData(at: "sub/ref.usda") == openUSDZFixture("anchored_refs/sub/ref.usda"))
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -141,11 +141,11 @@ struct USDZArchiveLayerTests {
 
         #expect(archive.entries.map(\.path) == ["anchored_refs.usdz"])
         #expect(
-            try archive.data(for: "anchored_refs.usdz[root.usd]")
+            try archive.layerData(at: "anchored_refs.usdz[root.usd]")
                 == openUSDZFixture("anchored_refs/root.usd")
         )
         #expect(
-            try archive.data(for: "anchored_refs.usdz[sub/ref.usdc]")
+            try archive.layerData(at: "anchored_refs.usdz[sub/ref.usdc]")
                 == openUSDZFixture("anchored_refs/sub/ref.usdc")
         )
     }
@@ -159,7 +159,7 @@ struct USDZArchiveLayerTests {
                 == "anchored_refs/ref.usd"
         )
         #expect(
-            try archive.data(for: "./ref.usd", referencedFrom: "anchored_refs/root.usd")
+            try archive.layerData(for: "./ref.usd", referencedFrom: "anchored_refs/root.usd")
                 == openUSDZFixture("anchored_refs/ref.usd")
         )
         #expect(
@@ -189,7 +189,7 @@ struct USDZArchiveLayerTests {
                 == "refs/sub/ref_in_both.usd"
         )
         #expect(
-            try archive.data(for: "sub/ref_in_both.usd", referencedFrom: "refs/ref.usd")
+            try archive.layerData(for: "sub/ref_in_both.usd", referencedFrom: "refs/ref.usd")
                 == openUSDZFixture("search_refs/refs/sub/ref_in_both.usd")
         )
     }
@@ -225,7 +225,7 @@ struct USDZArchiveLayerTests {
                 == "anchored_refs_sub.usdz[anchored_refs/ref.usd]"
         )
         #expect(
-            try anchoredArchive.data(
+            try anchoredArchive.layerData(
                 for: "./sub/ref.usda",
                 referencedFrom: "anchored_refs_sub.usdz[anchored_refs/ref.usd]"
             )
@@ -239,7 +239,7 @@ struct USDZArchiveLayerTests {
                 == "search_refs.usdz[refs/sub/ref_in_both.usd]"
         )
         #expect(
-            try searchArchive.data(
+            try searchArchive.layerData(
                 for: "sub/ref_in_root.usd",
                 referencedFrom: "search_refs.usdz[refs/ref.usd]"
             )
@@ -251,18 +251,18 @@ struct USDZArchiveLayerTests {
     func containedLayerResolutionReportsTypedUSDZErrors() throws {
         let archive = try openUSDZArchive("anchored_refs.usdz")
 
-        #expect(throws: USDImportError.self) {
-            _ = try archive.data(for: "missing.usd")
+        #expect(throws: USDError.self) {
+            _ = try archive.layerData(at: "missing.usd")
         }
-        #expect(throws: USDImportError.self) {
-            _ = try archive.data(for: "root.usd[child.usd]")
+        #expect(throws: USDError.self) {
+            _ = try archive.layerData(at: "root.usd[child.usd]")
         }
-        #expect(throws: USDImportError.self) {
-            _ = try archive.data(for: "root.usd[child.usd")
+        #expect(throws: USDError.self) {
+            _ = try archive.layerData(at: "root.usd[child.usd")
         }
         #expect(try archive.resolveLayerPath(for: "./missing.usd", referencedFrom: "root.usd") == nil)
-        #expect(throws: USDImportError.self) {
-            _ = try archive.data(for: "./missing.usd", referencedFrom: "root.usd")
+        #expect(throws: USDError.self) {
+            _ = try archive.layerData(for: "./missing.usd", referencedFrom: "root.usd")
         }
     }
 }
@@ -329,7 +329,7 @@ private func assertSDFUSDZResolverEntry(
     #expect(entryData == sourceData)
     #expect(entryData.dropFirst(100).elementsEqual(sourceData.dropFirst(100)))
     try assertDataSlice(packageData, offset: testCase.dataOffset, equals: sourceData)
-    #expect(try archive.assetData(for: testCase.path) == sourceData)
+    #expect(try archive.assetData(at: testCase.path) == sourceData)
 }
 
 private func assertDataSlice(_ data: Data, offset: Int, equals expectedData: Data) throws {

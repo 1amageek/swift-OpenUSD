@@ -1,8 +1,8 @@
-public struct USDCCrateField: Sendable, Equatable, Hashable {
-    public var tokenIndex: UInt32
-    public var valueRep: USDCCrateValueRep
+struct USDCCrateField: Sendable, Equatable, Hashable {
+    var tokenIndex: UInt32
+    var valueRep: USDCCrateValueRep
 
-    public init(tokenIndex: UInt32, valueRep: USDCCrateValueRep) {
+    init(tokenIndex: UInt32, valueRep: USDCCrateValueRep) {
         self.tokenIndex = tokenIndex
         self.valueRep = valueRep
     }

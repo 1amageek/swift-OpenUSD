@@ -1,0 +1,302 @@
+[
+  {
+    "file": "Sources/OpenUSD/USDAReader.swift",
+    "pattern": "USDA xform op <value> is not supported yet.",
+    "category": "transform-materialization",
+    "resolution": "Add parser and matrix support for every authored USDA xform op before removing this entry."
+  },
+  {
+    "file": "Sources/OpenUSD/USDTransformMatrix4x4.swift",
+    "pattern": "USDA normal transforms require affine matrices.",
+    "category": "transform-materialization",
+    "resolution": "Support or explicitly model non-affine normal transforms."
+  },
+  {
+    "file": "Sources/OpenUSD/SdfFieldValue.swift",
+    "pattern": "SdfFieldValue <value> at <value> is unmaterialized and cannot be exported to USDA without data loss.",
+    "category": "sdf-authoring-export",
+    "resolution": "Preserve the unmaterialized field payload with enough type and raw data to re-export it losslessly, or add typed decoding for the field."
+  },
+  {
+    "file": "Sources/OpenUSD/SdfFieldValue.swift",
+    "pattern": "SdfFieldValue <value> at <value> requires statement-style USDA authoring and cannot be exported inside a dictionary without data loss.",
+    "category": "sdf-authoring-export",
+    "resolution": "Add typed dictionary entry authoring for list operations and asset reference values before allowing these values inside dictionaries."
+  },
+  {
+    "file": "Sources/OpenUSD/SdfFieldValue.swift",
+    "pattern": "USDA cannot export dictionary field <value> with value <value> without data loss.",
+    "category": "sdf-authoring-export",
+    "resolution": "Add typed dictionary entry authoring for every remaining SdfFieldValue case before allowing those values in metadata dictionaries or reference customData."
+  },
+  {
+    "file": "Sources/OpenUSD/USDAReader.swift",
+    "pattern": "USDA dictionary type <value> is not supported by swift-OpenUSD authoring yet.",
+    "category": "sdf-authoring-export",
+    "resolution": "Extend typed dictionary parsing to materialize the remaining OpenUSD dictionary value types instead of preserving unsupported metadata dictionaries as authored text or rejecting reference customData."
+  },
+  {
+    "file": "Sources/OpenUSD/SdfLayerExportValidation.swift",
+    "pattern": "SdfLayer cannot export metadata list operation field <value> at <value> to USDA without data loss.",
+    "category": "sdf-authoring-export",
+    "resolution": "Register the metadata field's list-op item type and teach USDAReader to materialize it before allowing arbitrary metadata list-op export."
+  },
+  {
+    "file": "Sources/OpenUSD/USDAWriter.swift",
+    "pattern": "USDA cannot export unmaterialized metadata field <value> without data loss.",
+    "category": "sdf-authoring-export",
+    "resolution": "Preserve enough raw typed metadata payload to re-export unmaterialized fields losslessly."
+  },
+  {
+    "file": "Sources/OpenUSD/SdfLayerExportValidation.swift",
+    "pattern": "SdfLayer cannot export authored fields <value> on variant <value>.",
+    "category": "sdf-authoring-export",
+    "resolution": "Add structured variant body authoring so variant fields can be emitted instead of rejecting them."
+  },
+  {
+    "file": "Sources/OpenUSD/SdfLayerExportValidation.swift",
+    "pattern": "SdfLayer cannot export authored fields <value> on variant set <value>.",
+    "category": "sdf-authoring-export",
+    "resolution": "Add variantSet metadata writer support or normalize those fields during parsing before allowing export."
+  },
+  {
+    "file": "Sources/OpenUSD/SdfLayerExportValidation.swift",
+    "pattern": "SdfLayer cannot export authored fields on target spec <value> to USDA without data loss.",
+    "category": "sdf-authoring-export",
+    "resolution": "Add connection and relationship target-spec metadata writing, or preserve the target spec as an explicit authored statement."
+  },
+  {
+    "file": "Sources/OpenUSD/SdfLayerExportValidation.swift",
+    "pattern": "SdfLayer cannot export path list field <value> at <value> to USDA without data loss.",
+    "category": "sdf-authoring-export",
+    "resolution": "Teach USDAWriter every supported path-list field syntax before accepting arbitrary path-list fields."
+  },
+  {
+    "file": "Sources/OpenUSD/SdfLayerExportValidation.swift",
+    "pattern": "SdfLayer cannot export asset reference field <value> at <value> to USDA without data loss.",
+    "category": "sdf-authoring-export",
+    "resolution": "Teach USDAReader and USDAWriter to round-trip reference and payload list operations on arbitrary metadata fields before allowing export."
+  },
+  {
+    "file": "Sources/OpenUSD/SdfLayerExportValidation.swift",
+    "pattern": "SdfLayer cannot export variant <value> because it mixes raw body text with structured child specs.",
+    "category": "sdf-authoring-export",
+    "resolution": "Define a merge strategy for raw variant body text and structured variant child specs, then add round-trip tests for mixed authoring."
+  },
+  {
+    "file": "Sources/OpenUSD/SdfLayerExportValidation.swift",
+    "pattern": "SdfLayer cannot export variant set <value> because it mixes raw body text with structured variant specs.",
+    "category": "sdf-authoring-export",
+    "resolution": "Define a merge strategy for raw variantSet body text and structured variant specs, then add round-trip tests for mixed authoring."
+  },
+  {
+    "file": "Sources/OpenUSD/USDAWriter.swift",
+    "pattern": "USDA cannot export variant <value> because it mixes raw body text with structured child specs.",
+    "category": "sdf-authoring-export",
+    "resolution": "Define a merge strategy for raw variant body text and structured variant child specs, then add writer tests that prove no child specs are dropped."
+  },
+  {
+    "file": "Sources/OpenUSD/SdfLayer.swift",
+    "pattern": "SdfLayer spec type <value> is not supported by swift-OpenUSD authoring yet.",
+    "category": "sdf-authoring-export",
+    "resolution": "Add authoring and writer semantics for mapper, mapper argument, and expression specs before accepting them."
+  },
+  {
+    "file": "Sources/OpenUSD/SdfSpec.swift",
+    "pattern": "SdfSpec type <value> is not supported by swift-OpenUSD authoring yet.",
+    "category": "sdf-authoring-export",
+    "resolution": "Add path invariants and writer semantics for mapper, mapper argument, and expression specs before accepting them."
+  },
+  {
+    "file": "Sources/OpenUSD/USDPluginRegistry.swift",
+    "pattern": "plugInfo Includes require file resolution; use registerPlugInfo(at:) instead.",
+    "category": "plugin-discovery",
+    "resolution": "Keep data-only registration explicit, or introduce an include resolver dependency that can resolve Includes without filesystem access."
+  },
+  {
+    "file": "Sources/OpenUSD/USDSchemaRegistry.swift",
+    "pattern": "USD schema plugin <value> type <value> is generated but generatedSchema.usda was not available.",
+    "category": "schema-registry",
+    "resolution": "Load generatedSchema.usda from the plugin resource path or add an explicit schema definition source before registering generated schema types."
+  },
+  {
+    "file": "Sources/OpenUSDC/USDCCrateValueDecoder.swift",
+    "pattern": "USDC quatd arrays are not materialized yet.",
+    "category": "value-materialization",
+    "resolution": "Expose quaternion arrays through USDCLayerFieldValue and USD scene materialization."
+  },
+  {
+    "file": "Sources/OpenUSDC/USDCCrateValueDecoder.swift",
+    "pattern": "USDC quatf arrays are not materialized yet.",
+    "category": "value-materialization",
+    "resolution": "Expose quaternion arrays through USDCLayerFieldValue and USD scene materialization."
+  },
+  {
+    "file": "Sources/OpenUSDC/USDCCrateValueDecoder.swift",
+    "pattern": "USDC quath values are not materialized yet.",
+    "category": "value-materialization",
+    "resolution": "Add half-precision quaternion decoding or a typed value-preservation surface."
+  },
+  {
+    "file": "Sources/OpenUSDC/USDCCrateValueDecoder.swift",
+    "pattern": "USDC matrix4d arrays are not materialized yet.",
+    "category": "value-materialization",
+    "resolution": "Expose matrix arrays through USDCLayerFieldValue and USD scene materialization."
+  },
+  {
+    "file": "Sources/OpenUSDC/USDCCrateValueDecoder.swift",
+    "pattern": "USDC value type <value> is not materialized yet.",
+    "category": "value-materialization",
+    "resolution": "Add typed decoding for the missing crate value type or preserve it as an explicit raw field value."
+  },
+  {
+    "file": "Sources/OpenUSDC/USDCCrateValueDecoder.swift",
+    "pattern": "Only one-dimensional USDC <value>s are supported.",
+    "category": "value-materialization",
+    "resolution": "Add shaped array metadata preservation before accepting higher-rank USDC arrays."
+  },
+  {
+    "file": "Sources/OpenUSDC/USDCMatrix4x4.swift",
+    "pattern": "USDC normal transforms require affine matrices.",
+    "category": "transform-materialization",
+    "resolution": "Support or explicitly model non-affine normal transforms."
+  },
+  {
+    "file": "Sources/OpenUSDC/USDCReader.swift",
+    "pattern": "USDC crate version <value> is newer than the supported reader version.",
+    "category": "format-version",
+    "resolution": "Audit newer OpenUSD crate versions and update newestKnownVersion after fixture coverage is added."
+  },
+  {
+    "file": "Sources/OpenUSDC/USDCReader.swift",
+    "pattern": "USDC crate version <value> is older than the supported reader version.",
+    "category": "format-version",
+    "resolution": "Add legacy crate fixture coverage before accepting older crate versions."
+  },
+  {
+    "file": "Sources/OpenUSDC/USDCSceneMaterializer.swift",
+    "pattern": "USDC xform op <value> is not supported yet.",
+    "category": "transform-materialization",
+    "resolution": "Add materialization for every authored USDC xform op before removing this entry."
+  },
+  {
+    "file": "Sources/OpenUSDZ/USDZArchive.swift",
+    "pattern": "USDZ entry <value> is not a USD layer.",
+    "category": "package-resolution",
+    "resolution": "Define supported non-layer asset access paths or keep rejection for layer-only resolution."
+  },
+  {
+    "file": "Sources/OpenUSDZ/USDZArchive.swift",
+    "pattern": "USDZ entry <value> is not a nested USDZ package.",
+    "category": "package-resolution",
+    "resolution": "Define nested package traversal behavior for non-USDZ entries."
+  },
+  {
+    "file": "Sources/OpenUSDZ/USDZArchive.swift",
+    "pattern": "USDZ entry <value> is compressed.",
+    "category": "zip-format",
+    "resolution": "Decide whether compressed ZIP entries are supported; USDZ normally requires stored entries."
+  },
+  {
+    "file": "Sources/OpenUSDZ/USDZArchive.swift",
+    "pattern": "USDZ package uses unsupported ZIP disk or comment fields.",
+    "category": "zip-format",
+    "resolution": "Add explicit support and fixtures for ZIP comments or multi-disk metadata if needed."
+  },
+  {
+    "file": "Sources/OpenUSDZ/USDZArchive.swift",
+    "pattern": "USDZ local entry at <value> is compressed.",
+    "category": "zip-format",
+    "resolution": "Decide whether compressed ZIP entries are supported; USDZ normally requires stored entries."
+  },
+  {
+    "file": "Sources/OpenUSDZ/USDZArchive.swift",
+    "pattern": "USDZ entry <value> is encrypted.",
+    "category": "zip-format",
+    "resolution": "Keep rejecting encrypted entries unless an authenticated decryption API is introduced."
+  },
+  {
+    "file": "Sources/OpenUSDZ/USDZArchive.swift",
+    "pattern": "USDZ entry <value> uses a data descriptor.",
+    "category": "zip-format",
+    "resolution": "Add descriptor parsing fixtures or keep rejection for deterministic random-access reads."
+  },
+  {
+    "file": "Sources/OpenUSDZ/USDZAssetResolver.swift",
+    "pattern": "USDZ entry <value> is not a USD layer.",
+    "category": "package-resolution",
+    "resolution": "Define supported non-layer asset access paths or keep rejection for layer-only resolution."
+  },
+  {
+    "file": "Sources/OpenUSDZ/USDZAssetResolver.swift",
+    "pattern": "USDZ entry <value> is not a nested USDZ package.",
+    "category": "package-resolution",
+    "resolution": "Define nested package traversal behavior for non-USDZ entries."
+  },
+  {
+    "file": "Sources/OpenUSDZ/USDZReader.swift",
+    "pattern": "USDZ nested default package <value> must contain a USD default layer.",
+    "category": "package-resolution",
+    "resolution": "Add nested default package semantics and fixtures for non-layer nested defaults."
+  },
+  {
+    "file": "Sources/OpenUSDZ/USDZReader.swift",
+    "pattern": "USDZ default layer must be the first file and use a USD extension.",
+    "category": "package-resolution",
+    "resolution": "Keep enforcing USDZ default-layer ordering or add a documented alternate root-layer selection API."
+  },
+  {
+    "file": "Sources/OpenUSDZ/USDZReader.swift",
+    "pattern": "USDZ entry <value> is not a USD layer.",
+    "category": "package-resolution",
+    "resolution": "Define supported non-layer asset access paths or keep rejection for layer-only resolution."
+  },
+  {
+    "file": "Sources/OpenUSDZ/USDZReader.swift",
+    "pattern": "USDZ entry <value> is not a nested USDZ package.",
+    "category": "package-resolution",
+    "resolution": "Define nested package traversal behavior for non-USDZ entries."
+  },
+  {
+    "file": "Sources/OpenUSDZ/USDZReader.swift",
+    "pattern": "USDZ layer <value> is not a USD layer.",
+    "category": "package-resolution",
+    "resolution": "Define whether non-layer entries can be addressed through layer path APIs."
+  },
+  {
+    "file": "Sources/OpenUSD/USDAWriter.swift",
+    "pattern": "USDA property spec <value> has an unsupported variability value <value>.",
+    "category": "sdf-authoring-export",
+    "resolution": "Normalize variability metadata during parsing so only uniform or varying values reach the writer, or extend the writer to author additional variability values."
+  },
+  {
+    "file": "Sources/OpenUSD/USDStageCompositionResolver.swift",
+    "pattern": "USDStage composition cannot apply a layer offset to non-authored timeSamples at <value>.",
+    "category": "stage-composition",
+    "resolution": "Store timeSamples as typed values so layer offsets can be applied without re-parsing authored text."
+  },
+  {
+    "file": "Sources/OpenUSD/USDStageCompositionResolver.swift",
+    "pattern": "USDStage composition cannot remap timeSamples at <value> because the authored payload could not be parsed.",
+    "category": "stage-composition",
+    "resolution": "Parse authored timeSamples payloads into typed samples so layer offsets remap them losslessly."
+  },
+  {
+    "file": "Sources/OpenUSD/USDStageCompositionResolver.swift",
+    "pattern": "USDStage composition cannot apply a layer offset to non-numeric <value> layer metadata.",
+    "category": "stage-composition",
+    "resolution": "Reject non-numeric startTimeCode and endTimeCode values at parse time or add typed timeCode metadata storage."
+  },
+  {
+    "file": "Sources/OpenUSD/USDStageCompositionResolver.swift",
+    "pattern": "USDStage composition cannot compose list operations whose stronger operation uses added or ordered items.",
+    "category": "stage-composition",
+    "resolution": "Implement upstream SdfListOp composition semantics for added and ordered item lists."
+  },
+  {
+    "file": "Sources/OpenUSD/USDStageCompositionResolver.swift",
+    "pattern": "USDStage composition cannot compose list operations whose weaker operation uses added or ordered items.",
+    "category": "stage-composition",
+    "resolution": "Implement upstream SdfListOp composition semantics for added and ordered item lists."
+  }
+]

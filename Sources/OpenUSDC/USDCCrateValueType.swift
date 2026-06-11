@@ -1,4 +1,4 @@
-public enum USDCCrateValueType: UInt8, Sendable, Equatable, CaseIterable {
+enum USDCCrateValueType: UInt8, Sendable, Equatable, CaseIterable {
     case invalid = 0
     case bool = 1
     case uChar = 2

@@ -13,14 +13,14 @@ struct USDTransformQuaternion: Sendable, Equatable {
 
     func rotationMatrix() throws -> USDTransformMatrix4x4 {
         guard real.isFinite, imaginaryX.isFinite, imaginaryY.isFinite, imaginaryZ.isFinite else {
-            throw USDImportError.invalidData("USDA quaternion contains a non-finite component.")
+            throw USDError.invalidData("USDA quaternion contains a non-finite component.")
         }
         let normSquared = real * real
             + imaginaryX * imaginaryX
             + imaginaryY * imaginaryY
             + imaginaryZ * imaginaryZ
         guard normSquared.isFinite else {
-            throw USDImportError.invalidData("USDA quaternion norm is not finite.")
+            throw USDError.invalidData("USDA quaternion norm is not finite.")
         }
         guard normSquared > 0 else {
             return .identity

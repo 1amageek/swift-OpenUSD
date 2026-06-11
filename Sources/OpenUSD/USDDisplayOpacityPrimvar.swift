@@ -15,11 +15,11 @@ public struct USDDisplayOpacityPrimvar: Sendable, Hashable {
 
     public func validate(pointCount: Int, faceVertexCounts: [Int]) throws {
         guard !values.isEmpty else {
-            throw USDImportError.invalidData("USD primvars:displayOpacity contains no opacity values.")
+            throw USDError.invalidData("USD primvars:displayOpacity contains no opacity values.")
         }
         for value in values {
             guard value.isFinite else {
-                throw USDImportError.invalidData("USD primvars:displayOpacity contains a non-finite opacity value.")
+                throw USDError.invalidData("USD primvars:displayOpacity contains a non-finite opacity value.")
             }
         }
         try validateUSDPrimvarIndices(indices, valueCount: values.count, name: "primvars:displayOpacity")

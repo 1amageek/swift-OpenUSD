@@ -55,28 +55,28 @@ public struct USDMesh: Sendable, Hashable {
         faceVertexIndices: [Int]
     ) throws {
         guard pointCount > 0 else {
-            throw USDImportError.invalidData("USD Mesh topology requires at least one point.")
+            throw USDError.invalidData("USD Mesh topology requires at least one point.")
         }
         guard !faceVertexCounts.isEmpty else {
-            throw USDImportError.invalidData("USD Mesh faceVertexCounts is empty.")
+            throw USDError.invalidData("USD Mesh faceVertexCounts is empty.")
         }
         var expectedIndexCount = 0
         for count in faceVertexCounts {
             guard count > 0 else {
-                throw USDImportError.invalidData("USD Mesh faceVertexCounts contains a non-positive face size.")
+                throw USDError.invalidData("USD Mesh faceVertexCounts contains a non-positive face size.")
             }
             let result = expectedIndexCount.addingReportingOverflow(count)
             guard !result.overflow else {
-                throw USDImportError.invalidData("USD Mesh faceVertexCounts exceeds platform range.")
+                throw USDError.invalidData("USD Mesh faceVertexCounts exceeds platform range.")
             }
             expectedIndexCount = result.partialValue
         }
         guard expectedIndexCount == faceVertexIndices.count else {
-            throw USDImportError.invalidData("USD Mesh faceVertexCounts does not match faceVertexIndices count.")
+            throw USDError.invalidData("USD Mesh faceVertexCounts does not match faceVertexIndices count.")
         }
         for index in faceVertexIndices {
             guard index >= 0, index < pointCount else {
-                throw USDImportError.invalidData("USD Mesh faceVertexIndices contains an index outside points.")
+                throw USDError.invalidData("USD Mesh faceVertexIndices contains an index outside points.")
             }
         }
     }

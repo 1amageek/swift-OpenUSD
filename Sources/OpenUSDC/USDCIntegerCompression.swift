@@ -16,7 +16,7 @@ enum USDCIntegerCompression {
 
     private static func decompressUInt32(_ bytes: UnsafeRawBufferPointer, count: Int) throws -> [UInt32] {
         guard count >= 0 else {
-            throw USDImportError.invalidData("USDC compressed integer count is invalid.")
+            throw USDError.invalidData("USDC compressed integer count is invalid.")
         }
         guard count > 0 else {
             if bytes.isEmpty {
@@ -24,16 +24,21 @@ enum USDCIntegerCompression {
             }
             let output = try USDCFastCompression.decompress(bytes, maximumOutputByteCount: 0)
             guard output.isEmpty else {
-                throw USDImportError.invalidData("USDC compressed integer buffer produced data for an empty vector.")
+                throw USDError.invalidData("USDC compressed integer buffer produced data for an empty vector.")
             }
             return []
         }
 
         guard !bytes.isEmpty else {
-            throw USDImportError.invalidData("USDC compressed integer buffer is empty.")
+            throw USDError.invalidData("USDC compressed integer buffer is empty.")
         }
         guard count <= (Int.max - MemoryLayout<Int32>.size) / 5 else {
-            throw USDImportError.invalidData("USDC compressed integer count exceeds platform range.")
+            throw USDError.invalidData("USDC compressed integer count exceeds platform range.")
+        }
+        let minimumEncodedByteCount = MemoryLayout<Int32>.size + ((count * 2 + 7) / 8)
+        guard minimumEncodedByteCount
+            <= USDCFastCompression.maximumDecompressedByteCount(forCompressedByteCount: bytes.count) else {
+            throw USDError.invalidData("USDC compressed integer count exceeds the compressed buffer capacity.")
         }
 
         let maximumOutputByteCount = encodedBufferSize(forIntegerCount: count)
@@ -55,7 +60,7 @@ enum USDCIntegerCompression {
         let commonValue = try readInt32(from: bytes, cursor: &cursor)
         let codeByteCount = (count * 2 + 7) / 8
         guard cursor <= bytes.count - codeByteCount else {
-            throw USDImportError.invalidData("USDC integer code table is truncated.")
+            throw USDError.invalidData("USDC integer code table is truncated.")
         }
         let codesStart = cursor
         cursor += codeByteCount
@@ -78,21 +83,21 @@ enum USDCIntegerCompression {
             case 3:
                 delta = try readInt32(from: bytes, cursor: &valueCursor)
             default:
-                throw USDImportError.invalidData("USDC integer code is invalid.")
+                throw USDError.invalidData("USDC integer code is invalid.")
             }
             previousValue = previousValue &+ delta
             output.append(UInt32(bitPattern: previousValue))
         }
 
         guard valueCursor <= bytes.count else {
-            throw USDImportError.invalidData("USDC integer value stream is truncated.")
+            throw USDError.invalidData("USDC integer value stream is truncated.")
         }
         return output
     }
 
     private static func readInt8(from bytes: [UInt8], cursor: inout Int) throws -> Int8 {
         guard cursor < bytes.count else {
-            throw USDImportError.invalidData("USDC integer value stream is truncated.")
+            throw USDError.invalidData("USDC integer value stream is truncated.")
         }
         defer {
             cursor += 1
@@ -116,7 +121,7 @@ enum USDCIntegerCompression {
     ) throws -> T {
         let byteCount = MemoryLayout<T>.size
         guard cursor <= bytes.count - byteCount else {
-            throw USDImportError.invalidData("USDC integer value stream is truncated.")
+            throw USDError.invalidData("USDC integer value stream is truncated.")
         }
         var value: T = 0
         for offset in 0..<byteCount {

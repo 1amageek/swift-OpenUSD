@@ -6,15 +6,16 @@ public struct USDCReader: USDSceneReader {
 
     public init() {}
 
-    public func readCrate(from data: Data) throws -> USDCCrateFile {
+    func readCrate(from data: Data) throws -> USDCCrateFile {
         try USDCCrateFile(data: data)
     }
 
     public func readLayer(from data: Data) throws -> USDCLayer {
         let crate = try readCrate(from: data)
         try crate.requireStructuralSections()
-        var layer = try USDCLayerReader(crate: crate).readLayer()
-        let transformInfo = try USDCSceneMaterializer(crate: crate).readPrimTransformInfo()
+        let sections = try crate.parseStructuralSections()
+        var layer = try USDCLayerReader(crate: crate, sections: sections).readLayer()
+        let transformInfo = try USDCSceneMaterializer(crate: crate, sections: sections).readPrimTransformInfo()
         layer.primTransforms = transformInfo.primTransforms
         layer.resetXformStackPrimPaths = transformInfo.resetXformStackPrimPaths
         return layer
@@ -27,22 +28,33 @@ public struct USDCReader: USDSceneReader {
     public func read(from data: Data, options: USDReadingOptions) throws -> USDScene {
         let crate = try readCrate(from: data)
         try crate.requireStructuralSections()
-        return try USDCSceneMaterializer(crate: crate, options: options).readScene()
+        let sections = try crate.parseStructuralSections()
+        return try USDCSceneMaterializer(crate: crate, options: options, sections: sections).readScene()
     }
 }
 
-public struct USDCCrateVersion: Sendable, Equatable, Comparable, CustomStringConvertible {
-    public var major: UInt8
-    public var minor: UInt8
-    public var patch: UInt8
+/// Structural sections of a crate file, parsed exactly once and shared between consumers.
+struct USDCCrateStructuralSections: Sendable {
+    var tokens: [String]
+    var strings: [String]
+    var fields: [USDCCrateField]
+    var fieldSetIndexes: [UInt32]
+    var paths: [String]
+    var specs: [USDCCrateSpec]
+}
 
-    public init(major: UInt8, minor: UInt8, patch: UInt8) {
+struct USDCCrateVersion: Sendable, Equatable, Comparable, CustomStringConvertible {
+    var major: UInt8
+    var minor: UInt8
+    var patch: UInt8
+
+    init(major: UInt8, minor: UInt8, patch: UInt8) {
         self.major = major
         self.minor = minor
         self.patch = patch
     }
 
-    public static func < (lhs: USDCCrateVersion, rhs: USDCCrateVersion) -> Bool {
+    static func < (lhs: USDCCrateVersion, rhs: USDCCrateVersion) -> Bool {
         if lhs.major != rhs.major {
             return lhs.major < rhs.major
         }
@@ -52,33 +64,33 @@ public struct USDCCrateVersion: Sendable, Equatable, Comparable, CustomStringCon
         return lhs.patch < rhs.patch
     }
 
-    public var description: String {
+    var description: String {
         "\(major).\(minor).\(patch)"
     }
 }
 
-public struct USDCCrateSection: Sendable, Equatable {
-    public var name: String
-    public var start: Int
-    public var size: Int
+struct USDCCrateSection: Sendable, Equatable {
+    var name: String
+    var start: Int
+    var size: Int
 
-    public init(name: String, start: Int, size: Int) {
+    init(name: String, start: Int, size: Int) {
         self.name = name
         self.start = start
         self.size = size
     }
 
-    public var range: Range<Int> {
+    var range: Range<Int> {
         start..<(start + size)
     }
 }
 
-public struct USDCCrateFile: Sendable, Equatable {
-    public static let bootstrapByteCount = 88
-    public static let sectionRecordByteCount = 32
-    public static let oldestSupportedVersion = USDCCrateVersion(major: 0, minor: 0, patch: 1)
-    public static let newestKnownVersion = USDCCrateVersion(major: 0, minor: 15, patch: 0)
-    public static let structuralSectionNames: Set<String> = [
+struct USDCCrateFile: Sendable, Equatable {
+    static let bootstrapByteCount = 88
+    static let sectionRecordByteCount = 32
+    static let oldestSupportedVersion = USDCCrateVersion(major: 0, minor: 0, patch: 1)
+    static let newestKnownVersion = USDCCrateVersion(major: 0, minor: 15, patch: 0)
+    static let structuralSectionNames: Set<String> = [
         "TOKENS",
         "STRINGS",
         "FIELDS",
@@ -87,18 +99,18 @@ public struct USDCCrateFile: Sendable, Equatable {
         "SPECS",
     ]
 
-    public var version: USDCCrateVersion
-    public var tableOfContentsOffset: Int
-    public var sections: [USDCCrateSection]
+    var version: USDCCrateVersion
+    var tableOfContentsOffset: Int
+    var sections: [USDCCrateSection]
     private var data: Data
 
-    public init(data: Data) throws {
+    init(data: Data) throws {
         let reader = USDCBinaryReader(data: data)
         guard data.count >= Self.bootstrapByteCount else {
-            throw USDImportError.invalidData("USDC data is too small to contain a bootstrap.")
+            throw USDError.invalidData("USDC data is too small to contain a bootstrap.")
         }
         guard data.starts(with: USDCReader.fileSignature) else {
-            throw USDImportError.invalidData("USDC data is missing the PXR-USDC signature.")
+            throw USDError.invalidData("USDC data is missing the PXR-USDC signature.")
         }
 
         version = USDCCrateVersion(
@@ -107,31 +119,31 @@ public struct USDCCrateFile: Sendable, Equatable {
             patch: try reader.readUInt8(at: 10)
         )
         guard version.major == 0, version <= Self.newestKnownVersion else {
-            throw USDImportError.unsupportedFeature("USDC crate version \(version) is newer than the supported reader version.")
+            throw USDError.unsupportedFeature("USDC crate version \(version) is newer than the supported reader version.")
         }
         guard version >= Self.oldestSupportedVersion else {
-            throw USDImportError.unsupportedFeature("USDC crate version \(version) is older than the supported reader version.")
+            throw USDError.unsupportedFeature("USDC crate version \(version) is older than the supported reader version.")
         }
 
         let tocOffset64 = try reader.readInt64(at: 16)
         guard tocOffset64 >= Int64(Self.bootstrapByteCount),
               tocOffset64 <= Int64(data.count - MemoryLayout<UInt64>.size) else {
-            throw USDImportError.invalidData("USDC table of contents offset is outside the file.")
+            throw USDError.invalidData("USDC table of contents offset is outside the file.")
         }
         guard tocOffset64 <= Int64(Int.max) else {
-            throw USDImportError.invalidData("USDC table of contents offset exceeds platform range.")
+            throw USDError.invalidData("USDC table of contents offset exceeds platform range.")
         }
         tableOfContentsOffset = Int(tocOffset64)
 
         let sectionCount64 = try reader.readUInt64(at: tableOfContentsOffset)
         guard sectionCount64 <= UInt64(Int.max / Self.sectionRecordByteCount) else {
-            throw USDImportError.invalidData("USDC table of contents has too many sections.")
+            throw USDError.invalidData("USDC table of contents has too many sections.")
         }
         let sectionCount = Int(sectionCount64)
         let sectionRecordsStart = tableOfContentsOffset + MemoryLayout<UInt64>.size
         let sectionRecordsSize = sectionCount * Self.sectionRecordByteCount
         guard sectionRecordsStart <= data.count - sectionRecordsSize else {
-            throw USDImportError.invalidData("USDC table of contents is truncated.")
+            throw USDError.invalidData("USDC table of contents is truncated.")
         }
 
         var parsedSections: [USDCCrateSection] = []
@@ -140,23 +152,23 @@ public struct USDCCrateFile: Sendable, Equatable {
             let offset = sectionRecordsStart + index * Self.sectionRecordByteCount
             let name = try reader.readNullTerminatedASCII(at: offset, byteCount: 16)
             guard !name.isEmpty else {
-                throw USDImportError.invalidData("USDC table of contents contains an empty section name.")
+                throw USDError.invalidData("USDC table of contents contains an empty section name.")
             }
             guard seenNames.insert(name).inserted else {
-                throw USDImportError.invalidData("USDC table of contents contains a duplicate section \(name).")
+                throw USDError.invalidData("USDC table of contents contains a duplicate section \(name).")
             }
             let start64 = try reader.readInt64(at: offset + 16)
             let size64 = try reader.readInt64(at: offset + 24)
             guard start64 >= 0, size64 >= 0 else {
-                throw USDImportError.invalidData("USDC section \(name) has a negative range.")
+                throw USDError.invalidData("USDC section \(name) has a negative range.")
             }
             guard start64 <= Int64(Int.max), size64 <= Int64(Int.max) else {
-                throw USDImportError.invalidData("USDC section \(name) exceeds platform range.")
+                throw USDError.invalidData("USDC section \(name) exceeds platform range.")
             }
             let start = Int(start64)
             let size = Int(size64)
             guard start <= data.count, size <= data.count - start else {
-                throw USDImportError.invalidData("USDC section \(name) points outside the file.")
+                throw USDError.invalidData("USDC section \(name) points outside the file.")
             }
             parsedSections.append(USDCCrateSection(name: name, start: start, size: size))
         }
@@ -167,19 +179,38 @@ public struct USDCCrateFile: Sendable, Equatable {
         try validateSectionLayout(fileSize: data.count)
     }
 
-    public func section(named name: String) -> USDCCrateSection? {
+    func section(named name: String) -> USDCCrateSection? {
         sections.first { $0.name == name }
     }
 
-    public func requireStructuralSections() throws {
+    func requireStructuralSections() throws {
         let presentNames = Set(sections.map(\.name))
         let missingNames = Self.structuralSectionNames.subtracting(presentNames).sorted()
         guard missingNames.isEmpty else {
-            throw USDImportError.missingRequiredField("USDC structural sections: \(missingNames.joined(separator: ", "))")
+            throw USDError.missingRequiredField("USDC structural sections: \(missingNames.joined(separator: ", "))")
         }
     }
 
-    public func readTokens() throws -> [String] {
+    /// Parses every structural section exactly once, threading prerequisites
+    /// between section readers instead of re-parsing them.
+    func parseStructuralSections() throws -> USDCCrateStructuralSections {
+        let tokens = try readTokens()
+        let strings = try readStrings(tokens: tokens)
+        let fields = try readFields(tokenCount: tokens.count)
+        let fieldSetIndexes = try readFieldSetIndexes()
+        let paths = try readPaths(tokens: tokens)
+        let specs = try readSpecs(paths: paths, fieldSetIndexes: fieldSetIndexes)
+        return USDCCrateStructuralSections(
+            tokens: tokens,
+            strings: strings,
+            fields: fields,
+            fieldSetIndexes: fieldSetIndexes,
+            paths: paths,
+            specs: specs
+        )
+    }
+
+    func readTokens() throws -> [String] {
         let sectionData = try dataForSection(named: "TOKENS")
         let reader = USDCBinaryReader(data: sectionData)
         var cursor = 0
@@ -213,13 +244,16 @@ public struct USDCCrateFile: Sendable, Equatable {
         )
     }
 
-    public func readStringTokenIndexes() throws -> [UInt32] {
+    func readStringTokenIndexes() throws -> [UInt32] {
         let sectionData = try dataForSection(named: "STRINGS")
         return try readUInt32Vector(from: sectionData, sectionName: "STRINGS")
     }
 
-    public func readStrings() throws -> [String] {
-        let tokens = try readTokens()
+    func readStrings() throws -> [String] {
+        try readStrings(tokens: try readTokens())
+    }
+
+    func readStrings(tokens: [String]) throws -> [String] {
         let stringTokenIndexes = try readStringTokenIndexes()
         return try stringTokenIndexes.map { tokenIndex in
             let index = try checkedTokenIndex(tokenIndex, tokenCount: tokens.count, sectionName: "STRINGS")
@@ -227,8 +261,11 @@ public struct USDCCrateFile: Sendable, Equatable {
         }
     }
 
-    public func readFields() throws -> [USDCCrateField] {
-        let tokenCount = try readTokens().count
+    func readFields() throws -> [USDCCrateField] {
+        try readFields(tokenCount: try readTokens().count)
+    }
+
+    func readFields(tokenCount: Int) throws -> [USDCCrateField] {
         let sectionData = try dataForSection(named: "FIELDS")
         let reader = USDCBinaryReader(data: sectionData)
         let fields: [USDCCrateField]
@@ -236,6 +273,10 @@ public struct USDCCrateFile: Sendable, Equatable {
             var cursor = 0
             let fieldCount = try checkedInt(try reader.readUInt64(at: cursor), label: "USDC field count")
             cursor += MemoryLayout<UInt64>.size
+            let recordByteCount = 2 * MemoryLayout<UInt32>.size + MemoryLayout<UInt64>.size
+            guard fieldCount <= (sectionData.count - cursor) / recordByteCount else {
+                throw USDError.invalidData("USDC FIELDS count exceeds the section size.")
+            }
             var parsedFields: [USDCCrateField] = []
             parsedFields.reserveCapacity(fieldCount)
             for _ in 0..<fieldCount {
@@ -278,7 +319,7 @@ public struct USDCCrateFile: Sendable, Equatable {
         return fields
     }
 
-    public func readFieldSetIndexes() throws -> [UInt32] {
+    func readFieldSetIndexes() throws -> [UInt32] {
         let sectionData = try dataForSection(named: "FIELDSETS")
         let reader = USDCBinaryReader(data: sectionData)
         var fieldSetIndexes: [UInt32]
@@ -300,15 +341,15 @@ public struct USDCCrateFile: Sendable, Equatable {
             try requireNoTrailingBytes(cursor: cursor, byteCount: sectionData.count, sectionName: "FIELDSETS")
         }
         if let last = fieldSetIndexes.last, last != Self.invalidIndex {
-            throw USDImportError.invalidData("USDC FIELDSETS section is not terminated by an invalid field index.")
+            throw USDError.invalidData("USDC FIELDSETS section is not terminated by an invalid field index.")
         }
         return fieldSetIndexes
     }
 
-    public func readFieldSets() throws -> [[UInt32]] {
+    func readFieldSets() throws -> [[UInt32]] {
         let fields = try readFields()
         guard fields.count <= Int(UInt32.max) else {
-            throw USDImportError.invalidData("USDC FIELDS count exceeds field index range.")
+            throw USDError.invalidData("USDC FIELDS count exceeds field index range.")
         }
         let fieldSetIndexes = try readFieldSetIndexes()
         var fieldSets: [[UInt32]] = []
@@ -319,19 +360,22 @@ public struct USDCCrateFile: Sendable, Equatable {
                 currentFieldSet = []
             } else {
                 guard fieldIndex < UInt32(fields.count) else {
-                    throw USDImportError.invalidData("USDC FIELDSETS contains a field index outside FIELDS.")
+                    throw USDError.invalidData("USDC FIELDSETS contains a field index outside FIELDS.")
                 }
                 currentFieldSet.append(fieldIndex)
             }
         }
         if !currentFieldSet.isEmpty {
-            throw USDImportError.invalidData("USDC FIELDSETS section has unterminated field indexes.")
+            throw USDError.invalidData("USDC FIELDSETS section has unterminated field indexes.")
         }
         return fieldSets
     }
 
-    public func readPaths() throws -> [String] {
-        let tokens = try readTokens()
+    func readPaths() throws -> [String] {
+        try readPaths(tokens: try readTokens())
+    }
+
+    func readPaths(tokens: [String]) throws -> [String] {
         let section = try requiredSection(named: "PATHS")
         let sectionData = try dataForSection(section)
         let sectionReader = USDCBinaryReader(data: sectionData)
@@ -339,12 +383,18 @@ public struct USDCCrateFile: Sendable, Equatable {
         let pathCount = try checkedInt(try sectionReader.readUInt64(at: cursor), label: "USDC path count")
         cursor += MemoryLayout<UInt64>.size
         guard pathCount <= Int(UInt32.max) else {
-            throw USDImportError.invalidData("USDC path count exceeds path index range.")
+            throw USDError.invalidData("USDC path count exceeds path index range.")
         }
-        var paths = [String](repeating: "", count: pathCount)
+        var paths: [String]
 
         if version < USDCCrateVersion(major: 0, minor: 4, patch: 0) {
             let headerByteCount = version == USDCCrateVersion(major: 0, minor: 0, patch: 1) ? 16 : 12
+            // Every encoded path consumes at least one header, so the declared
+            // count cannot exceed what the section can physically contain.
+            guard pathCount <= (sectionData.count - cursor) / headerByteCount else {
+                throw USDError.invalidData("USDC path count exceeds the PATHS section size.")
+            }
+            paths = [String](repeating: "", count: pathCount)
             var absoluteCursor = section.start + cursor
             var maximumCursor = absoluteCursor
             var visitedPathIndexes: Set<UInt32> = []
@@ -363,7 +413,7 @@ public struct USDCCrateFile: Sendable, Equatable {
                 )
             }
             guard maximumCursor == section.range.upperBound else {
-                throw USDImportError.invalidData("USDC PATHS section has trailing bytes.")
+                throw USDError.invalidData("USDC PATHS section has trailing bytes.")
             }
         } else {
             let encodedPathCount = try checkedInt(
@@ -371,6 +421,12 @@ public struct USDCCrateFile: Sendable, Equatable {
                 label: "USDC encoded path count"
             )
             cursor += MemoryLayout<UInt64>.size
+            // The encoding lists each path exactly once, so a path table larger
+            // than the encoded item count cannot be backed by file data.
+            guard pathCount <= encodedPathCount else {
+                throw USDError.invalidData("USDC path count exceeds the encoded path item count.")
+            }
+            paths = [String](repeating: "", count: pathCount)
             let pathIndexes = try readCompressedUInt32List(
                 reader: sectionReader,
                 cursor: &cursor,
@@ -402,14 +458,16 @@ public struct USDCCrateFile: Sendable, Equatable {
         return paths
     }
 
-    public func readSpecs() throws -> [USDCCrateSpec] {
-        let paths = try readPaths()
-        let fieldSetIndexes = try readFieldSetIndexes()
+    func readSpecs() throws -> [USDCCrateSpec] {
+        try readSpecs(paths: try readPaths(), fieldSetIndexes: try readFieldSetIndexes())
+    }
+
+    func readSpecs(paths: [String], fieldSetIndexes: [UInt32]) throws -> [USDCCrateSpec] {
         guard paths.count <= Int(UInt32.max) else {
-            throw USDImportError.invalidData("USDC PATHS count exceeds spec path index range.")
+            throw USDError.invalidData("USDC PATHS count exceeds spec path index range.")
         }
         guard fieldSetIndexes.count <= Int(UInt32.max) else {
-            throw USDImportError.invalidData("USDC FIELDSETS count exceeds spec field set index range.")
+            throw USDError.invalidData("USDC FIELDSETS count exceeds spec field set index range.")
         }
 
         let sectionData = try dataForSection(named: "SPECS")
@@ -465,19 +523,28 @@ public struct USDCCrateFile: Sendable, Equatable {
         try USDCBinaryReader(data: data).readUInt64(at: offset)
     }
 
+    /// Validates that `byteCount` bytes starting at `offset` lie inside the file
+    /// without copying them, so callers can reject hostile element counts before
+    /// reserving any memory.
+    func validateFileRange(at offset: Int, byteCount: Int) throws {
+        guard offset >= 0, byteCount >= 0, offset <= data.count - byteCount else {
+            throw USDError.invalidData("USDC value payload extends outside the file.")
+        }
+    }
+
     private func validateSectionLayout(fileSize: Int) throws {
         var previousUpperBound = Self.bootstrapByteCount
         for section in sections {
             guard section.start >= previousUpperBound else {
-                throw USDImportError.invalidData("USDC sections overlap or appear before the bootstrap.")
+                throw USDError.invalidData("USDC sections overlap or appear before the bootstrap.")
             }
             guard section.range.upperBound <= fileSize else {
-                throw USDImportError.invalidData("USDC section \(section.name) points outside the file.")
+                throw USDError.invalidData("USDC section \(section.name) points outside the file.")
             }
             previousUpperBound = section.range.upperBound
         }
         guard tableOfContentsOffset >= previousUpperBound else {
-            throw USDImportError.invalidData("USDC table of contents overlaps structural sections.")
+            throw USDError.invalidData("USDC table of contents overlaps structural sections.")
         }
     }
 
@@ -485,7 +552,7 @@ public struct USDCCrateFile: Sendable, Equatable {
 
     private func requiredSection(named name: String) throws -> USDCCrateSection {
         guard let section = section(named: name) else {
-            throw USDImportError.missingRequiredField("USDC section \(name)")
+            throw USDError.missingRequiredField("USDC section \(name)")
         }
         return section
     }
@@ -506,6 +573,9 @@ public struct USDCCrateFile: Sendable, Equatable {
         var cursor = 0
         let count = try checkedInt(try reader.readUInt64(at: cursor), label: "USDC \(sectionName) count")
         cursor += MemoryLayout<UInt64>.size
+        guard count <= (data.count - cursor) / MemoryLayout<UInt32>.size else {
+            throw USDError.invalidData("USDC \(sectionName) count exceeds the section size.")
+        }
         var values: [UInt32] = []
         values.reserveCapacity(count)
         for _ in 0..<count {
@@ -550,6 +620,9 @@ public struct USDCCrateFile: Sendable, Equatable {
         var cursor = 0
         let specCount = try checkedInt(try reader.readUInt64(at: cursor), label: "USDC spec count")
         cursor += MemoryLayout<UInt64>.size
+        guard recordByteCount > 0, specCount <= (byteCount - cursor) / recordByteCount else {
+            throw USDError.invalidData("USDC SPECS count exceeds the section size.")
+        }
         var specs: [USDCCrateSpec] = []
         specs.reserveCapacity(specCount)
         for _ in 0..<specCount {
@@ -577,7 +650,7 @@ public struct USDCCrateFile: Sendable, Equatable {
         specTypes: [UInt32]
     ) throws -> [USDCCrateSpec] {
         guard pathIndexes.count == fieldSetIndexes.count, pathIndexes.count == specTypes.count else {
-            throw USDImportError.invalidData("USDC SPECS columns have mismatched counts.")
+            throw USDError.invalidData("USDC SPECS columns have mismatched counts.")
         }
         var specs: [USDCCrateSpec] = []
         specs.reserveCapacity(pathIndexes.count)
@@ -595,7 +668,7 @@ public struct USDCCrateFile: Sendable, Equatable {
 
     private func makeSpec(pathIndex: UInt32, fieldSetIndex: UInt32, specType: UInt32) throws -> USDCCrateSpec {
         guard let crateSpecType = USDCCrateSpecType(rawValue: specType), crateSpecType.isConcrete else {
-            throw USDImportError.invalidData("USDC SPECS contains an invalid spec type.")
+            throw USDError.invalidData("USDC SPECS contains an invalid spec type.")
         }
         return USDCCrateSpec(pathIndex: pathIndex, fieldSetIndex: fieldSetIndex, specType: crateSpecType)
     }
@@ -608,20 +681,20 @@ public struct USDCCrateFile: Sendable, Equatable {
         var seenPathIndexes: Set<UInt32> = []
         for spec in specs {
             guard spec.pathIndex < UInt32(paths.count) else {
-                throw USDImportError.invalidData("USDC SPECS contains a path index outside PATHS.")
+                throw USDError.invalidData("USDC SPECS contains a path index outside PATHS.")
             }
             guard !paths[Int(spec.pathIndex)].isEmpty else {
-                throw USDImportError.invalidData("USDC SPECS contains an empty path.")
+                throw USDError.invalidData("USDC SPECS contains an empty path.")
             }
             guard seenPathIndexes.insert(spec.pathIndex).inserted else {
-                throw USDImportError.invalidData("USDC SPECS contains a repeated path.")
+                throw USDError.invalidData("USDC SPECS contains a repeated path.")
             }
             guard spec.fieldSetIndex < UInt32(fieldSetIndexes.count) else {
-                throw USDImportError.invalidData("USDC SPECS contains a field set index outside FIELDSETS.")
+                throw USDError.invalidData("USDC SPECS contains a field set index outside FIELDSETS.")
             }
             let fieldSetIndex = Int(spec.fieldSetIndex)
             if fieldSetIndex > 0, fieldSetIndexes[fieldSetIndex - 1] != Self.invalidIndex {
-                throw USDImportError.invalidData("USDC SPECS field set index does not start a field set.")
+                throw USDError.invalidData("USDC SPECS field set index does not start a field set.")
             }
         }
     }
@@ -641,11 +714,11 @@ public struct USDCCrateFile: Sendable, Equatable {
         var currentParentPath = parentPath
         while true {
             guard cursor >= section.start, cursor <= section.range.upperBound - headerByteCount else {
-                throw USDImportError.invalidData("USDC PATHS legacy tree is truncated.")
+                throw USDError.invalidData("USDC PATHS legacy tree is truncated.")
             }
             let headerOffset = cursor
             guard visitedStreamOffsets.insert(headerOffset).inserted else {
-                throw USDImportError.invalidData("USDC PATHS legacy tree contains a repeated stream offset.")
+                throw USDError.invalidData("USDC PATHS legacy tree contains a repeated stream offset.")
             }
             let usesLegacyPadding = headerByteCount == 16
             let pathIndexOffset = headerOffset + (usesLegacyPadding ? MemoryLayout<UInt32>.size : 0)
@@ -671,7 +744,7 @@ public struct USDCCrateFile: Sendable, Equatable {
                     guard siblingOffset >= Int64(section.start),
                           siblingOffset <= Int64(section.range.upperBound - headerByteCount),
                           siblingOffset <= Int64(Int.max) else {
-                        throw USDImportError.invalidData("USDC PATHS legacy sibling offset is outside PATHS.")
+                        throw USDError.invalidData("USDC PATHS legacy sibling offset is outside PATHS.")
                     }
                     var childCursor = cursor
                     try readLegacyPathSubtree(
@@ -715,14 +788,14 @@ public struct USDCCrateFile: Sendable, Equatable {
         tokens: [String]
     ) throws {
         guard pathIndexes.count == elementTokenIndexes.count, pathIndexes.count == jumps.count else {
-            throw USDImportError.invalidData("USDC PATHS columns have mismatched counts.")
+            throw USDError.invalidData("USDC PATHS columns have mismatched counts.")
         }
         var seenPathIndexes: Set<UInt32> = []
         for index in pathIndexes.indices {
             try validatePathIndex(pathIndexes[index], paths: paths, visitedPathIndexes: &seenPathIndexes)
             _ = try checkedSignedTokenIndex(elementTokenIndexes[index], tokenCount: tokens.count, sectionName: "PATHS")
             guard jumps[index] >= -2 else {
-                throw USDImportError.invalidData("USDC PATHS contains an invalid jump.")
+                throw USDError.invalidData("USDC PATHS contains an invalid jump.")
             }
         }
         guard !pathIndexes.isEmpty else {
@@ -740,7 +813,7 @@ public struct USDCCrateFile: Sendable, Equatable {
             visitedEncodedIndexes: &visitedEncodedIndexes
         )
         guard visitedEncodedIndexes.count == pathIndexes.count else {
-            throw USDImportError.invalidData("USDC PATHS does not encode every path item.")
+            throw USDError.invalidData("USDC PATHS does not encode every path item.")
         }
     }
 
@@ -758,12 +831,12 @@ public struct USDCCrateFile: Sendable, Equatable {
         var currentParentPath = parentPath
         while true {
             guard currentIndex < pathIndexes.count else {
-                throw USDImportError.invalidData("USDC PATHS encoding references a missing item.")
+                throw USDError.invalidData("USDC PATHS encoding references a missing item.")
             }
             let thisIndex = currentIndex
             currentIndex += 1
             guard visitedEncodedIndexes.insert(thisIndex).inserted else {
-                throw USDImportError.invalidData("USDC PATHS encoding visits an item more than once.")
+                throw USDError.invalidData("USDC PATHS encoding visits an item more than once.")
             }
 
             let pathIndex = Int(pathIndexes[thisIndex])
@@ -782,7 +855,7 @@ public struct USDCCrateFile: Sendable, Equatable {
                 if hasSibling {
                     let siblingIndex = thisIndex + Int(jump)
                     guard siblingIndex > thisIndex, siblingIndex < pathIndexes.count else {
-                        throw USDImportError.invalidData("USDC PATHS sibling jump is outside encoded paths.")
+                        throw USDError.invalidData("USDC PATHS sibling jump is outside encoded paths.")
                     }
                     _ = try buildCompressedPathSubtree(
                         startIndex: currentIndex,
@@ -840,7 +913,7 @@ public struct USDCCrateFile: Sendable, Equatable {
     ) throws {
         try validatePathIndex(pathIndex, paths: paths, visitedPathIndexes: &visitedPathIndexes)
         guard bits & ~Self.pathHeaderKnownBits == 0 else {
-            throw USDImportError.invalidData("USDC PATHS contains unknown path header bits.")
+            throw USDError.invalidData("USDC PATHS contains unknown path header bits.")
         }
     }
 
@@ -850,59 +923,48 @@ public struct USDCCrateFile: Sendable, Equatable {
         visitedPathIndexes: inout Set<UInt32>
     ) throws {
         guard pathIndex < UInt32(paths.count) else {
-            throw USDImportError.invalidData("USDC PATHS contains a path index outside PATHS.")
+            throw USDError.invalidData("USDC PATHS contains a path index outside PATHS.")
         }
         guard visitedPathIndexes.insert(pathIndex).inserted else {
-            throw USDImportError.invalidData("USDC PATHS contains a repeated path index.")
+            throw USDError.invalidData("USDC PATHS contains a repeated path index.")
         }
     }
 
     private func checkedSignedTokenIndex(_ tokenIndex: Int32, tokenCount: Int, sectionName: String) throws -> Int {
         guard tokenIndex != Int32.min else {
-            throw USDImportError.invalidData("USDC \(sectionName) contains an invalid signed token index.")
+            throw USDError.invalidData("USDC \(sectionName) contains an invalid signed token index.")
         }
         let absoluteTokenIndex = tokenIndex < 0 ? -tokenIndex : tokenIndex
         guard tokenCount <= Int(UInt32.max),
               UInt32(bitPattern: absoluteTokenIndex) < UInt32(tokenCount) else {
-            throw USDImportError.invalidData("USDC \(sectionName) contains a token index outside TOKENS.")
+            throw USDError.invalidData("USDC \(sectionName) contains a token index outside TOKENS.")
         }
         return Int(absoluteTokenIndex)
     }
 
     private func readCompressedValueReps(_ compressedData: Data, count: Int) throws -> [USDCCrateValueRep] {
         guard count <= Int.max / MemoryLayout<UInt64>.size else {
-            throw USDImportError.invalidData("USDC value rep count exceeds platform range.")
+            throw USDError.invalidData("USDC value rep count exceeds platform range.")
         }
         let byteCount = count * MemoryLayout<UInt64>.size
         let valueBytes = try USDCFastCompression.decompress(
             compressedData,
             expectedByteCount: byteCount
         )
-        var valueReps: [USDCCrateValueRep] = []
-        valueReps.reserveCapacity(count)
-        var cursor = 0
-        for _ in 0..<count {
-            valueReps.append(USDCCrateValueRep(rawValue: try Self.readUInt64(in: valueBytes, at: cursor)))
-            cursor += MemoryLayout<UInt64>.size
+        // The exact-size decompression guarantees valueBytes.count == byteCount.
+        return valueBytes.withUnsafeBytes { buffer in
+            (0..<count).map { index in
+                USDCCrateValueRep(rawValue: UInt64(littleEndian: buffer.loadUnaligned(
+                    fromByteOffset: index * MemoryLayout<UInt64>.size,
+                    as: UInt64.self
+                )))
+            }
         }
-        return valueReps
-    }
-
-    private static func readUInt64(in bytes: [UInt8], at offset: Int) throws -> UInt64 {
-        let byteCount = MemoryLayout<UInt64>.size
-        guard offset >= 0, offset <= bytes.count - byteCount else {
-            throw USDImportError.invalidData("USDC read is outside the decompressed buffer.")
-        }
-        var value: UInt64 = 0
-        for index in 0..<byteCount {
-            value |= UInt64(bytes[offset + index]) << UInt64(index * 8)
-        }
-        return value
     }
 
     private func checkedInt(_ value: UInt64, label: String) throws -> Int {
         guard value <= UInt64(Int.max) else {
-            throw USDImportError.invalidData("\(label) exceeds platform range.")
+            throw USDError.invalidData("\(label) exceeds platform range.")
         }
         return Int(value)
     }
@@ -911,14 +973,14 @@ public struct USDCCrateFile: Sendable, Equatable {
         guard tokenCount <= Int(UInt32.max),
               tokenIndex != Self.invalidIndex,
               tokenIndex < UInt32(tokenCount) else {
-            throw USDImportError.invalidData("USDC \(sectionName) contains a token index outside TOKENS.")
+            throw USDError.invalidData("USDC \(sectionName) contains a token index outside TOKENS.")
         }
         return Int(tokenIndex)
     }
 
     private func requireNoTrailingBytes(cursor: Int, byteCount: Int, sectionName: String) throws {
         guard cursor == byteCount else {
-            throw USDImportError.invalidData("USDC \(sectionName) section has trailing bytes.")
+            throw USDError.invalidData("USDC \(sectionName) section has trailing bytes.")
         }
     }
 
@@ -928,17 +990,17 @@ public struct USDCCrateFile: Sendable, Equatable {
         sectionName: String
     ) throws -> [String] {
         guard expectedCount >= 0 else {
-            throw USDImportError.invalidData("USDC \(sectionName) count is negative.")
+            throw USDError.invalidData("USDC \(sectionName) count is negative.")
         }
         guard expectedCount == 0 || bytes.last == 0 else {
-            throw USDImportError.invalidData("USDC \(sectionName) section is not null-terminated.")
+            throw USDError.invalidData("USDC \(sectionName) section is not null-terminated.")
         }
         var strings: [String] = []
         var start = 0
         for index in bytes.indices where bytes[index] == 0 {
             let stringBytes = bytes[start..<index]
             guard let value = String(bytes: stringBytes, encoding: .utf8) else {
-                throw USDImportError.invalidData("USDC \(sectionName) contains non-UTF-8 text.")
+                throw USDError.invalidData("USDC \(sectionName) contains non-UTF-8 text.")
             }
             strings.append(value)
             start = index + 1
@@ -947,7 +1009,7 @@ public struct USDCCrateFile: Sendable, Equatable {
             }
         }
         guard strings.count == expectedCount else {
-            throw USDImportError.invalidData("USDC \(sectionName) count does not match its encoded strings.")
+            throw USDError.invalidData("USDC \(sectionName) count does not match its encoded strings.")
         }
         return strings
     }
@@ -963,27 +1025,23 @@ private struct USDCBinaryReader {
 
     func readUInt8(at offset: Int) throws -> UInt8 {
         try validateRange(offset: offset, byteCount: 1)
-        return readByteUnchecked(at: offset)
+        return data.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) in
+            bytes[offset]
+        }
     }
 
     func readUInt64(at offset: Int) throws -> UInt64 {
-        let byteCount = MemoryLayout<UInt64>.size
-        try validateRange(offset: offset, byteCount: byteCount)
-        var value: UInt64 = 0
-        for index in 0..<byteCount {
-            value |= UInt64(readByteUnchecked(at: offset + index)) << UInt64(index * 8)
+        try validateRange(offset: offset, byteCount: MemoryLayout<UInt64>.size)
+        return data.withUnsafeBytes { bytes in
+            UInt64(littleEndian: bytes.loadUnaligned(fromByteOffset: offset, as: UInt64.self))
         }
-        return value
     }
 
     func readUInt32(at offset: Int) throws -> UInt32 {
-        let byteCount = MemoryLayout<UInt32>.size
-        try validateRange(offset: offset, byteCount: byteCount)
-        var value: UInt32 = 0
-        for index in 0..<byteCount {
-            value |= UInt32(readByteUnchecked(at: offset + index)) << UInt32(index * 8)
+        try validateRange(offset: offset, byteCount: MemoryLayout<UInt32>.size)
+        return data.withUnsafeBytes { bytes in
+            UInt32(littleEndian: bytes.loadUnaligned(fromByteOffset: offset, as: UInt32.self))
         }
-        return value
     }
 
     func readInt32(at offset: Int) throws -> Int32 {
@@ -996,19 +1054,21 @@ private struct USDCBinaryReader {
 
     func readNullTerminatedASCII(at offset: Int, byteCount: Int) throws -> String {
         try validateRange(offset: offset, byteCount: byteCount)
-        var nameBytes: [UInt8] = []
-        nameBytes.reserveCapacity(byteCount)
-        for index in 0..<byteCount {
-            let byte = readByteUnchecked(at: offset + index)
-            if byte == 0 {
-                break
+        return try data.withUnsafeBytes { bytes in
+            var nameBytes: [UInt8] = []
+            nameBytes.reserveCapacity(byteCount)
+            for index in 0..<byteCount {
+                let byte = bytes[offset + index]
+                if byte == 0 {
+                    break
+                }
+                guard byte >= 0x20, byte <= 0x7e else {
+                    throw USDError.invalidData("USDC section name is not printable ASCII.")
+                }
+                nameBytes.append(byte)
             }
-            guard byte >= 0x20, byte <= 0x7e else {
-                throw USDImportError.invalidData("USDC section name is not printable ASCII.")
-            }
-            nameBytes.append(byte)
+            return String(decoding: nameBytes, as: UTF8.self)
         }
-        return String(decoding: nameBytes, as: UTF8.self)
     }
 
     func readBytes(at offset: Int, byteCount: Int) throws -> [UInt8] {
@@ -1028,13 +1088,9 @@ private struct USDCBinaryReader {
         return data[start..<end]
     }
 
-    private func readByteUnchecked(at offset: Int) -> UInt8 {
-        return data[data.index(data.startIndex, offsetBy: offset)]
-    }
-
     private func validateRange(offset: Int, byteCount: Int) throws {
         guard offset >= 0, byteCount >= 0, offset <= data.count - byteCount else {
-            throw USDImportError.invalidData("USDC read is outside the file.")
+            throw USDError.invalidData("USDC read is outside the file.")
         }
     }
 }
@@ -1042,18 +1098,39 @@ private struct USDCBinaryReader {
 enum USDCFastCompression {
     private static let maximumChunkOutputByteCount = 0x7e00_0000
 
+    /// Upper bound on the byte count an LZ4 block of `count` compressed bytes can decode to.
+    ///
+    /// LZ4 extended lengths add at most 255 output bytes per input byte; the
+    /// small constant absorbs chunk headers and the minimum match expansion.
+    static func maximumDecompressedByteCount(forCompressedByteCount count: Int) -> Int {
+        guard count > 0 else {
+            return 64
+        }
+        let (scaled, overflow) = count.multipliedReportingOverflow(by: 255)
+        guard !overflow, scaled <= Int.max - 64 else {
+            return Int.max
+        }
+        return scaled + 64
+    }
+
     static func decompress(_ data: Data, expectedByteCount: Int) throws -> [UInt8] {
+        guard expectedByteCount <= maximumDecompressedByteCount(forCompressedByteCount: data.count) else {
+            throw USDError.invalidData("USDC compressed buffer declares an impossible uncompressed byte count.")
+        }
         let output = try decompress(data, maximumOutputByteCount: expectedByteCount)
         guard output.count == expectedByteCount else {
-            throw USDImportError.invalidData("USDC compressed buffer did not produce the expected byte count.")
+            throw USDError.invalidData("USDC compressed buffer did not produce the expected byte count.")
         }
         return output
     }
 
     static func decompress(_ bytes: [UInt8], expectedByteCount: Int) throws -> [UInt8] {
+        guard expectedByteCount <= maximumDecompressedByteCount(forCompressedByteCount: bytes.count) else {
+            throw USDError.invalidData("USDC compressed buffer declares an impossible uncompressed byte count.")
+        }
         let output = try decompress(bytes, maximumOutputByteCount: expectedByteCount)
         guard output.count == expectedByteCount else {
-            throw USDImportError.invalidData("USDC compressed buffer did not produce the expected byte count.")
+            throw USDError.invalidData("USDC compressed buffer did not produce the expected byte count.")
         }
         return output
     }
@@ -1072,11 +1149,11 @@ enum USDCFastCompression {
 
     static func decompress(_ bytes: UnsafeRawBufferPointer, maximumOutputByteCount: Int) throws -> [UInt8] {
         guard maximumOutputByteCount >= 0 else {
-            throw USDImportError.invalidData("USDC compressed buffer output byte count is invalid.")
+            throw USDError.invalidData("USDC compressed buffer output byte count is invalid.")
         }
         guard !bytes.isEmpty else {
             guard maximumOutputByteCount == 0 else {
-                throw USDImportError.invalidData("USDC compressed buffer is empty.")
+                throw USDError.invalidData("USDC compressed buffer is empty.")
             }
             return []
         }
@@ -1091,10 +1168,13 @@ enum USDCFastCompression {
 
         var cursor = 1
         var output: [UInt8] = []
-        output.reserveCapacity(maximumOutputByteCount)
+        output.reserveCapacity(min(
+            maximumOutputByteCount,
+            maximumDecompressedByteCount(forCompressedByteCount: bytes.count)
+        ))
         for _ in 0..<chunkCount {
             guard cursor <= bytes.count - 4 else {
-                throw USDImportError.invalidData("USDC compressed chunk header is truncated.")
+                throw USDError.invalidData("USDC compressed chunk header is truncated.")
             }
             let chunkSize = Int(bytes[cursor])
                 | (Int(bytes[cursor + 1]) << 8)
@@ -1102,7 +1182,7 @@ enum USDCFastCompression {
                 | (Int(bytes[cursor + 3]) << 24)
             cursor += 4
             guard chunkSize >= 0, cursor <= bytes.count - chunkSize else {
-                throw USDImportError.invalidData("USDC compressed chunk is truncated.")
+                throw USDError.invalidData("USDC compressed chunk is truncated.")
             }
             let remainingOutput = maximumOutputByteCount - output.count
             let maximumOutput = min(maximumChunkOutputByteCount, remainingOutput)
@@ -1115,7 +1195,7 @@ enum USDCFastCompression {
             cursor += chunkSize
         }
         guard cursor == bytes.count else {
-            throw USDImportError.invalidData("USDC compressed buffer has trailing bytes.")
+            throw USDError.invalidData("USDC compressed buffer has trailing bytes.")
         }
         return output
     }
@@ -1128,16 +1208,19 @@ private enum USDCLZ4Block {
         maximumOutputByteCount: Int
     ) throws -> [UInt8] {
         guard maximumOutputByteCount >= 0 else {
-            throw USDImportError.invalidData("USDC LZ4 output byte count is invalid.")
+            throw USDError.invalidData("USDC LZ4 output byte count is invalid.")
         }
         guard range.lowerBound >= 0,
               range.upperBound <= bytes.count,
               range.lowerBound <= range.upperBound else {
-            throw USDImportError.invalidData("USDC LZ4 input range is invalid.")
+            throw USDError.invalidData("USDC LZ4 input range is invalid.")
         }
         var cursor = range.lowerBound
         var output: [UInt8] = []
-        output.reserveCapacity(maximumOutputByteCount)
+        output.reserveCapacity(min(
+            maximumOutputByteCount,
+            USDCFastCompression.maximumDecompressedByteCount(forCompressedByteCount: range.count)
+        ))
 
         while cursor < range.upperBound {
             let token = bytes[cursor]
@@ -1150,7 +1233,7 @@ private enum USDCLZ4Block {
                 cursor: &cursor
             )
             guard literalCount <= range.upperBound - cursor else {
-                throw USDImportError.invalidData("USDC LZ4 literal run is truncated.")
+                throw USDError.invalidData("USDC LZ4 literal run is truncated.")
             }
             try append(
                 bytes,
@@ -1163,12 +1246,12 @@ private enum USDCLZ4Block {
                 break
             }
             guard cursor <= range.upperBound - 2 else {
-                throw USDImportError.invalidData("USDC LZ4 match offset is truncated.")
+                throw USDError.invalidData("USDC LZ4 match offset is truncated.")
             }
             let matchOffset = Int(bytes[cursor]) | (Int(bytes[cursor + 1]) << 8)
             cursor += 2
             guard matchOffset > 0, matchOffset <= output.count else {
-                throw USDImportError.invalidData("USDC LZ4 match offset is invalid.")
+                throw USDError.invalidData("USDC LZ4 match offset is invalid.")
             }
             let matchCount = try readLength(
                 initialLength: Int(token & 0x0f),
@@ -1177,10 +1260,14 @@ private enum USDCLZ4Block {
                 cursor: &cursor
             ) + 4
             guard output.count <= maximumOutputByteCount - matchCount else {
-                throw USDImportError.invalidData("USDC LZ4 output exceeds the expected byte count.")
+                throw USDError.invalidData("USDC LZ4 output exceeds the expected byte count.")
             }
-            for _ in 0..<matchCount {
-                output.append(output[output.count - matchOffset])
+            var remaining = matchCount
+            while remaining > 0 {
+                let start = output.count - matchOffset
+                let chunkCount = min(matchOffset, remaining)
+                output.append(contentsOf: output[start..<(start + chunkCount)])
+                remaining -= chunkCount
             }
         }
 
@@ -1197,12 +1284,12 @@ private enum USDCLZ4Block {
         if initialLength == 15 {
             while true {
                 guard cursor < upperBound else {
-                    throw USDImportError.invalidData("USDC LZ4 extended length is truncated.")
+                    throw USDError.invalidData("USDC LZ4 extended length is truncated.")
                 }
                 let value = Int(bytes[cursor])
                 cursor += 1
                 guard length <= Int.max - value else {
-                    throw USDImportError.invalidData("USDC LZ4 extended length exceeds platform range.")
+                    throw USDError.invalidData("USDC LZ4 extended length exceeds platform range.")
                 }
                 length += value
                 if value != 255 {
@@ -1220,10 +1307,8 @@ private enum USDCLZ4Block {
         maximumOutputByteCount: Int
     ) throws {
         guard output.count <= maximumOutputByteCount - range.count else {
-            throw USDImportError.invalidData("USDC LZ4 output exceeds the expected byte count.")
+            throw USDError.invalidData("USDC LZ4 output exceeds the expected byte count.")
         }
-        for index in range {
-            output.append(bytes[index])
-        }
+        output.append(contentsOf: bytes[range])
     }
 }

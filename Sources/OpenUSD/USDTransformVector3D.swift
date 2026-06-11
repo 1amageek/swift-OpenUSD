@@ -1,9 +1,9 @@
-struct USDTransformVector3D: Sendable, Equatable {
-    var x: Double
-    var y: Double
-    var z: Double
+public struct USDTransformVector3D: Sendable, Equatable, Hashable {
+    public var x: Double
+    public var y: Double
+    public var z: Double
 
-    init(x: Double, y: Double, z: Double) {
+    public init(x: Double, y: Double, z: Double) {
         self.x = x
         self.y = y
         self.z = z

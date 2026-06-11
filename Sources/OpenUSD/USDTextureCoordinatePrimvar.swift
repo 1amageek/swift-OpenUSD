@@ -15,11 +15,11 @@ public struct USDTextureCoordinatePrimvar: Sendable, Hashable {
 
     public func validate(pointCount: Int, faceVertexCounts: [Int]) throws {
         guard !values.isEmpty else {
-            throw USDImportError.invalidData("USD primvars:st contains no texture coordinate values.")
+            throw USDError.invalidData("USD primvars:st contains no texture coordinate values.")
         }
         for value in values {
             guard value.x.isFinite, value.y.isFinite else {
-                throw USDImportError.invalidData("USD primvars:st contains a non-finite texture coordinate.")
+                throw USDError.invalidData("USD primvars:st contains a non-finite texture coordinate.")
             }
         }
         try validateUSDPrimvarIndices(indices, valueCount: values.count, name: "primvars:st")

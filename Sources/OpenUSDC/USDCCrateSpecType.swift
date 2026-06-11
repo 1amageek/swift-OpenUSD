@@ -1,4 +1,4 @@
-public enum USDCCrateSpecType: UInt32, Sendable, Equatable, CaseIterable {
+enum USDCCrateSpecType: UInt32, Sendable, Equatable, CaseIterable {
     case unknown = 0
     case attribute = 1
     case connection = 2
@@ -12,7 +12,7 @@ public enum USDCCrateSpecType: UInt32, Sendable, Equatable, CaseIterable {
     case variant = 10
     case variantSet = 11
 
-    public var isConcrete: Bool {
+    var isConcrete: Bool {
         self != .unknown
     }
 }

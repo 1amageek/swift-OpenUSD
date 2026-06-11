@@ -13,20 +13,27 @@ enum USDCPointTimeSampleResolution {
 }
 
 struct USDCCrateValueDecoder {
+    /// Maximum nesting depth for recursive value encodings (dictionaries and
+    /// reference list operations). Hostile files can otherwise encode cycles
+    /// that recurse without bound.
+    static let maximumValueRecursionDepth = 64
+
     private let crate: USDCCrateFile
     private let tokens: [String]
     private let strings: [String]
+    private let paths: [String]
 
-    init(crate: USDCCrateFile, tokens: [String], strings: [String]) {
+    init(crate: USDCCrateFile, tokens: [String], strings: [String], paths: [String]) {
         self.crate = crate
         self.tokens = tokens
         self.strings = strings
+        self.paths = paths
     }
 
     func readStringLike(_ valueRep: USDCCrateValueRep) throws -> String {
         let value = try readValue(valueRep)
         guard let string = value.stringValue else {
-            throw USDImportError.invalidData("USDC value is not a string-like value.")
+            throw USDError.invalidData("USDC value is not a string-like value.")
         }
         return string
     }
@@ -34,7 +41,7 @@ struct USDCCrateValueDecoder {
     func readDouble(_ valueRep: USDCCrateValueRep) throws -> Double {
         let value = try readValue(valueRep)
         guard let double = value.doubleValue else {
-            throw USDImportError.invalidData("USDC value is not a double value.")
+            throw USDError.invalidData("USDC value is not a double value.")
         }
         return double
     }
@@ -42,7 +49,7 @@ struct USDCCrateValueDecoder {
     func readDoubleArray(_ valueRep: USDCCrateValueRep) throws -> [Double] {
         let value = try readValue(valueRep)
         guard let array = value.doubleArrayValue else {
-            throw USDImportError.invalidData("USDC value is not a double array.")
+            throw USDError.invalidData("USDC value is not a double array.")
         }
         return array
     }
@@ -50,14 +57,21 @@ struct USDCCrateValueDecoder {
     func readTokenArray(_ valueRep: USDCCrateValueRep) throws -> [String] {
         let value = try readValue(valueRep)
         guard let array = value.tokenArrayValue else {
-            throw USDImportError.invalidData("USDC value is not a token array.")
+            throw USDError.invalidData("USDC value is not a token array.")
         }
         return array
     }
 
-    func readLayerFieldValue(_ valueRep: USDCCrateValueRep) throws -> USDCLayerFieldValue? {
+    func readLayerFieldValue(_ valueRep: USDCCrateValueRep) throws -> USDCLayerFieldValue {
+        try readLayerFieldValue(valueRep, depth: 0)
+    }
+
+    private func readLayerFieldValue(_ valueRep: USDCCrateValueRep, depth: Int) throws -> USDCLayerFieldValue {
+        guard depth <= Self.maximumValueRecursionDepth else {
+            throw USDError.invalidData("USDC value nesting exceeds the maximum supported depth.")
+        }
         guard let type = valueRep.type else {
-            throw USDImportError.invalidData("USDC value has an unknown value type.")
+            return unmaterializedLayerFieldValue(valueRep, type: nil)
         }
         switch type {
         case .bool:
@@ -99,7 +113,7 @@ struct USDCCrateValueDecoder {
         case .assetPath:
             return .assetPath(try readAssetPath(valueRep))
         case .dictionary:
-            return .dictionary(try readDictionaryValue(valueRep))
+            return .dictionary(try readDictionaryValue(valueRep, depth: depth))
         case .pathVector:
             return .pathVector(try readPathVectorValue(valueRep))
         case .variantSelectionMap:
@@ -111,7 +125,7 @@ struct USDCCrateValueDecoder {
         case .pathListOperation:
             return .pathListOperation(try readPathListOperation(valueRep))
         case .referenceListOperation:
-            return .referenceListOperation(try readReferenceListOperation(valueRep))
+            return .referenceListOperation(try readReferenceListOperation(valueRep, depth: depth))
         case .payloadListOperation:
             return .payloadListOperation(try readPayloadListOperation(valueRep))
         case .payload:
@@ -150,9 +164,9 @@ struct USDCCrateValueDecoder {
             return .point2(try readVec2fScalar(valueRep))
         case .specifier:
             guard valueRep.isInlined, !valueRep.isArray else {
-                throw USDImportError.invalidData("USDC specifier field is malformed.")
+                throw USDError.invalidData("USDC specifier field is malformed.")
             }
-            return .specifier(USDCPrimSpecifier(payload: valueRep.payload))
+            return .specifier(USDCPrimSpecifier(payload: valueRep.payload).layerSpecifier)
         case .permission:
             return .permission(try readPermission(valueRep))
         case .variability:
@@ -160,14 +174,29 @@ struct USDCCrateValueDecoder {
         case .layerOffsetVector:
             return .layerOffsetVector(try readLayerOffsetVectorValue(valueRep))
         default:
-            return nil
+            return unmaterializedLayerFieldValue(valueRep, type: type)
         }
+    }
+
+    private func unmaterializedLayerFieldValue(
+        _ valueRep: USDCCrateValueRep,
+        type: USDCCrateValueType?
+    ) -> USDCLayerFieldValue {
+        .unmaterializedValue(USDCUnmaterializedValue(
+            typeName: type.map { String(describing: $0) } ?? "unknown(\(valueRep.rawType))",
+            rawType: valueRep.rawType,
+            payload: valueRep.payload,
+            isArray: valueRep.isArray,
+            isInlined: valueRep.isInlined,
+            isCompressed: valueRep.isCompressed,
+            isArrayEdit: valueRep.isArrayEdit
+        ))
     }
 
     func readVector3(_ valueRep: USDCCrateValueRep) throws -> USDCVector3D {
         let value = try readValue(valueRep)
         guard let vector = value.vector3Value else {
-            throw USDImportError.invalidData("USDC value is not a vector3 value.")
+            throw USDError.invalidData("USDC value is not a vector3 value.")
         }
         return vector
     }
@@ -175,7 +204,7 @@ struct USDCCrateValueDecoder {
     func readQuaternion(_ valueRep: USDCCrateValueRep) throws -> USDCQuaternion {
         let value = try readValue(valueRep)
         guard let quaternion = value.quaternionValue else {
-            throw USDImportError.invalidData("USDC value is not a quaternion value.")
+            throw USDError.invalidData("USDC value is not a quaternion value.")
         }
         return quaternion
     }
@@ -183,7 +212,7 @@ struct USDCCrateValueDecoder {
     func readMatrix4x4(_ valueRep: USDCCrateValueRep) throws -> USDCMatrix4x4 {
         let value = try readValue(valueRep)
         guard let matrix = value.matrix4x4Value else {
-            throw USDImportError.invalidData("USDC value is not a matrix4d value.")
+            throw USDError.invalidData("USDC value is not a matrix4d value.")
         }
         return matrix
     }
@@ -203,17 +232,19 @@ struct USDCCrateValueDecoder {
             if sample.timeCode == timeCode {
                 return sample.valueRep
             }
-            guard sample.valueRep != nil else {
-                continue
-            }
             if sample.timeCode < timeCode {
                 lowerSample = sample
-            } else if sample.timeCode > timeCode {
+            } else {
                 upperSample = sample
                 break
             }
         }
-        return lowerSample?.valueRep ?? upperSample?.valueRep
+        // Held semantics: the sample at the greatest time at or below the
+        // requested time is authoritative, including blocked samples.
+        if let lowerSample {
+            return lowerSample.valueRep
+        }
+        return upperSample?.valueRep
     }
 
     func readPointTimeSampleArray(
@@ -237,28 +268,44 @@ struct USDCCrateValueDecoder {
                 }
                 return .value(try readPointArray(valueRep))
             }
-            guard sample.valueRep != nil else {
-                continue
-            }
             if sample.timeCode < timeCode {
                 lowerSample = sample
-            } else if sample.timeCode > timeCode {
+            } else {
                 upperSample = sample
                 break
             }
         }
         switch interpolation {
         case .held:
-            guard let sampleRep = lowerSample?.valueRep ?? upperSample?.valueRep else {
+            // Held semantics: the sample at the greatest time at or below the
+            // requested time is authoritative, including blocked samples.
+            if let lowerSample {
+                guard let lowerRep = lowerSample.valueRep else {
+                    return .blocked
+                }
+                return .value(try readPointArray(lowerRep))
+            }
+            guard let upperSample else {
                 return .unresolved
             }
-            return .value(try readPointArray(sampleRep))
+            guard let upperRep = upperSample.valueRep else {
+                return .blocked
+            }
+            return .value(try readPointArray(upperRep))
         case .linear:
-            guard let lowerSample, let lowerRep = lowerSample.valueRep else {
-                guard let upperRep = upperSample?.valueRep else {
+            guard let lowerSample else {
+                guard let upperSample else {
                     return .unresolved
                 }
+                guard let upperRep = upperSample.valueRep else {
+                    return .blocked
+                }
                 return .value(try readPointArray(upperRep))
+            }
+            // A blocked lower bracketing sample blocks the interval up to the
+            // next authored sample.
+            guard let lowerRep = lowerSample.valueRep else {
+                return .blocked
             }
             guard let upperSample, let upperRep = upperSample.valueRep else {
                 return .value(try readPointArray(lowerRep))
@@ -288,10 +335,10 @@ struct USDCCrateValueDecoder {
         at timeCode: Double?
     ) throws -> [USDCTimeSampleValueRep] {
         guard valueRep.type == .timeSamples, !valueRep.isArray, !valueRep.isInlined else {
-            throw USDImportError.invalidData("USDC timeSamples field is malformed.")
+            throw USDError.invalidData("USDC timeSamples field is malformed.")
         }
         if let timeCode, !timeCode.isFinite {
-            throw USDImportError.invalidData("USDC timeSamples requested timeCode must be finite.")
+            throw USDError.invalidData("USDC timeSamples requested timeCode must be finite.")
         }
         var cursor = try payloadOffset(valueRep, label: "timeSamples")
         cursor = try recursivePayloadEnd(start: cursor, label: "USDC timeSamples times")
@@ -304,12 +351,20 @@ struct USDCCrateValueDecoder {
         )
         cursor += MemoryLayout<UInt64>.size
         guard valueCount > 0 else {
-            throw USDImportError.invalidData("USDC timeSamples contains no values.")
+            throw USDError.invalidData("USDC timeSamples contains no values.")
         }
         let times = try readDoubleVectorValues(timesRep)
         guard times.count == valueCount else {
-            throw USDImportError.invalidData("USDC timeSamples times and values have different counts.")
+            throw USDError.invalidData("USDC timeSamples times and values have different counts.")
         }
+        try crate.validateFileRange(
+            at: cursor,
+            byteCount: try checkedMultiplication(
+                valueCount,
+                MemoryLayout<UInt64>.size,
+                label: "USDC timeSamples value reps byte count"
+            )
+        )
         var samples: [USDCTimeSampleValueRep] = []
         samples.reserveCapacity(valueCount)
         for index in 0..<valueCount {
@@ -341,7 +396,7 @@ struct USDCCrateValueDecoder {
     func readIntArray(_ valueRep: USDCCrateValueRep) throws -> [Int] {
         let value = try readValue(valueRep)
         guard let array = value.intArrayValue else {
-            throw USDImportError.invalidData("USDC value is not an int array.")
+            throw USDError.invalidData("USDC value is not an int array.")
         }
         return array
     }
@@ -349,7 +404,7 @@ struct USDCCrateValueDecoder {
     func readPointArray(_ valueRep: USDCCrateValueRep) throws -> [USDPoint3D] {
         let value = try readValue(valueRep)
         guard let array = value.pointArrayValue else {
-            throw USDImportError.invalidData("USDC value is not a point array.")
+            throw USDError.invalidData("USDC value is not a point array.")
         }
         return array
     }
@@ -357,14 +412,14 @@ struct USDCCrateValueDecoder {
     func readPoint2Array(_ valueRep: USDCCrateValueRep) throws -> [USDPoint2D] {
         let value = try readValue(valueRep)
         guard let array = value.point2ArrayValue else {
-            throw USDImportError.invalidData("USDC value is not a point2 array.")
+            throw USDError.invalidData("USDC value is not a point2 array.")
         }
         return array
     }
 
     private func readValue(_ valueRep: USDCCrateValueRep) throws -> USDCCrateValue {
         guard let type = valueRep.type else {
-            throw USDImportError.invalidData("USDC value has an unknown value type.")
+            throw USDError.invalidData("USDC value has an unknown value type.")
         }
         switch type {
         case .bool:
@@ -406,7 +461,7 @@ struct USDCCrateValueDecoder {
         case .assetPath:
             return .assetPath(try readAssetPath(valueRep))
         case .dictionary:
-            return .dictionary(try readDictionaryValue(valueRep))
+            return .dictionary(try readDictionaryValue(valueRep, depth: 0))
         case .pathVector:
             return .pathVector(try readPathVectorValue(valueRep))
         case .variantSelectionMap:
@@ -418,7 +473,7 @@ struct USDCCrateValueDecoder {
         case .pathListOperation:
             return .pathListOperation(try readPathListOperation(valueRep))
         case .referenceListOperation:
-            return .referenceListOperation(try readReferenceListOperation(valueRep))
+            return .referenceListOperation(try readReferenceListOperation(valueRep, depth: 0))
         case .payloadListOperation:
             return .payloadListOperation(try readPayloadListOperation(valueRep))
         case .payload:
@@ -447,16 +502,16 @@ struct USDCCrateValueDecoder {
             return .timeCode(try readTimeCodeScalar(valueRep))
         case .quatd:
             guard !valueRep.isArray else {
-                throw USDImportError.unsupportedFeature("USDC quatd arrays are not materialized yet.")
+                throw USDError.unsupportedFeature("USDC quatd arrays are not materialized yet.")
             }
             return .quaternion(try readQuatdScalar(valueRep))
         case .quatf:
             guard !valueRep.isArray else {
-                throw USDImportError.unsupportedFeature("USDC quatf arrays are not materialized yet.")
+                throw USDError.unsupportedFeature("USDC quatf arrays are not materialized yet.")
             }
             return .quaternion(try readQuatfScalar(valueRep))
         case .quath:
-            throw USDImportError.unsupportedFeature("USDC quath values are not materialized yet.")
+            throw USDError.unsupportedFeature("USDC quath values are not materialized yet.")
         case .vec3d:
             if valueRep.isArray {
                 return .pointArray(try readVec3dArrayValue(valueRep))
@@ -479,7 +534,7 @@ struct USDCCrateValueDecoder {
             return .point2(try readVec2fScalar(valueRep))
         case .matrix4d:
             guard !valueRep.isArray else {
-                throw USDImportError.unsupportedFeature("USDC matrix4d arrays are not materialized yet.")
+                throw USDError.unsupportedFeature("USDC matrix4d arrays are not materialized yet.")
             }
             return .matrix4x4(try readMatrix4dScalar(valueRep))
         case .permission:
@@ -489,14 +544,14 @@ struct USDCCrateValueDecoder {
         case .layerOffsetVector:
             return .layerOffsetVector(try readLayerOffsetVectorValue(valueRep))
         default:
-            throw USDImportError.unsupportedFeature("USDC value type \(type) is not materialized yet.")
+            throw USDError.unsupportedFeature("USDC value type \(type) is not materialized yet.")
         }
     }
 
     private func readToken(_ valueRep: USDCCrateValueRep) throws -> String {
         let tokenIndex = try readIndexPayload(valueRep, sectionName: "TOKENS")
         guard tokenIndex < tokens.count else {
-            throw USDImportError.invalidData("USDC token value references a token outside TOKENS.")
+            throw USDError.invalidData("USDC token value references a token outside TOKENS.")
         }
         return tokens[tokenIndex]
     }
@@ -504,14 +559,14 @@ struct USDCCrateValueDecoder {
     private func readString(_ valueRep: USDCCrateValueRep) throws -> String {
         let stringIndex = try readIndexPayload(valueRep, sectionName: "STRINGS")
         guard stringIndex < strings.count else {
-            throw USDImportError.invalidData("USDC string value references a string outside STRINGS.")
+            throw USDError.invalidData("USDC string value references a string outside STRINGS.")
         }
         return strings[stringIndex]
     }
 
     private func readAssetPath(_ valueRep: USDCCrateValueRep) throws -> String {
         guard !valueRep.isArray else {
-            throw USDImportError.invalidData("USDC assetPath value is marked as an array.")
+            throw USDError.invalidData("USDC assetPath value is marked as an array.")
         }
         if valueRep.isInlined {
             let tokenIndex = try checkedInt(
@@ -519,13 +574,13 @@ struct USDCCrateValueDecoder {
                 label: "USDC assetPath token index"
             )
             guard tokenIndex < tokens.count else {
-                throw USDImportError.invalidData("USDC assetPath value references a token outside TOKENS.")
+                throw USDError.invalidData("USDC assetPath value references a token outside TOKENS.")
             }
             return tokens[tokenIndex]
         }
         let stringIndex = try readIndexPayload(valueRep, sectionName: "STRINGS")
         guard stringIndex < strings.count else {
-            throw USDImportError.invalidData("USDC assetPath value references a string outside STRINGS.")
+            throw USDError.invalidData("USDC assetPath value references a string outside STRINGS.")
         }
         return strings[stringIndex]
     }
@@ -538,14 +593,14 @@ struct USDCCrateValueDecoder {
             rawIndex = try crate.readFileUInt32(at: try payloadOffset(valueRep, label: sectionName))
         }
         guard let index = Int(exactly: rawIndex) else {
-            throw USDImportError.invalidData("USDC \(sectionName) value index exceeds platform range.")
+            throw USDError.invalidData("USDC \(sectionName) value index exceeds platform range.")
         }
         return index
     }
 
     private func readBoolScalar(_ valueRep: USDCCrateValueRep) throws -> Bool {
         guard !valueRep.isArray else {
-            throw USDImportError.invalidData("USDC bool value is marked as an array.")
+            throw USDError.invalidData("USDC bool value is marked as an array.")
         }
         if valueRep.isInlined {
             return valueRep.payload & 1 != 0
@@ -559,7 +614,7 @@ struct USDCCrateValueDecoder {
 
     private func readUInt8Scalar(_ valueRep: USDCCrateValueRep) throws -> Int {
         guard !valueRep.isArray else {
-            throw USDImportError.invalidData("USDC uchar value is marked as an array.")
+            throw USDError.invalidData("USDC uchar value is marked as an array.")
         }
         if valueRep.isInlined {
             return Int(valueRep.payload & UInt64(UInt8.max))
@@ -573,7 +628,7 @@ struct USDCCrateValueDecoder {
 
     private func readUInt32Scalar(_ valueRep: USDCCrateValueRep) throws -> Int {
         guard !valueRep.isArray else {
-            throw USDImportError.invalidData("USDC uint value is marked as an array.")
+            throw USDError.invalidData("USDC uint value is marked as an array.")
         }
         let value: UInt32
         if valueRep.isInlined {
@@ -586,10 +641,10 @@ struct USDCCrateValueDecoder {
 
     private func readInt64Scalar(_ valueRep: USDCCrateValueRep) throws -> Int {
         guard !valueRep.isArray else {
-            throw USDImportError.invalidData("USDC int64 value is marked as an array.")
+            throw USDError.invalidData("USDC int64 value is marked as an array.")
         }
         guard !valueRep.isInlined else {
-            throw USDImportError.invalidData("USDC int64 value is unexpectedly inlined.")
+            throw USDError.invalidData("USDC int64 value is unexpectedly inlined.")
         }
         let rawValue = try crate.readFileUInt64(at: try payloadOffset(valueRep, label: "int64"))
         return try intValue(Int64(bitPattern: rawValue), label: "USDC int64 value")
@@ -597,38 +652,38 @@ struct USDCCrateValueDecoder {
 
     private func readUInt64Scalar(_ valueRep: USDCCrateValueRep) throws -> Int {
         guard !valueRep.isArray else {
-            throw USDImportError.invalidData("USDC uint64 value is marked as an array.")
+            throw USDError.invalidData("USDC uint64 value is marked as an array.")
         }
         guard !valueRep.isInlined else {
-            throw USDImportError.invalidData("USDC uint64 value is unexpectedly inlined.")
+            throw USDError.invalidData("USDC uint64 value is unexpectedly inlined.")
         }
         let value = try crate.readFileUInt64(at: try payloadOffset(valueRep, label: "uint64"))
         return try intValue(value, label: "USDC uint64 value")
     }
 
-    private func readPermission(_ valueRep: USDCCrateValueRep) throws -> USDPermission {
+    private func readPermission(_ valueRep: USDCCrateValueRep) throws -> SdfPermission {
         let rawValue = try readUInt32ScalarPayload(valueRep, label: "permission")
-        guard let permission = USDPermission(rawValue: rawValue) else {
-            throw USDImportError.invalidData("Unsupported USDC permission \(rawValue).")
+        guard let permission = SdfPermission(rawValue: rawValue) else {
+            throw USDError.invalidData("Unsupported USDC permission \(rawValue).")
         }
         return permission
     }
 
-    private func readVariability(_ valueRep: USDCCrateValueRep) throws -> USDVariability {
+    private func readVariability(_ valueRep: USDCCrateValueRep) throws -> SdfVariability {
         let rawValue = try readUInt32ScalarPayload(valueRep, label: "variability")
-        let normalizedRawValue = rawValue == 2 ? USDVariability.uniform.rawValue : rawValue
-        guard let variability = USDVariability(rawValue: normalizedRawValue) else {
-            throw USDImportError.invalidData("Unsupported USDC variability \(rawValue).")
+        let normalizedRawValue = rawValue == 2 ? SdfVariability.uniform.rawValue : rawValue
+        guard let variability = SdfVariability(rawValue: normalizedRawValue) else {
+            throw USDError.invalidData("Unsupported USDC variability \(rawValue).")
         }
         return variability
     }
 
     private func readUInt32ScalarPayload(_ valueRep: USDCCrateValueRep, label: String) throws -> UInt32 {
         guard !valueRep.isArray else {
-            throw USDImportError.invalidData("USDC \(label) value is marked as an array.")
+            throw USDError.invalidData("USDC \(label) value is marked as an array.")
         }
         guard !valueRep.isCompressed else {
-            throw USDImportError.invalidData("USDC \(label) value is marked compressed.")
+            throw USDError.invalidData("USDC \(label) value is marked compressed.")
         }
         if valueRep.isInlined {
             return UInt32(valueRep.payload & UInt64(UInt32.max))
@@ -638,7 +693,7 @@ struct USDCCrateValueDecoder {
 
     private func readTokenArrayValue(_ valueRep: USDCCrateValueRep) throws -> [String] {
         guard valueRep.isArray else {
-            throw USDImportError.invalidData("USDC token array value is missing the array bit.")
+            throw USDError.invalidData("USDC token array value is missing the array bit.")
         }
         guard valueRep.payload != 0 else {
             return []
@@ -660,7 +715,7 @@ struct USDCCrateValueDecoder {
                 let tokenIndex = try reader.readUInt32LittleEndian(at: byteCursor)
                 byteCursor += MemoryLayout<UInt32>.size
                 guard tokenIndex < UInt32(tokens.count) else {
-                    throw USDImportError.invalidData("USDC token array references a token outside TOKENS.")
+                    throw USDError.invalidData("USDC token array references a token outside TOKENS.")
                 }
                 values.append(tokens[Int(tokenIndex)])
             }
@@ -670,17 +725,21 @@ struct USDCCrateValueDecoder {
 
     private func readTokenVectorValue(_ valueRep: USDCCrateValueRep) throws -> [String] {
         guard valueRep.type == .tokenVector, !valueRep.isArray else {
-            throw USDImportError.invalidData("USDC token vector value is malformed.")
+            throw USDError.invalidData("USDC token vector value is malformed.")
         }
         guard !valueRep.isInlined, !valueRep.isCompressed else {
-            throw USDImportError.invalidData("USDC token vector value has unsupported representation bits.")
+            throw USDError.invalidData("USDC token vector value has unsupported representation bits.")
         }
         guard valueRep.payload != 0 else {
-            throw USDImportError.invalidData("USDC token vector payload offset is missing.")
+            throw USDError.invalidData("USDC token vector payload offset is missing.")
         }
         var cursor = try payloadOffset(valueRep, label: "token vector")
         let count = try checkedInt(try crate.readFileUInt64(at: cursor), label: "USDC token vector count")
         cursor += MemoryLayout<UInt64>.size
+        try crate.validateFileRange(
+            at: cursor,
+            byteCount: try checkedMultiplication(count, MemoryLayout<UInt32>.size, label: "USDC token vector byte count")
+        )
         var values: [String] = []
         values.reserveCapacity(count)
         for _ in 0..<count {
@@ -690,7 +749,7 @@ struct USDCCrateValueDecoder {
             )
             cursor += MemoryLayout<UInt32>.size
             guard tokenIndex < tokens.count else {
-                throw USDImportError.invalidData("USDC token vector references a token outside TOKENS.")
+                throw USDError.invalidData("USDC token vector references a token outside TOKENS.")
             }
             values.append(tokens[tokenIndex])
         }
@@ -699,17 +758,21 @@ struct USDCCrateValueDecoder {
 
     private func readStringVectorValue(_ valueRep: USDCCrateValueRep) throws -> [String] {
         guard valueRep.type == .stringVector, !valueRep.isArray else {
-            throw USDImportError.invalidData("USDC string vector value is malformed.")
+            throw USDError.invalidData("USDC string vector value is malformed.")
         }
         guard !valueRep.isInlined, !valueRep.isCompressed else {
-            throw USDImportError.invalidData("USDC string vector value has unsupported representation bits.")
+            throw USDError.invalidData("USDC string vector value has unsupported representation bits.")
         }
         guard valueRep.payload != 0 else {
-            throw USDImportError.invalidData("USDC string vector payload offset is missing.")
+            throw USDError.invalidData("USDC string vector payload offset is missing.")
         }
         var cursor = try payloadOffset(valueRep, label: "string vector")
         let count = try checkedInt(try crate.readFileUInt64(at: cursor), label: "USDC string vector count")
         cursor += MemoryLayout<UInt64>.size
+        try crate.validateFileRange(
+            at: cursor,
+            byteCount: try checkedMultiplication(count, MemoryLayout<UInt32>.size, label: "USDC string vector byte count")
+        )
         var values: [String] = []
         values.reserveCapacity(count)
         for _ in 0..<count {
@@ -720,18 +783,21 @@ struct USDCCrateValueDecoder {
 
     private func readPathVectorValue(_ valueRep: USDCCrateValueRep) throws -> [String] {
         guard valueRep.type == .pathVector, !valueRep.isArray else {
-            throw USDImportError.invalidData("USDC path vector value is malformed.")
+            throw USDError.invalidData("USDC path vector value is malformed.")
         }
         guard !valueRep.isInlined, !valueRep.isCompressed else {
-            throw USDImportError.invalidData("USDC path vector value has unsupported representation bits.")
+            throw USDError.invalidData("USDC path vector value has unsupported representation bits.")
         }
         guard valueRep.payload != 0 else {
-            throw USDImportError.invalidData("USDC path vector payload offset is missing.")
+            throw USDError.invalidData("USDC path vector payload offset is missing.")
         }
-        let paths = try crate.readPaths()
         var cursor = try payloadOffset(valueRep, label: "path vector")
         let count = try checkedInt(try crate.readFileUInt64(at: cursor), label: "USDC path vector count")
         cursor += MemoryLayout<UInt64>.size
+        try crate.validateFileRange(
+            at: cursor,
+            byteCount: try checkedMultiplication(count, MemoryLayout<UInt32>.size, label: "USDC path vector byte count")
+        )
         var values: [String] = []
         values.reserveCapacity(count)
         for _ in 0..<count {
@@ -741,7 +807,7 @@ struct USDCCrateValueDecoder {
             )
             cursor += MemoryLayout<UInt32>.size
             guard pathIndex < paths.count else {
-                throw USDImportError.invalidData("USDC path vector references a path outside PATHS.")
+                throw USDError.invalidData("USDC path vector references a path outside PATHS.")
             }
             values.append(paths[pathIndex])
         }
@@ -750,24 +816,32 @@ struct USDCCrateValueDecoder {
 
     private func readVariantSelectionMapValue(_ valueRep: USDCCrateValueRep) throws -> [String: String] {
         guard valueRep.type == .variantSelectionMap, !valueRep.isArray else {
-            throw USDImportError.invalidData("USDC variant selection map value is malformed.")
+            throw USDError.invalidData("USDC variant selection map value is malformed.")
         }
         guard !valueRep.isInlined, !valueRep.isCompressed else {
-            throw USDImportError.invalidData("USDC variant selection map value has unsupported representation bits.")
+            throw USDError.invalidData("USDC variant selection map value has unsupported representation bits.")
         }
         guard valueRep.payload != 0 else {
-            throw USDImportError.invalidData("USDC variant selection map payload offset is missing.")
+            throw USDError.invalidData("USDC variant selection map payload offset is missing.")
         }
         var cursor = try payloadOffset(valueRep, label: "variant selection map")
         let count = try checkedInt(try crate.readFileUInt64(at: cursor), label: "USDC variant selection map count")
         cursor += MemoryLayout<UInt64>.size
+        try crate.validateFileRange(
+            at: cursor,
+            byteCount: try checkedMultiplication(
+                count,
+                2 * MemoryLayout<UInt32>.size,
+                label: "USDC variant selection map byte count"
+            )
+        )
         var map: [String: String] = [:]
         map.reserveCapacity(count)
         for _ in 0..<count {
             let key = try readStringIndex(cursor: &cursor, label: "USDC variant selection map key")
             let value = try readStringIndex(cursor: &cursor, label: "USDC variant selection map value")
             guard map.updateValue(value, forKey: key) == nil else {
-                throw USDImportError.invalidData("USDC variant selection map contains duplicate key '\(key)'.")
+                throw USDError.invalidData("USDC variant selection map contains duplicate key '\(key)'.")
             }
         }
         return map
@@ -794,8 +868,7 @@ struct USDCCrateValueDecoder {
     }
 
     private func readPathListOperation(_ valueRep: USDCCrateValueRep) throws -> USDCListOperation<String> {
-        let paths = try crate.readPaths()
-        return try readIndexedStringListOperation(
+        try readIndexedStringListOperation(
             valueRep,
             expectedType: .pathListOperation,
             label: "path list operation",
@@ -804,44 +877,67 @@ struct USDCCrateValueDecoder {
         )
     }
 
-    private func readReferenceListOperation(_ valueRep: USDCCrateValueRep) throws -> USDCListOperation<USDCReference> {
-        try readListOperation(valueRep, expectedType: .referenceListOperation, label: "reference list operation") { cursor in
-            try readReference(cursor: &cursor)
+    private func readReferenceListOperation(
+        _ valueRep: USDCCrateValueRep,
+        depth: Int
+    ) throws -> USDCListOperation<USDCReference> {
+        // Asset path index, prim path index, layer offset, and custom data count.
+        let minimumItemByteCount = 2 * MemoryLayout<UInt32>.size + 3 * MemoryLayout<UInt64>.size
+        return try readListOperation(
+            valueRep,
+            expectedType: .referenceListOperation,
+            label: "reference list operation",
+            minimumItemByteCount: minimumItemByteCount
+        ) { cursor in
+            try readReference(cursor: &cursor, depth: depth)
         }
     }
 
     private func readPayloadListOperation(_ valueRep: USDCCrateValueRep) throws -> USDCListOperation<USDCPayload> {
-        try readListOperation(valueRep, expectedType: .payloadListOperation, label: "payload list operation") { cursor in
+        let minimumItemByteCount: Int
+        if crate.version >= USDCCrateVersion(major: 0, minor: 8, patch: 0) {
+            // Asset path index, prim path index, and layer offset.
+            minimumItemByteCount = 2 * MemoryLayout<UInt32>.size + 2 * MemoryLayout<UInt64>.size
+        } else {
+            // Asset path index and prim path index.
+            minimumItemByteCount = 2 * MemoryLayout<UInt32>.size
+        }
+        return try readListOperation(
+            valueRep,
+            expectedType: .payloadListOperation,
+            label: "payload list operation",
+            minimumItemByteCount: minimumItemByteCount
+        ) { cursor in
             try readPayload(cursor: &cursor)
         }
     }
 
     private func readPayloadValue(_ valueRep: USDCCrateValueRep) throws -> USDCPayload {
         guard valueRep.type == .payload, !valueRep.isArray else {
-            throw USDImportError.invalidData("USDC payload value is malformed.")
+            throw USDError.invalidData("USDC payload value is malformed.")
         }
         guard !valueRep.isInlined, !valueRep.isCompressed else {
-            throw USDImportError.invalidData("USDC payload value has unsupported representation bits.")
+            throw USDError.invalidData("USDC payload value has unsupported representation bits.")
         }
         guard valueRep.payload != 0 else {
-            throw USDImportError.invalidData("USDC payload value offset is missing.")
+            throw USDError.invalidData("USDC payload value offset is missing.")
         }
         var cursor = try payloadOffset(valueRep, label: "payload")
         return try readPayload(cursor: &cursor)
     }
 
-    private func readReference(cursor: inout Int) throws -> USDCReference {
+    private func readReference(cursor: inout Int, depth: Int) throws -> USDCReference {
         let assetPath = try readStringIndex(cursor: &cursor, label: "USDC reference asset path")
         let primPath = try readPathIndex(cursor: &cursor, label: "USDC reference prim path")
         let layerOffset = try readLayerOffset(cursor: &cursor, label: "USDC reference layer offset")
-        let customData = try readDictionary(cursor: &cursor, label: "USDC reference custom data")
+        let customData = try readDictionary(cursor: &cursor, label: "USDC reference custom data", depth: depth)
         return USDCReference(assetPath: assetPath, primPath: primPath, layerOffset: layerOffset, customData: customData)
     }
 
     private func readPayload(cursor: inout Int) throws -> USDCPayload {
         let assetPath = try readStringIndex(cursor: &cursor, label: "USDC payload asset path")
         let primPath = try readPathIndex(cursor: &cursor, label: "USDC payload prim path")
-        let layerOffset: USDLayerOffset
+        let layerOffset: SdfLayerOffset
         if crate.version >= USDCCrateVersion(major: 0, minor: 8, patch: 0) {
             layerOffset = try readLayerOffset(cursor: &cursor, label: "USDC payload layer offset")
         } else {
@@ -854,41 +950,48 @@ struct USDCCrateValueDecoder {
         let stringIndex = try checkedInt(UInt64(try crate.readFileUInt32(at: cursor)), label: "\(label) string index")
         cursor += MemoryLayout<UInt32>.size
         guard stringIndex < strings.count else {
-            throw USDImportError.invalidData("\(label) references a string outside STRINGS.")
+            throw USDError.invalidData("\(label) references a string outside STRINGS.")
         }
         return strings[stringIndex]
     }
 
     private func readPathIndex(cursor: inout Int, label: String) throws -> String {
-        let paths = try crate.readPaths()
         let pathIndex = try checkedInt(UInt64(try crate.readFileUInt32(at: cursor)), label: "\(label) path index")
         cursor += MemoryLayout<UInt32>.size
         guard pathIndex < paths.count else {
-            throw USDImportError.invalidData("\(label) references a path outside PATHS.")
+            throw USDError.invalidData("\(label) references a path outside PATHS.")
         }
         return paths[pathIndex]
     }
 
-    private func readLayerOffset(cursor: inout Int, label: String) throws -> USDLayerOffset {
+    private func readLayerOffset(cursor: inout Int, label: String) throws -> SdfLayerOffset {
         let offset = try readFloat64(cursor: &cursor, label: "\(label) offset")
         let scale = try readFloat64(cursor: &cursor, label: "\(label) scale")
-        return USDLayerOffset(offset: offset, scale: scale)
+        return SdfLayerOffset(offset: offset, scale: scale)
     }
 
-    private func readLayerOffsetVectorValue(_ valueRep: USDCCrateValueRep) throws -> [USDLayerOffset] {
+    private func readLayerOffsetVectorValue(_ valueRep: USDCCrateValueRep) throws -> [SdfLayerOffset] {
         guard valueRep.type == .layerOffsetVector, !valueRep.isArray else {
-            throw USDImportError.invalidData("USDC layer offset vector value is malformed.")
+            throw USDError.invalidData("USDC layer offset vector value is malformed.")
         }
         guard !valueRep.isInlined, !valueRep.isCompressed else {
-            throw USDImportError.invalidData("USDC layer offset vector value has unsupported representation bits.")
+            throw USDError.invalidData("USDC layer offset vector value has unsupported representation bits.")
         }
         guard valueRep.payload != 0 else {
-            throw USDImportError.invalidData("USDC layer offset vector payload offset is missing.")
+            throw USDError.invalidData("USDC layer offset vector payload offset is missing.")
         }
         var cursor = try payloadOffset(valueRep, label: "layer offset vector")
         let count = try checkedInt(try crate.readFileUInt64(at: cursor), label: "USDC layer offset vector count")
         cursor += MemoryLayout<UInt64>.size
-        var values: [USDLayerOffset] = []
+        try crate.validateFileRange(
+            at: cursor,
+            byteCount: try checkedMultiplication(
+                count,
+                2 * MemoryLayout<UInt64>.size,
+                label: "USDC layer offset vector byte count"
+            )
+        )
+        var values: [SdfLayerOffset] = []
         values.reserveCapacity(count)
         for _ in 0..<count {
             values.append(try readLayerOffset(cursor: &cursor, label: "USDC layer offset vector item"))
@@ -896,16 +999,19 @@ struct USDCCrateValueDecoder {
         return values
     }
 
-    private func readDictionaryValue(_ valueRep: USDCCrateValueRep) throws -> [String: USDCLayerFieldValue] {
+    private func readDictionaryValue(
+        _ valueRep: USDCCrateValueRep,
+        depth: Int
+    ) throws -> [String: USDCLayerFieldValue] {
         guard valueRep.type == .dictionary, !valueRep.isArray else {
-            throw USDImportError.invalidData("USDC dictionary value is malformed.")
+            throw USDError.invalidData("USDC dictionary value is malformed.")
         }
         guard !valueRep.isCompressed else {
-            throw USDImportError.invalidData("USDC dictionary value has unsupported representation bits.")
+            throw USDError.invalidData("USDC dictionary value has unsupported representation bits.")
         }
         if valueRep.isInlined {
             guard valueRep.payload == 0 else {
-                throw USDImportError.invalidData("USDC inlined dictionary value is malformed.")
+                throw USDError.invalidData("USDC inlined dictionary value is malformed.")
             }
             return [:]
         }
@@ -913,36 +1019,47 @@ struct USDCCrateValueDecoder {
             return [:]
         }
         var cursor = try payloadOffset(valueRep, label: "dictionary")
-        return try readDictionary(cursor: &cursor, label: "USDC dictionary")
+        return try readDictionary(cursor: &cursor, label: "USDC dictionary", depth: depth)
     }
 
-    private func readDictionary(cursor: inout Int, label: String) throws -> [String: USDCLayerFieldValue] {
+    private func readDictionary(
+        cursor: inout Int,
+        label: String,
+        depth: Int
+    ) throws -> [String: USDCLayerFieldValue] {
         let count = try checkedInt(try crate.readFileUInt64(at: cursor), label: "\(label) dictionary count")
         cursor += MemoryLayout<UInt64>.size
+        // Each entry occupies at least a key index and a recursive offset.
+        let minimumEntryByteCount = MemoryLayout<UInt32>.size + MemoryLayout<UInt64>.size
+        try crate.validateFileRange(
+            at: cursor,
+            byteCount: try checkedMultiplication(count, minimumEntryByteCount, label: "\(label) dictionary byte count")
+        )
         var dictionary: [String: USDCLayerFieldValue] = [:]
         dictionary.reserveCapacity(count)
         for _ in 0..<count {
             let key = try readStringIndex(cursor: &cursor, label: "\(label) key")
-            let value = try readDictionaryEntryValue(cursor: &cursor, label: "\(label) value")
+            let value = try readDictionaryEntryValue(cursor: &cursor, label: "\(label) value", depth: depth)
             guard dictionary.updateValue(value, forKey: key) == nil else {
-                throw USDImportError.invalidData("\(label) contains duplicate key '\(key)'.")
+                throw USDError.invalidData("\(label) contains duplicate key '\(key)'.")
             }
         }
         return dictionary
     }
 
-    private func readDictionaryEntryValue(cursor: inout Int, label: String) throws -> USDCLayerFieldValue {
+    private func readDictionaryEntryValue(
+        cursor: inout Int,
+        label: String,
+        depth: Int
+    ) throws -> USDCLayerFieldValue {
         let valueRepCursor = try recursivePayloadEnd(start: cursor, label: "\(label) recursive payload")
         let nextCursorResult = valueRepCursor.addingReportingOverflow(MemoryLayout<UInt64>.size)
         guard !nextCursorResult.overflow else {
-            throw USDImportError.invalidData("\(label) value representation exceeds platform range.")
+            throw USDError.invalidData("\(label) value representation exceeds platform range.")
         }
         let valueRep = USDCCrateValueRep(rawValue: try crate.readFileUInt64(at: valueRepCursor))
         cursor = nextCursorResult.partialValue
-        guard let value = try readLayerFieldValue(valueRep) else {
-            throw USDImportError.unsupportedFeature("\(label) type \(String(describing: valueRep.type)) is not materialized yet.")
-        }
-        return value
+        return try readLayerFieldValue(valueRep, depth: depth + 1)
     }
 
     private func readIndexedStringListOperation(
@@ -952,14 +1069,19 @@ struct USDCCrateValueDecoder {
         values: [String],
         missingValueMessage: String
     ) throws -> USDCListOperation<String> {
-        try readListOperation(valueRep, expectedType: expectedType, label: label) { cursor in
+        try readListOperation(
+            valueRep,
+            expectedType: expectedType,
+            label: label,
+            minimumItemByteCount: MemoryLayout<UInt32>.size
+        ) { cursor in
             let index = try checkedInt(
                 UInt64(try crate.readFileUInt32(at: cursor)),
                 label: "USDC \(label) item index"
             )
             cursor += MemoryLayout<UInt32>.size
             guard index < values.count else {
-                throw USDImportError.invalidData(missingValueMessage)
+                throw USDError.invalidData(missingValueMessage)
             }
             return values[index]
         }
@@ -969,44 +1091,57 @@ struct USDCCrateValueDecoder {
         _ valueRep: USDCCrateValueRep,
         expectedType: USDCCrateValueType,
         label: String,
+        minimumItemByteCount: Int,
         readItem: (inout Int) throws -> Item
     ) throws -> USDCListOperation<Item> {
         guard valueRep.type == expectedType, !valueRep.isArray else {
-            throw USDImportError.invalidData("USDC \(label) value is malformed.")
+            throw USDError.invalidData("USDC \(label) value is malformed.")
         }
         guard !valueRep.isInlined, !valueRep.isCompressed else {
-            throw USDImportError.invalidData("USDC \(label) value has unsupported representation bits.")
+            throw USDError.invalidData("USDC \(label) value has unsupported representation bits.")
         }
         guard valueRep.payload != 0 else {
-            throw USDImportError.invalidData("USDC \(label) payload offset is missing.")
+            throw USDError.invalidData("USDC \(label) payload offset is missing.")
         }
         var cursor = try payloadOffset(valueRep, label: label)
         let header = try crate.readFileBytes(at: cursor, byteCount: 1)[0]
         cursor += 1
         guard header & ~USDCListOperationHeader.allKnownBits == 0 else {
-            throw USDImportError.invalidData("USDC \(label) header contains unknown bits.")
+            throw USDError.invalidData("USDC \(label) header contains unknown bits.")
         }
 
         var listOperation = USDCListOperation<Item>(
             isExplicit: header & USDCListOperationHeader.isExplicitBit != 0
         )
         if header & USDCListOperationHeader.hasExplicitItemsBit != 0 {
-            listOperation.explicitItems = try readListOperationItems(cursor: &cursor, label: label, readItem: readItem)
+            listOperation.explicitItems = try readListOperationItems(
+                cursor: &cursor, label: label, minimumItemByteCount: minimumItemByteCount, readItem: readItem
+            )
         }
         if header & USDCListOperationHeader.hasAddedItemsBit != 0 {
-            listOperation.addedItems = try readListOperationItems(cursor: &cursor, label: label, readItem: readItem)
+            listOperation.addedItems = try readListOperationItems(
+                cursor: &cursor, label: label, minimumItemByteCount: minimumItemByteCount, readItem: readItem
+            )
         }
         if header & USDCListOperationHeader.hasPrependedItemsBit != 0 {
-            listOperation.prependedItems = try readListOperationItems(cursor: &cursor, label: label, readItem: readItem)
+            listOperation.prependedItems = try readListOperationItems(
+                cursor: &cursor, label: label, minimumItemByteCount: minimumItemByteCount, readItem: readItem
+            )
         }
         if header & USDCListOperationHeader.hasAppendedItemsBit != 0 {
-            listOperation.appendedItems = try readListOperationItems(cursor: &cursor, label: label, readItem: readItem)
+            listOperation.appendedItems = try readListOperationItems(
+                cursor: &cursor, label: label, minimumItemByteCount: minimumItemByteCount, readItem: readItem
+            )
         }
         if header & USDCListOperationHeader.hasDeletedItemsBit != 0 {
-            listOperation.deletedItems = try readListOperationItems(cursor: &cursor, label: label, readItem: readItem)
+            listOperation.deletedItems = try readListOperationItems(
+                cursor: &cursor, label: label, minimumItemByteCount: minimumItemByteCount, readItem: readItem
+            )
         }
         if header & USDCListOperationHeader.hasOrderedItemsBit != 0 {
-            listOperation.orderedItems = try readListOperationItems(cursor: &cursor, label: label, readItem: readItem)
+            listOperation.orderedItems = try readListOperationItems(
+                cursor: &cursor, label: label, minimumItemByteCount: minimumItemByteCount, readItem: readItem
+            )
         }
         return listOperation
     }
@@ -1014,10 +1149,17 @@ struct USDCCrateValueDecoder {
     private func readListOperationItems<Item>(
         cursor: inout Int,
         label: String,
+        minimumItemByteCount: Int,
         readItem: (inout Int) throws -> Item
     ) throws -> [Item] {
         let count = try checkedInt(try crate.readFileUInt64(at: cursor), label: "USDC \(label) item count")
         cursor += MemoryLayout<UInt64>.size
+        // A hostile count must fail range validation before it reaches
+        // reserveCapacity, which would otherwise abort on allocation failure.
+        try crate.validateFileRange(
+            at: cursor,
+            byteCount: try checkedMultiplication(count, minimumItemByteCount, label: "USDC \(label) item byte count")
+        )
         var items: [Item] = []
         items.reserveCapacity(count)
         for _ in 0..<count {
@@ -1028,7 +1170,7 @@ struct USDCCrateValueDecoder {
 
     private func readFloatScalar(_ valueRep: USDCCrateValueRep) throws -> Float32 {
         guard !valueRep.isArray else {
-            throw USDImportError.invalidData("USDC float value is marked as an array.")
+            throw USDError.invalidData("USDC float value is marked as an array.")
         }
         if valueRep.isInlined {
             let bits = UInt32(valueRep.payload & UInt64(UInt32.max))
@@ -1056,7 +1198,7 @@ struct USDCCrateValueDecoder {
 
     private func readIntScalar(_ valueRep: USDCCrateValueRep) throws -> Int {
         guard !valueRep.isArray else {
-            throw USDImportError.invalidData("USDC int value is marked as an array.")
+            throw USDError.invalidData("USDC int value is marked as an array.")
         }
         if valueRep.isInlined {
             let bits = UInt32(valueRep.payload & UInt64(UInt32.max))
@@ -1071,7 +1213,7 @@ struct USDCCrateValueDecoder {
 
     private func readVec3fScalar(_ valueRep: USDCCrateValueRep) throws -> USDCVector3D {
         guard !valueRep.isArray else {
-            throw USDImportError.invalidData("USDC vec3f value is marked as an array.")
+            throw USDError.invalidData("USDC vec3f value is marked as an array.")
         }
         if valueRep.isInlined {
             return try inlinedVector3(valueRep, scalarName: "vec3f")
@@ -1083,7 +1225,7 @@ struct USDCCrateValueDecoder {
 
     private func readVec3dScalar(_ valueRep: USDCCrateValueRep) throws -> USDCVector3D {
         guard !valueRep.isArray else {
-            throw USDImportError.invalidData("USDC vec3d value is marked as an array.")
+            throw USDError.invalidData("USDC vec3d value is marked as an array.")
         }
         if valueRep.isInlined {
             return try inlinedVector3(valueRep, scalarName: "vec3d")
@@ -1095,7 +1237,7 @@ struct USDCCrateValueDecoder {
 
     private func readVec2fScalar(_ valueRep: USDCCrateValueRep) throws -> USDPoint2D {
         guard !valueRep.isArray else {
-            throw USDImportError.invalidData("USDC vec2f value is marked as an array.")
+            throw USDError.invalidData("USDC vec2f value is marked as an array.")
         }
         if valueRep.isInlined {
             return try inlinedVector2(valueRep, scalarName: "vec2f")
@@ -1106,7 +1248,7 @@ struct USDCCrateValueDecoder {
 
     private func readVec2dScalar(_ valueRep: USDCCrateValueRep) throws -> USDPoint2D {
         guard !valueRep.isArray else {
-            throw USDImportError.invalidData("USDC vec2d value is marked as an array.")
+            throw USDError.invalidData("USDC vec2d value is marked as an array.")
         }
         if valueRep.isInlined {
             return try inlinedVector2(valueRep, scalarName: "vec2d")
@@ -1117,10 +1259,10 @@ struct USDCCrateValueDecoder {
 
     private func readQuatfScalar(_ valueRep: USDCCrateValueRep) throws -> USDCQuaternion {
         guard !valueRep.isArray else {
-            throw USDImportError.invalidData("USDC quatf value is marked as an array.")
+            throw USDError.invalidData("USDC quatf value is marked as an array.")
         }
         guard !valueRep.isInlined else {
-            throw USDImportError.invalidData("USDC quatf value is unexpectedly inlined.")
+            throw USDError.invalidData("USDC quatf value is unexpectedly inlined.")
         }
         var cursor = try payloadOffset(valueRep, label: "quatf")
         return try readQuaternionFloat32(cursor: &cursor, label: "USDC quatf")
@@ -1128,10 +1270,10 @@ struct USDCCrateValueDecoder {
 
     private func readQuatdScalar(_ valueRep: USDCCrateValueRep) throws -> USDCQuaternion {
         guard !valueRep.isArray else {
-            throw USDImportError.invalidData("USDC quatd value is marked as an array.")
+            throw USDError.invalidData("USDC quatd value is marked as an array.")
         }
         guard !valueRep.isInlined else {
-            throw USDImportError.invalidData("USDC quatd value is unexpectedly inlined.")
+            throw USDError.invalidData("USDC quatd value is unexpectedly inlined.")
         }
         var cursor = try payloadOffset(valueRep, label: "quatd")
         return try readQuaternionFloat64(cursor: &cursor, label: "USDC quatd")
@@ -1139,7 +1281,7 @@ struct USDCCrateValueDecoder {
 
     private func readMatrix4dScalar(_ valueRep: USDCCrateValueRep) throws -> USDCMatrix4x4 {
         guard !valueRep.isArray else {
-            throw USDImportError.invalidData("USDC matrix4d value is marked as an array.")
+            throw USDError.invalidData("USDC matrix4d value is marked as an array.")
         }
         if valueRep.isInlined {
             var values = USDCMatrix4x4.identity.values
@@ -1156,21 +1298,25 @@ struct USDCCrateValueDecoder {
             values.append(try readFloat64(cursor: &cursor, label: "USDC matrix4d component"))
         }
         guard values.allSatisfy(\.isFinite) else {
-            throw USDImportError.invalidData("USDC matrix4d contains a non-finite component.")
+            throw USDError.invalidData("USDC matrix4d contains a non-finite component.")
         }
         return USDCMatrix4x4(values: values)
     }
 
     private func readDoubleVectorValues(_ valueRep: USDCCrateValueRep) throws -> [Double] {
         guard valueRep.type == .doubleVector, !valueRep.isArray, !valueRep.isInlined, !valueRep.isCompressed else {
-            throw USDImportError.invalidData("USDC double vector value is malformed.")
+            throw USDError.invalidData("USDC double vector value is malformed.")
         }
         guard valueRep.payload != 0 else {
-            throw USDImportError.invalidData("USDC double vector payload offset is missing.")
+            throw USDError.invalidData("USDC double vector payload offset is missing.")
         }
         var cursor = try payloadOffset(valueRep, label: "doubleVector")
         let count = try checkedInt(try crate.readFileUInt64(at: cursor), label: "USDC doubleVector count")
         cursor += MemoryLayout<UInt64>.size
+        try crate.validateFileRange(
+            at: cursor,
+            byteCount: try checkedMultiplication(count, MemoryLayout<UInt64>.size, label: "USDC doubleVector byte count")
+        )
         var values: [Double] = []
         values.reserveCapacity(count)
         for _ in 0..<count {
@@ -1181,14 +1327,14 @@ struct USDCCrateValueDecoder {
 
     private func readTimeCodeScalar(_ valueRep: USDCCrateValueRep) throws -> Double {
         guard valueRep.type == .timeCode, !valueRep.isArray else {
-            throw USDImportError.invalidData("USDC timeCode value is malformed.")
+            throw USDError.invalidData("USDC timeCode value is malformed.")
         }
         return try readDoubleScalar(valueRep)
     }
 
     private func readTimeCodeArrayValue(_ valueRep: USDCCrateValueRep) throws -> [Double] {
         guard valueRep.type == .timeCode, valueRep.isArray else {
-            throw USDImportError.invalidData("USDC timeCode array value is malformed.")
+            throw USDError.invalidData("USDC timeCode array value is malformed.")
         }
         return try readDoubleArrayValue(valueRep)
     }
@@ -1196,22 +1342,22 @@ struct USDCCrateValueDecoder {
     private func recursivePayloadEnd(start: Int, label: String) throws -> Int {
         let rawOffset = try crate.readFileUInt64(at: start)
         guard rawOffset <= UInt64(Int64.max) else {
-            throw USDImportError.invalidData("\(label) recursive offset exceeds platform range.")
+            throw USDError.invalidData("\(label) recursive offset exceeds platform range.")
         }
         let offset = Int64(bitPattern: rawOffset)
         guard offset >= Int64(MemoryLayout<Int64>.size) else {
-            throw USDImportError.invalidData("\(label) recursive offset is malformed.")
+            throw USDError.invalidData("\(label) recursive offset is malformed.")
         }
         let endResult = Int64(start).addingReportingOverflow(offset)
         guard !endResult.overflow, endResult.partialValue >= 0, endResult.partialValue <= Int64(Int.max) else {
-            throw USDImportError.invalidData("\(label) recursive offset exceeds platform range.")
+            throw USDError.invalidData("\(label) recursive offset exceeds platform range.")
         }
         return Int(endResult.partialValue)
     }
 
     private func readBoolArrayValue(_ valueRep: USDCCrateValueRep) throws -> [Bool] {
         guard valueRep.isArray else {
-            throw USDImportError.invalidData("USDC bool array value is missing the array bit.")
+            throw USDError.invalidData("USDC bool array value is missing the array bit.")
         }
         guard valueRep.payload != 0 else {
             return []
@@ -1236,7 +1382,7 @@ struct USDCCrateValueDecoder {
 
     private func readUInt8ArrayValue(_ valueRep: USDCCrateValueRep) throws -> [Int] {
         guard valueRep.isArray else {
-            throw USDImportError.invalidData("USDC uchar array value is missing the array bit.")
+            throw USDError.invalidData("USDC uchar array value is missing the array bit.")
         }
         guard valueRep.payload != 0 else {
             return []
@@ -1285,7 +1431,7 @@ struct USDCCrateValueDecoder {
 
     private func readUInt32ArrayPayload(_ valueRep: USDCCrateValueRep, label: String) throws -> [UInt32] {
         guard valueRep.isArray else {
-            throw USDImportError.invalidData("USDC \(label) value is missing the array bit.")
+            throw USDError.invalidData("USDC \(label) value is missing the array bit.")
         }
         guard valueRep.payload != 0 else {
             return []
@@ -1294,7 +1440,7 @@ struct USDCCrateValueDecoder {
         let count = try readArrayCount(cursor: &cursor, label: "USDC \(label) count")
         if valueRep.isCompressed {
             guard crate.version >= USDCCrateVersion(major: 0, minor: 5, patch: 0) else {
-                throw USDImportError.invalidData("USDC \(label) is marked compressed before compression support.")
+                throw USDError.invalidData("USDC \(label) is marked compressed before compression support.")
             }
             let compressedByteCount = try checkedInt(
                 try crate.readFileUInt64(at: cursor),
@@ -1322,7 +1468,7 @@ struct USDCCrateValueDecoder {
 
     private func readUInt64ArrayPayload(_ valueRep: USDCCrateValueRep, label: String) throws -> [UInt64] {
         guard valueRep.isArray else {
-            throw USDImportError.invalidData("USDC \(label) value is missing the array bit.")
+            throw USDError.invalidData("USDC \(label) value is missing the array bit.")
         }
         guard valueRep.payload != 0 else {
             return []
@@ -1350,7 +1496,7 @@ struct USDCCrateValueDecoder {
 
     private func readVec3fArrayValue(_ valueRep: USDCCrateValueRep) throws -> [USDPoint3D] {
         guard valueRep.isArray else {
-            throw USDImportError.invalidData("USDC vec3f array value is missing the array bit.")
+            throw USDError.invalidData("USDC vec3f array value is missing the array bit.")
         }
         guard valueRep.payload != 0 else {
             return []
@@ -1377,7 +1523,7 @@ struct USDCCrateValueDecoder {
                 let z = Double(try reader.readFloat32LittleEndian(at: byteCursor))
                 byteCursor += MemoryLayout<Float32>.size
                 guard x.isFinite, y.isFinite, z.isFinite else {
-                    throw USDImportError.invalidData("USDC vec3f array contains a non-finite point.")
+                    throw USDError.invalidData("USDC vec3f array contains a non-finite point.")
                 }
                 points.append(USDPoint3D(x: x, y: y, z: z))
             }
@@ -1387,7 +1533,7 @@ struct USDCCrateValueDecoder {
 
     private func readVec3dArrayValue(_ valueRep: USDCCrateValueRep) throws -> [USDPoint3D] {
         guard valueRep.isArray else {
-            throw USDImportError.invalidData("USDC vec3d array value is missing the array bit.")
+            throw USDError.invalidData("USDC vec3d array value is missing the array bit.")
         }
         guard valueRep.payload != 0 else {
             return []
@@ -1421,7 +1567,7 @@ struct USDCCrateValueDecoder {
 
     private func readFloatArrayValue(_ valueRep: USDCCrateValueRep) throws -> [Double] {
         guard valueRep.isArray else {
-            throw USDImportError.invalidData("USDC float array value is missing the array bit.")
+            throw USDError.invalidData("USDC float array value is missing the array bit.")
         }
         guard valueRep.payload != 0 else {
             return []
@@ -1443,7 +1589,7 @@ struct USDCCrateValueDecoder {
                 let value = Double(try reader.readFloat32LittleEndian(at: byteCursor))
                 byteCursor += MemoryLayout<Float32>.size
                 guard value.isFinite else {
-                    throw USDImportError.invalidData("USDC float array contains a non-finite value.")
+                    throw USDError.invalidData("USDC float array contains a non-finite value.")
                 }
                 values.append(value)
             }
@@ -1453,7 +1599,7 @@ struct USDCCrateValueDecoder {
 
     private func readDoubleArrayValue(_ valueRep: USDCCrateValueRep) throws -> [Double] {
         guard valueRep.isArray else {
-            throw USDImportError.invalidData("USDC double array value is missing the array bit.")
+            throw USDError.invalidData("USDC double array value is missing the array bit.")
         }
         guard valueRep.payload != 0 else {
             return []
@@ -1482,7 +1628,7 @@ struct USDCCrateValueDecoder {
 
     private func readVec2fArrayValue(_ valueRep: USDCCrateValueRep) throws -> [USDPoint2D] {
         guard valueRep.isArray else {
-            throw USDImportError.invalidData("USDC vec2f array value is missing the array bit.")
+            throw USDError.invalidData("USDC vec2f array value is missing the array bit.")
         }
         guard valueRep.payload != 0 else {
             return []
@@ -1507,7 +1653,7 @@ struct USDCCrateValueDecoder {
                 let y = Double(try reader.readFloat32LittleEndian(at: byteCursor))
                 byteCursor += MemoryLayout<Float32>.size
                 guard x.isFinite, y.isFinite else {
-                    throw USDImportError.invalidData("USDC vec2f array contains a non-finite point.")
+                    throw USDError.invalidData("USDC vec2f array contains a non-finite point.")
                 }
                 points.append(USDPoint2D(x: x, y: y))
             }
@@ -1517,7 +1663,7 @@ struct USDCCrateValueDecoder {
 
     private func readVec2dArrayValue(_ valueRep: USDCCrateValueRep) throws -> [USDPoint2D] {
         guard valueRep.isArray else {
-            throw USDImportError.invalidData("USDC vec2d array value is missing the array bit.")
+            throw USDError.invalidData("USDC vec2d array value is missing the array bit.")
         }
         guard valueRep.payload != 0 else {
             return []
@@ -1559,7 +1705,7 @@ struct USDCCrateValueDecoder {
             return .borrowed(data)
         }
         guard crate.version >= USDCCrateVersion(major: 0, minor: 5, patch: 0) else {
-            throw USDImportError.invalidData("USDC \(label) is marked compressed before compression support.")
+            throw USDError.invalidData("USDC \(label) is marked compressed before compression support.")
         }
         let compressedByteCount = try checkedInt(
             try crate.readFileUInt64(at: cursor),
@@ -1577,7 +1723,7 @@ struct USDCCrateValueDecoder {
             let shapeRank = try crate.readFileUInt32(at: cursor)
             cursor += MemoryLayout<UInt32>.size
             guard shapeRank == 1 else {
-                throw USDImportError.unsupportedFeature("Only one-dimensional USDC \(label)s are supported.")
+                throw USDError.unsupportedFeature("Only one-dimensional USDC \(label)s are supported.")
             }
         }
         return cursor
@@ -1587,7 +1733,7 @@ struct USDCCrateValueDecoder {
         let bytes = inlinedInt8Bytes(valueRep, count: 3)
         let vector = USDCVector3D(x: Double(bytes[0]), y: Double(bytes[1]), z: Double(bytes[2]))
         guard vector.x.isFinite, vector.y.isFinite, vector.z.isFinite else {
-            throw USDImportError.invalidData("USDC \(scalarName) contains a non-finite component.")
+            throw USDError.invalidData("USDC \(scalarName) contains a non-finite component.")
         }
         return vector
     }
@@ -1596,7 +1742,7 @@ struct USDCCrateValueDecoder {
         let bytes = inlinedInt8Bytes(valueRep, count: 2)
         let point = USDPoint2D(x: Double(bytes[0]), y: Double(bytes[1]))
         guard point.x.isFinite, point.y.isFinite else {
-            throw USDImportError.invalidData("USDC \(scalarName) contains a non-finite component.")
+            throw USDError.invalidData("USDC \(scalarName) contains a non-finite component.")
         }
         return point
     }
@@ -1615,7 +1761,7 @@ struct USDCCrateValueDecoder {
         let x = Double(littleEndianFloat32(bytes[0..<4]))
         let y = Double(littleEndianFloat32(bytes[4..<8]))
         guard x.isFinite, y.isFinite else {
-            throw USDImportError.invalidData("\(label) contains a non-finite component.")
+            throw USDError.invalidData("\(label) contains a non-finite component.")
         }
         return USDPoint2D(x: x, y: y)
     }
@@ -1624,7 +1770,7 @@ struct USDCCrateValueDecoder {
         let x = try readFloat64(cursor: &cursor, label: "\(label) x")
         let y = try readFloat64(cursor: &cursor, label: "\(label) y")
         guard x.isFinite, y.isFinite else {
-            throw USDImportError.invalidData("\(label) contains a non-finite component.")
+            throw USDError.invalidData("\(label) contains a non-finite component.")
         }
         return USDPoint2D(x: x, y: y)
     }
@@ -1637,7 +1783,7 @@ struct USDCCrateValueDecoder {
         let y = Double(littleEndianFloat32(bytes[4..<8]))
         let z = Double(littleEndianFloat32(bytes[8..<12]))
         guard x.isFinite, y.isFinite, z.isFinite else {
-            throw USDImportError.invalidData("\(label) contains a non-finite component.")
+            throw USDError.invalidData("\(label) contains a non-finite component.")
         }
         return USDCVector3D(x: x, y: y, z: z)
     }
@@ -1647,7 +1793,7 @@ struct USDCCrateValueDecoder {
         let y = try readFloat64(cursor: &cursor, label: "\(label) y")
         let z = try readFloat64(cursor: &cursor, label: "\(label) z")
         guard x.isFinite, y.isFinite, z.isFinite else {
-            throw USDImportError.invalidData("\(label) contains a non-finite component.")
+            throw USDError.invalidData("\(label) contains a non-finite component.")
         }
         return USDCVector3D(x: x, y: y, z: z)
     }
@@ -1662,7 +1808,7 @@ struct USDCCrateValueDecoder {
         let imaginaryZ = Double(littleEndianFloat32(bytes[8..<12]))
         let real = Double(littleEndianFloat32(bytes[12..<16]))
         guard real.isFinite, imaginaryX.isFinite, imaginaryY.isFinite, imaginaryZ.isFinite else {
-            throw USDImportError.invalidData("\(label) contains a non-finite component.")
+            throw USDError.invalidData("\(label) contains a non-finite component.")
         }
         return USDCQuaternion(
             real: real,
@@ -1691,7 +1837,7 @@ struct USDCCrateValueDecoder {
         cursor += MemoryLayout<UInt64>.size
         let value = Double(bitPattern: littleEndianUInt64(bytes[0..<bytes.count]))
         guard value.isFinite else {
-            throw USDImportError.invalidData("\(label) is not finite.")
+            throw USDError.invalidData("\(label) is not finite.")
         }
         return value
     }
@@ -1699,7 +1845,7 @@ struct USDCCrateValueDecoder {
     private func float64(_ bytes: ArraySlice<UInt8>, label: String) throws -> Double {
         let value = Double(bitPattern: littleEndianUInt64(bytes))
         guard value.isFinite else {
-            throw USDImportError.invalidData("\(label) is not finite.")
+            throw USDError.invalidData("\(label) is not finite.")
         }
         return value
     }
@@ -1721,28 +1867,28 @@ struct USDCCrateValueDecoder {
 
     private func checkedInt(_ value: UInt64, label: String) throws -> Int {
         guard value <= UInt64(Int.max) else {
-            throw USDImportError.invalidData("\(label) exceeds platform range.")
+            throw USDError.invalidData("\(label) exceeds platform range.")
         }
         return Int(value)
     }
 
     private func intValue(_ value: Int64, label: String) throws -> Int {
         guard let int = Int(exactly: value) else {
-            throw USDImportError.invalidData("\(label) exceeds platform range.")
+            throw USDError.invalidData("\(label) exceeds platform range.")
         }
         return int
     }
 
     private func intValue(_ value: UInt64, label: String) throws -> Int {
         guard let int = Int(exactly: value) else {
-            throw USDImportError.invalidData("\(label) exceeds platform range.")
+            throw USDError.invalidData("\(label) exceeds platform range.")
         }
         return int
     }
 
     private func checkedMultiplication(_ lhs: Int, _ rhs: Int, label: String) throws -> Int {
         guard lhs >= 0, rhs >= 0, lhs <= Int.max / rhs else {
-            throw USDImportError.invalidData("\(label) exceeds platform range.")
+            throw USDError.invalidData("\(label) exceeds platform range.")
         }
         return lhs * rhs
     }
@@ -1825,7 +1971,7 @@ private struct USDCArrayByteReader {
     func readFloat64LittleEndian(at offset: Int, label: String) throws -> Double {
         let value = Double(bitPattern: try readUInt64LittleEndian(at: offset))
         guard value.isFinite else {
-            throw USDImportError.invalidData("\(label) is not finite.")
+            throw USDError.invalidData("\(label) is not finite.")
         }
         return value
     }
@@ -1834,7 +1980,7 @@ private struct USDCArrayByteReader {
         guard offset >= 0,
               byteCount >= 0,
               offset <= bytes.count - byteCount else {
-            throw USDImportError.invalidData("USDC array byte read is outside the payload.")
+            throw USDError.invalidData("USDC array byte read is outside the payload.")
         }
     }
 }

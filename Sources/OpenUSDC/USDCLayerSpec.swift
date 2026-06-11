@@ -1,15 +1,17 @@
+import OpenUSD
+
 public struct USDCLayerSpec: Sendable, Equatable {
     public var path: String
-    public var specType: USDCCrateSpecType
-    public var specifier: USDCPrimSpecifier?
+    public var specType: SdfSpecType
+    public var specifier: SdfSpecifier?
     public var typeName: String?
     public var fieldNames: [String]
     public var fields: [String: USDCLayerFieldValue]
 
     public init(
         path: String,
-        specType: USDCCrateSpecType,
-        specifier: USDCPrimSpecifier? = nil,
+        specType: SdfSpecType,
+        specifier: SdfSpecifier? = nil,
         typeName: String? = nil,
         fieldNames: [String] = [],
         fields: [String: USDCLayerFieldValue] = [:]

@@ -31,20 +31,20 @@ struct USDZAssetResolver: Sendable {
 
     private func context(for layerPath: USDZLayerPath) throws -> USDZAssetResolverContext {
         guard !layerPath.entryPaths.isEmpty else {
-            throw USDImportError.invalidData("USDZ layer path is empty.")
+            throw USDError.invalidData("USDZ layer path is empty.")
         }
 
         var currentArchive = archive
         var prefixEntryPaths: [String] = []
         for (index, entryPath) in layerPath.entryPaths.enumerated() {
             guard let entry = currentArchive.entry(at: entryPath) else {
-                throw USDImportError.invalidData("USDZ package is missing entry \(entryPath).")
+                throw USDError.invalidData("USDZ package is missing entry \(entryPath).")
             }
 
             let isLastEntry = index == layerPath.entryPaths.count - 1
             if isLastEntry {
                 guard entry.isUSDLayer else {
-                    throw USDImportError.unsupportedFeature("USDZ entry \(entry.path) is not a USD layer.")
+                    throw USDError.unsupportedFeature("USDZ entry \(entry.path) is not a USD layer.")
                 }
                 return USDZAssetResolverContext(
                     prefixEntryPaths: prefixEntryPaths,
@@ -54,13 +54,13 @@ struct USDZAssetResolver: Sendable {
             }
 
             guard entry.fileExtension == "usdz" else {
-                throw USDImportError.unsupportedFeature("USDZ entry \(entry.path) is not a nested USDZ package.")
+                throw USDError.unsupportedFeature("USDZ entry \(entry.path) is not a nested USDZ package.")
             }
             prefixEntryPaths.append(entry.path)
             currentArchive = try USDZArchive(data: entry.data)
         }
 
-        throw USDImportError.invalidData("USDZ layer path is empty.")
+        throw USDError.invalidData("USDZ layer path is empty.")
     }
 
     private func candidateEntryPaths(

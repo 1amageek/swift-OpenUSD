@@ -82,7 +82,7 @@ public struct USDCLayer: Sendable, Equatable {
         guard case .stringVector(let assetPaths)? = spec.fields["subLayers"] else {
             return []
         }
-        let layerOffsets: [USDLayerOffset]
+        let layerOffsets: [SdfLayerOffset]
         if case .layerOffsetVector(let offsets)? = spec.fields["subLayerOffsets"] {
             layerOffsets = offsets
         } else {
@@ -103,34 +103,50 @@ public struct USDCLayer: Sendable, Equatable {
 
 private extension USDCListOperation {
     var effectiveItems: [Item] {
-        var items: [Item] = []
+        applying(to: [])
+    }
+
+    func applying(to baseItems: [Item]) -> [Item] {
+        var items = unique(baseItems)
         if isExplicit {
-            appendUnique(explicitItems, to: &items)
-        } else {
-            // Effective composition arcs are this op applied to an empty base list.
-            appendUnique(prependedItems, to: &items)
-            appendUnique(addedItems, to: &items)
-            appendUnique(appendedItems, to: &items)
+            items = unique(explicitItems)
         }
+        remove(deletedItems, from: &items)
+        prependUnique(prependedItems, to: &items)
+        appendMovingExisting(addedItems, to: &items)
+        appendMovingExisting(appendedItems, to: &items)
         guard !orderedItems.isEmpty else {
             return items
         }
-        var ordered: [Item] = []
-        for orderedItem in orderedItems {
-            guard let item = items.first(where: { $0 == orderedItem }) else {
-                continue
-            }
-            appendUnique([item], to: &ordered)
-        }
-        appendUnique(items, to: &ordered)
-        return ordered
+        let ordered = unique(orderedItems).filter { items.contains($0) }
+        remove(ordered, from: &items)
+        return ordered + items
     }
 
-    private func appendUnique(_ newItems: [Item], to items: inout [Item]) {
-        for item in newItems {
-            guard !items.contains(item) else {
-                continue
-            }
+    private func unique(_ newItems: [Item]) -> [Item] {
+        var items: [Item] = []
+        for item in newItems where !items.contains(item) {
+            items.append(item)
+        }
+        return items
+    }
+
+    private func remove(_ removedItems: [Item], from items: inout [Item]) {
+        items.removeAll { item in
+            removedItems.contains(item)
+        }
+    }
+
+    private func prependUnique(_ newItems: [Item], to items: inout [Item]) {
+        let uniqueItems = unique(newItems)
+        remove(uniqueItems, from: &items)
+        items = uniqueItems + items
+    }
+
+    private func appendMovingExisting(_ newItems: [Item], to items: inout [Item]) {
+        let uniqueItems = unique(newItems)
+        remove(uniqueItems, from: &items)
+        for item in uniqueItems {
             items.append(item)
         }
     }

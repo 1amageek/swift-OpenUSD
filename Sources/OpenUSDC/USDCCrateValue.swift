@@ -31,9 +31,9 @@ enum USDCCrateValue: Sendable, Equatable {
     case timeCodeArray([Double])
     case point2Array([USDPoint2D])
     case pointArray([USDPoint3D])
-    case layerOffsetVector([USDLayerOffset])
-    case permission(USDPermission)
-    case variability(USDVariability)
+    case layerOffsetVector([SdfLayerOffset])
+    case permission(SdfPermission)
+    case variability(SdfVariability)
 
     var stringValue: String? {
         switch self {
