@@ -1,13 +1,13 @@
 # swift-OpenUSD
 
-Pure Swift USD readers for platforms where the system OpenUSD toolchain is not
-available, including WebAssembly.
+Pure Swift USD reading and authoring for platforms where the system OpenUSD
+toolchain is not available, including WebAssembly.
 
 ## Modules
 
 | Module | Responsibility |
 | --- | --- |
-| `OpenUSD` | Shared USD scene, mesh, layer, transform, and USDA reader types. |
+| `OpenUSD` | Shared USD scene, mesh, transform, and Sdf data model types; USDA reader and writer; in-memory layer authoring. |
 | `OpenUSDC` | Pure Swift USDC crate reader and scene materializer. |
 | `OpenUSDZ` | USDZ archive reader with contained USDA/USDC layer support. |
 
