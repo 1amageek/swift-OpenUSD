@@ -124,6 +124,53 @@ struct CompositionSemanticsTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func sublayerOffsetRemapsTypedTimeSamples() throws {
+        let animLayer = SdfLayer(
+            identifier: "anim.usdc",
+            specs: [
+                SdfSpec(path: .absoluteRoot, specType: .pseudoRoot),
+                try SdfSpec(path: "/Rig", specType: .prim, specifier: .def, typeName: "Xform"),
+                try SdfSpec(
+                    path: "/Rig.points",
+                    specType: .attribute,
+                    typeName: "point3f[]",
+                    fields: [
+                        "timeSamples": .timeSamples([
+                            SdfTimeSample(timeCode: 1, value: .point3Array([
+                                USDPoint3D(x: 0, y: 0, z: 0),
+                            ])),
+                            SdfTimeSample(timeCode: 2, value: .point3Array([
+                                USDPoint3D(x: 1, y: 0, z: 0),
+                            ])),
+                        ]),
+                    ]
+                ),
+            ]
+        )
+        let rootLayer = USDALayer(
+            composition: USDLayerComposition(sublayers: [
+                USDSublayer(assetPath: "anim.usdc", layerOffset: SdfLayerOffset(offset: 10, scale: 2)),
+            ]),
+            specs: [USDLayerSpec(path: "/", specType: .pseudoRoot)]
+        )
+        let provider = USDInMemoryLayerProvider(layers: ["anim.usdc": animLayer])
+
+        let flattened = try USDStage(rootLayer: rootLayer).flattenedLayer(
+            resolvingWith: provider,
+            rootIdentifier: "root.usda"
+        )
+
+        #expect(flattened.spec(at: "/Rig.points")?.fields["timeSamples"] == .timeSamples([
+            SdfTimeSample(timeCode: 12, value: .point3Array([
+                USDPoint3D(x: 0, y: 0, z: 0),
+            ])),
+            SdfTimeSample(timeCode: 14, value: .point3Array([
+                USDPoint3D(x: 1, y: 0, z: 0),
+            ])),
+        ]))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func referenceOffsetRemapsTimeSamplesAcrossTheArc() throws {
         let clipLayer = USDALayer(defaultPrim: "Clip", specs: [
             USDLayerSpec(path: "/", specType: .pseudoRoot),

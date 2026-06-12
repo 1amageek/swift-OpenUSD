@@ -271,12 +271,6 @@
   },
   {
     "file": "Sources/OpenUSD/USDStageCompositionResolver.swift",
-    "pattern": "USDStage composition cannot apply a layer offset to non-authored timeSamples at <value>.",
-    "category": "stage-composition",
-    "resolution": "Store timeSamples as typed values so layer offsets can be applied without re-parsing authored text."
-  },
-  {
-    "file": "Sources/OpenUSD/USDStageCompositionResolver.swift",
     "pattern": "USDStage composition cannot remap timeSamples at <value> because the authored payload could not be parsed.",
     "category": "stage-composition",
     "resolution": "Parse authored timeSamples payloads into typed samples so layer offsets remap them losslessly."

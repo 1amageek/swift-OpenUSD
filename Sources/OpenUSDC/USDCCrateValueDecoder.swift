@@ -16,7 +16,7 @@ struct USDCCrateValueDecoder {
     /// Maximum nesting depth for recursive value encodings (dictionaries and
     /// reference list operations). Hostile files can otherwise encode cycles
     /// that recurse without bound.
-    static let maximumValueRecursionDepth = 64
+    static let maximumValueRecursionDepth = 32
 
     private let crate: USDCCrateFile
     private let tokens: [String]
@@ -152,6 +152,18 @@ struct USDCCrateValueDecoder {
                 return .timeCodeArray(try readTimeCodeArrayValue(valueRep))
             }
             return .timeCode(try readTimeCodeScalar(valueRep))
+        case .timeSamples:
+            return .timeSamples(try readLayerTimeSamples(valueRep, depth: depth))
+        case .vec3d:
+            if valueRep.isArray {
+                return .point3Array(try readVec3dArrayValue(valueRep))
+            }
+            return .point3(point3(try readVec3dScalar(valueRep)))
+        case .vec3f:
+            if valueRep.isArray {
+                return .point3Array(try readVec3fArrayValue(valueRep))
+            }
+            return .point3(point3(try readVec3fScalar(valueRep)))
         case .vec2d:
             if valueRep.isArray {
                 return .point2Array(try readVec2dArrayValue(valueRep))
@@ -201,6 +213,10 @@ struct USDCCrateValueDecoder {
         return vector
     }
 
+    private func point3(_ value: USDCVector3D) -> USDPoint3D {
+        USDPoint3D(x: value.x, y: value.y, z: value.z)
+    }
+
     func readQuaternion(_ valueRep: USDCCrateValueRep) throws -> USDCQuaternion {
         let value = try readValue(valueRep)
         guard let quaternion = value.quaternionValue else {
@@ -219,6 +235,16 @@ struct USDCCrateValueDecoder {
 
     func readFirstUnblockedTimeSampleValueRep(_ valueRep: USDCCrateValueRep) throws -> USDCCrateValueRep? {
         try readTimeSampleValueRep(valueRep, at: nil)
+    }
+
+    private func readLayerTimeSamples(_ valueRep: USDCCrateValueRep, depth: Int) throws -> [SdfTimeSample] {
+        let samples = try readTimeSampleValueReps(valueRep, at: nil)
+        return try samples.map { sample in
+            let value = try sample.valueRep.map {
+                try SdfFieldValue(usdcLayerFieldValue: readLayerFieldValue($0, depth: depth + 1))
+            }
+            return SdfTimeSample(timeCode: sample.timeCode, value: value)
+        }
     }
 
     func readTimeSampleValueRep(_ valueRep: USDCCrateValueRep, at timeCode: Double?) throws -> USDCCrateValueRep? {
@@ -356,6 +382,12 @@ struct USDCCrateValueDecoder {
         let times = try readDoubleVectorValues(timesRep)
         guard times.count == valueCount else {
             throw USDError.invalidData("USDC timeSamples times and values have different counts.")
+        }
+        var seenTimes: Set<Double> = []
+        for time in times {
+            guard seenTimes.insert(time).inserted else {
+                throw USDError.invalidData("USDC timeSamples contains duplicate timeCode values.")
+            }
         }
         try crate.validateFileRange(
             at: cursor,
@@ -1052,6 +1084,9 @@ struct USDCCrateValueDecoder {
         label: String,
         depth: Int
     ) throws -> USDCLayerFieldValue {
+        guard depth < Self.maximumValueRecursionDepth else {
+            throw USDError.invalidData("USDC value nesting exceeds the maximum supported depth.")
+        }
         let valueRepCursor = try recursivePayloadEnd(start: cursor, label: "\(label) recursive payload")
         let nextCursorResult = valueRepCursor.addingReportingOverflow(MemoryLayout<UInt64>.size)
         guard !nextCursorResult.overflow else {
@@ -1172,28 +1207,43 @@ struct USDCCrateValueDecoder {
         guard !valueRep.isArray else {
             throw USDError.invalidData("USDC float value is marked as an array.")
         }
+        let value: Float32
         if valueRep.isInlined {
             let bits = UInt32(valueRep.payload & UInt64(UInt32.max))
-            return Float32(bitPattern: bits)
+            value = Float32(bitPattern: bits)
+        } else {
+            let bytes = try crate.readFileBytes(
+                at: try payloadOffset(valueRep, label: "float"),
+                byteCount: MemoryLayout<UInt32>.size
+            )
+            value = littleEndianFloat32(bytes[0..<4])
         }
-        let bytes = try crate.readFileBytes(
-            at: try payloadOffset(valueRep, label: "float"),
-            byteCount: MemoryLayout<UInt32>.size
-        )
-        return littleEndianFloat32(bytes[0..<4])
+        guard value.isFinite else {
+            throw USDError.invalidData("USDC float value is not finite.")
+        }
+        return value
     }
 
     private func readDoubleScalar(_ valueRep: USDCCrateValueRep) throws -> Double {
+        guard !valueRep.isArray else {
+            throw USDError.invalidData("USDC double value is marked as an array.")
+        }
+        let value: Double
         if valueRep.isInlined {
             let floatBits = UInt32(valueRep.payload & UInt64(UInt32.max))
-            return Double(Float32(bitPattern: floatBits))
+            value = Double(Float32(bitPattern: floatBits))
+        } else {
+            let bytes = try crate.readFileBytes(
+                at: try payloadOffset(valueRep, label: "double"),
+                byteCount: MemoryLayout<UInt64>.size
+            )
+            let bits = littleEndianUInt64(bytes[0..<bytes.count])
+            value = Double(bitPattern: bits)
         }
-        let bytes = try crate.readFileBytes(
-            at: try payloadOffset(valueRep, label: "double"),
-            byteCount: MemoryLayout<UInt64>.size
-        )
-        let bits = littleEndianUInt64(bytes[0..<bytes.count])
-        return Double(bitPattern: bits)
+        guard value.isFinite else {
+            throw USDError.invalidData("USDC double value is not finite.")
+        }
+        return value
     }
 
     private func readIntScalar(_ valueRep: USDCCrateValueRep) throws -> Int {

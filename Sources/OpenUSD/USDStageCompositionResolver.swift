@@ -195,10 +195,19 @@ struct USDStageCompositionResolver: Sendable {
                 "USDStage composition target prim \(effectiveTargetPrimPath) was not found in layer \(targetIdentifier)."
             )
         }
+        let targetParentTransform: USDTransformMatrix4x4
+        if targetLayer.resetXformStackPrimPaths.contains(effectiveTargetPrimPath) {
+            targetParentTransform = .identity
+        } else {
+            targetParentTransform = parentPrimPath(effectiveTargetPrimPath)
+                .flatMap { targetLayer.primTransforms[$0] }
+                ?? .identity
+        }
         let rewrittenLayer = try rewrite(
             flattenedTargetLayer,
             sourceTargetPrimPath: effectiveTargetPrimPath,
-            sitePrimPath: arc.sitePrimPath
+            sitePrimPath: arc.sitePrimPath,
+            targetParentTransform: targetParentTransform
         )
         return try applying(arc.layerOffset, to: rewrittenLayer)
     }
@@ -540,7 +549,8 @@ struct USDStageCompositionResolver: Sendable {
     private func rewrite(
         _ layer: USDALayer,
         sourceTargetPrimPath: String,
-        sitePrimPath: String
+        sitePrimPath: String,
+        targetParentTransform: USDTransformMatrix4x4
     ) throws -> USDALayer {
         var rewrittenSpecs: [USDLayerSpec] = []
         for spec in layer.specs {
@@ -559,6 +569,7 @@ struct USDStageCompositionResolver: Sendable {
             rewrittenSpecs.append(rewrittenSpec)
         }
 
+        let inverseTargetParentTransform = try targetParentTransform.inverted()
         var rewrittenTransforms: [String: USDTransformMatrix4x4] = [:]
         for (path, transform) in layer.primTransforms {
             guard let rewrittenPath = rewrittenPath(
@@ -568,7 +579,7 @@ struct USDStageCompositionResolver: Sendable {
             ) else {
                 continue
             }
-            rewrittenTransforms[rewrittenPath] = transform
+            rewrittenTransforms[rewrittenPath] = try transform.concatenating(inverseTargetParentTransform)
         }
         let rewrittenResetPaths = Set(layer.resetXformStackPrimPaths.compactMap {
             rewrittenPath($0, sourceTargetPrimPath: sourceTargetPrimPath, sitePrimPath: sitePrimPath)
@@ -604,6 +615,16 @@ struct USDStageCompositionResolver: Sendable {
             }
         }
         return nil
+    }
+
+    private func parentPrimPath(_ path: String) -> String? {
+        guard path != "/", let slashIndex = path.lastIndex(of: "/") else {
+            return nil
+        }
+        if slashIndex == path.startIndex {
+            return nil
+        }
+        return String(path[..<slashIndex])
     }
 
     private func rewriteFieldValue(
@@ -680,14 +701,20 @@ struct USDStageCompositionResolver: Sendable {
     private func applying(_ layerOffset: SdfLayerOffset, to spec: USDLayerSpec) throws -> USDLayerSpec {
         var adjustedSpec = spec
         if let timeSamplesValue = spec.fields["timeSamples"] {
-            guard case .authored(let timeSamplesText) = timeSamplesValue else {
+            switch timeSamplesValue {
+            case .authored(let timeSamplesText):
+                adjustedSpec.fields["timeSamples"] = .authored(
+                    try remappedTimeSamplesText(timeSamplesText, applying: layerOffset, at: spec.path)
+                )
+            case .timeSamples(let samples):
+                adjustedSpec.fields["timeSamples"] = .timeSamples(
+                    try remappedTimeSamples(samples, applying: layerOffset, at: spec.path)
+                )
+            default:
                 throw USDError.unsupportedFeature(
-                    "USDStage composition cannot apply a layer offset to non-authored timeSamples at \(spec.path)."
+                    "USDStage composition cannot apply a layer offset to unsupported timeSamples at \(spec.path)."
                 )
             }
-            adjustedSpec.fields["timeSamples"] = .authored(
-                try remappedTimeSamplesText(timeSamplesText, applying: layerOffset, at: spec.path)
-            )
         }
         if spec.path == "/" {
             for fieldName in ["startTimeCode", "endTimeCode"] {
@@ -707,6 +734,24 @@ struct USDStageCompositionResolver: Sendable {
             }
         }
         return adjustedSpec
+    }
+
+    private func remappedTimeSamples(
+        _ samples: [SdfTimeSample],
+        applying layerOffset: SdfLayerOffset,
+        at path: String
+    ) throws -> [SdfTimeSample] {
+        guard layerOffset.scale != 0 else {
+            throw USDError.invalidData(
+                "USDStage composition cannot remap timeSamples at \(path) with a zero layer offset scale."
+            )
+        }
+        return try samples.map { sample in
+            SdfTimeSample(
+                timeCode: try remappedTimeCode(sample.timeCode, applying: layerOffset, at: path),
+                value: sample.value
+            )
+        }
     }
 
     private func remappedTimeSamplesText(
@@ -729,10 +774,23 @@ struct USDStageCompositionResolver: Sendable {
             return trimmedText
         }
         let lines = try entries.map { entry in
-            let remappedTimeCode = try formattedTimeCode(layerOffset.stageTime(forLayerTime: entry.timeCode), at: path)
+            let remappedTimeCode = try formattedTimeCode(
+                remappedTimeCode(entry.timeCode, applying: layerOffset, at: path),
+                at: path
+            )
             return "    \(remappedTimeCode): \(entry.value)"
         }
         return "{\n\(lines.joined(separator: ",\n"))\n}"
+    }
+
+    private func remappedTimeCode(_ timeCode: Double, applying layerOffset: SdfLayerOffset, at path: String) throws -> Double {
+        let remapped = layerOffset.stageTime(forLayerTime: timeCode)
+        guard remapped.isFinite else {
+            throw USDError.invalidData(
+                "USDStage composition produced a non-finite remapped timeCode at \(path)."
+            )
+        }
+        return remapped
     }
 
     private func timeSampleEntries(
@@ -939,10 +997,28 @@ private struct USDStageLayerAccumulator {
         for spec in strongerLayer.specs {
             try merge(strongerSpec: spec)
         }
+        try propagateAncestorTransforms(from: strongerLayer)
         for (path, transform) in strongerLayer.primTransforms {
-            layer.primTransforms[path] = transform
+            if let existingTransform = layer.primTransforms[path] {
+                layer.primTransforms[path] = try existingTransform.concatenating(transform)
+            } else {
+                layer.primTransforms[path] = transform
+            }
         }
         layer.resetXformStackPrimPaths.formUnion(strongerLayer.resetXformStackPrimPaths)
+    }
+
+    private mutating func propagateAncestorTransforms(from strongerLayer: USDALayer) throws {
+        let existingTransforms = layer.primTransforms
+        for (ancestorPath, ancestorTransform) in strongerLayer.primTransforms {
+            for (descendantPath, descendantTransform) in existingTransforms {
+                guard descendantPath.hasPrefix(ancestorPath + "/"),
+                      strongerLayer.primTransforms[descendantPath] == nil else {
+                    continue
+                }
+                layer.primTransforms[descendantPath] = try descendantTransform.concatenating(ancestorTransform)
+            }
+        }
     }
 
     private mutating func merge(strongerSpec: USDLayerSpec) throws {

@@ -378,11 +378,25 @@ public struct USDAWriter: Sendable {
             }
             output += "\(indent))"
         }
-        if let assignment = assignmentOverride ?? valueFieldName.flatMap({ spec.fields[$0]?.authoredText }) {
+        let assignment = try assignmentOverride ?? valueFieldName.flatMap { fieldName in
+            try spec.fields[fieldName].flatMap(propertyAssignmentText)
+        }
+        if let assignment {
             output += " = \(formattedAssignmentValue(assignment, indentLevel: indentLevel))"
         }
         output += "\n"
         return output
+    }
+
+    private func propertyAssignmentText(_ value: USDLayerFieldValue) throws -> String? {
+        switch value {
+        case .authored(let text):
+            return text
+        case .timeSamples(let samples):
+            return try SdfFieldValue.timeSamplesText(samples)
+        default:
+            return nil
+        }
     }
 
     private func pathListAssignment(_ items: [String], allowSingleItem: Bool) -> String {
@@ -637,6 +651,8 @@ public struct USDAWriter: Sendable {
             )
         case .authored(let text):
             return ["\(fieldName) = \(text)"]
+        case .timeSamples(let samples):
+            return ["\(fieldName) = \(try SdfFieldValue.timeSamplesText(samples))"]
         case .dictionary(let values):
             if isStringDictionaryMetadataField(fieldName) {
                 return ["\(fieldName) = \(try stringDictionaryText(fieldName: fieldName, values: values))"]

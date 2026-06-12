@@ -3,7 +3,7 @@ import Testing
 import OpenUSD
 @testable import OpenUSDC
 
-@Suite("USDCSafetyAndPerformance")
+@Suite("USDCSafetyAndPerformance", .serialized)
 struct USDCSafetyAndPerformanceTests {
 
     // MARK: - Hostile input: truncation
@@ -35,30 +35,29 @@ struct USDCSafetyAndPerformanceTests {
 
     // MARK: - Hostile input: section counts
 
-    @Test(
-        .timeLimit(.minutes(1)),
-        arguments: ["TOKENS", "STRINGS", "FIELDS", "FIELDSETS", "PATHS", "SPECS"]
-    )
-    func hostileSectionCountIsRejectedWithoutOverallocation(sectionName: String) throws {
-        let fixture = try generatedFixture("minimal_mesh.usdc")
-        let crate = try USDCCrateFile(data: fixture)
-        let section = try #require(crate.section(named: sectionName))
-        var corrupted = fixture
-        let countRange = (corrupted.startIndex + section.start)
-            ..< (corrupted.startIndex + section.start + MemoryLayout<UInt64>.size)
-        // Int.max element count: passes the platform-range check, so the
-        // reader must reject it against the section size before allocating.
-        corrupted.replaceSubrange(
-            countRange,
-            with: [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F]
-        )
-        do {
-            _ = try USDCReader().readLayer(from: corrupted)
-            Issue.record("Crate with hostile \(sectionName) count decoded successfully.")
-        } catch is USDError {
-            // Expected: rejected as a typed import error, not a crash or OOM.
-        } catch {
-            Issue.record("Hostile \(sectionName) count threw \(error) instead of USDError.")
+    @Test(.timeLimit(.minutes(1)))
+    func hostileSectionCountsAreRejectedWithoutOverallocation() throws {
+        for sectionName in ["TOKENS", "STRINGS", "FIELDS", "FIELDSETS", "PATHS", "SPECS"] {
+            let fixture = try generatedFixture("minimal_mesh.usdc")
+            let crate = try USDCCrateFile(data: fixture)
+            let section = try #require(crate.section(named: sectionName))
+            var corrupted = fixture
+            let countRange = (corrupted.startIndex + section.start)
+                ..< (corrupted.startIndex + section.start + MemoryLayout<UInt64>.size)
+            // Int.max element count: passes the platform-range check, so the
+            // reader must reject it against the section size before allocating.
+            corrupted.replaceSubrange(
+                countRange,
+                with: [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F]
+            )
+            do {
+                _ = try USDCReader().readLayer(from: corrupted)
+                Issue.record("Crate with hostile \(sectionName) count decoded successfully.")
+            } catch is USDError {
+                // Expected: rejected as a typed import error, not a crash or OOM.
+            } catch {
+                Issue.record("Hostile \(sectionName) count threw \(error) instead of USDError.")
+            }
         }
     }
 
@@ -66,9 +65,17 @@ struct USDCSafetyAndPerformanceTests {
 
     @Test(.timeLimit(.minutes(1)))
     func deeplyNestedDictionaryIsRejected() {
-        let fixture = makeNestedDictionaryCrateFixture(nestingDepth: 80)
-        #expect(throws: USDError.invalidData("USDC value nesting exceeds the maximum supported depth.")) {
+        let fixture = makeNestedDictionaryCrateFixture(nestingDepth: 33)
+        do {
             _ = try USDCReader().readLayer(from: fixture)
+            Issue.record("Deeply nested dictionary decoded successfully.")
+        } catch USDError.invalidData(let message) {
+            guard message == "USDC value nesting exceeds the maximum supported depth." else {
+                Issue.record("Unexpected invalidData message: \(message)")
+                return
+            }
+        } catch {
+            Issue.record("Expected USDError.invalidData, got \(error).")
         }
     }
 

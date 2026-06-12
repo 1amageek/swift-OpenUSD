@@ -288,6 +288,18 @@ private func openSDFUSDZResolverFixture(_ relativePath: String) throws -> Data {
 }
 
 private func openFixture(root: String, relativePath: String) throws -> Data {
+    #if SWIFT_PACKAGE
+    if let resourceURL = Bundle.module.resourceURL {
+        let fixtureURL = resourceURL
+            .appendingPathComponent("Fixtures")
+            .appendingPathComponent("OpenUSD")
+            .appendingPathComponent(root)
+            .appendingPathComponent(relativePath)
+        if FileManager.default.fileExists(atPath: fixtureURL.path) {
+            return try Data(contentsOf: fixtureURL)
+        }
+    }
+    #endif
     let url = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()
         .appendingPathComponent("Fixtures")

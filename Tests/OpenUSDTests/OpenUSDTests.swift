@@ -494,6 +494,23 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func usdcSceneReaderUsesRequestedXformTimeSampleBeforeDefault() throws {
+        let fixture = makeUSDCMeshSceneFixture(translateTimeSamples: [
+            (timeCode: 1, value: USDPoint3D(x: 10, y: 0, z: 0)),
+            (timeCode: 2, value: USDPoint3D(x: 20, y: 0, z: 0)),
+        ])
+
+        let scene = try USDCReader().read(from: fixture, options: USDReadingOptions(timeCode: 2))
+
+        let mesh = try #require(scene.meshes.first)
+        #expect(mesh.points == [
+            USDPoint3D(x: 20, y: 0, z: 0),
+            USDPoint3D(x: 21, y: 0, z: 0),
+            USDPoint3D(x: 20, y: 1, z: 0),
+        ])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func usdcLayerReaderPreservesPrimWorldTransforms() throws {
         let fixture = makeUSDCMeshSceneFixture(compressedXformOpOrder: true)
 
@@ -1544,6 +1561,31 @@ struct OpenUSDTests {
         #expect(mesh.faceVertexCounts == [3])
         #expect(mesh.faceVertexIndices == [0, 1, 2])
         #expect(mesh.subdivisionScheme == "none")
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func generatedUSDCLayerReaderPreservesTypedPointTimeSamples() throws {
+        let fixture = try generatedFixture("animated_mesh.usdc")
+        let expectedSamples = [
+            SdfTimeSample(timeCode: 1, value: .point3Array([
+                USDPoint3D(x: 0, y: 0, z: 0),
+                USDPoint3D(x: 1, y: 0, z: 0),
+                USDPoint3D(x: 0, y: 1, z: 0),
+            ])),
+            SdfTimeSample(timeCode: 2, value: .point3Array([
+                USDPoint3D(x: 0, y: 0, z: 1),
+                USDPoint3D(x: 1, y: 0, z: 1),
+                USDPoint3D(x: 0, y: 1, z: 1),
+            ])),
+        ]
+
+        let layer = try USDCReader().readLayer(from: fixture)
+        let pointsSpec = try #require(layer.spec(at: "/Triangle.points"))
+        let sdfLayer = try SdfLayer(usdcLayer: layer)
+        let sdfPointsSpec = try #require(try sdfLayer.spec(at: "/Triangle.points"))
+
+        #expect(pointsSpec.fields["timeSamples"] == .timeSamples(expectedSamples))
+        #expect(sdfPointsSpec.fields["timeSamples"] == .timeSamples(expectedSamples))
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -6680,6 +6722,62 @@ struct OpenUSDTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func usdzReaderComposesSubLayersInsteadOfDuplicatingMeshes() throws {
+        let root = Data("""
+        #usda 1.0
+        (
+            defaultPrim = "World"
+            metersPerUnit = 1
+            upAxis = "Z"
+            subLayers = [
+                @./strong.usda@,
+                @./weak.usda@
+            ]
+        )
+        """.utf8)
+        let weak = Data("""
+        #usda 1.0
+
+        def Mesh "World"
+        {
+            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+            int[] faceVertexCounts = [3]
+            int[] faceVertexIndices = [0, 1, 2]
+            uniform token subdivisionScheme = "catmullClark"
+        }
+        """.utf8)
+        let strong = Data("""
+        #usda 1.0
+
+        over "World"
+        {
+            point3f[] points = [(0, 0, 5), (1, 0, 5), (0, 1, 5)]
+            uniform token subdivisionScheme = "none"
+        }
+        """.utf8)
+        let package = makeUSDZFixture(entries: [
+            ("root.usda", root),
+            ("weak.usda", weak),
+            ("strong.usda", strong),
+        ], alignPayloads: true)
+
+        let scene = try USDZReader().read(from: package)
+
+        #expect(scene.meshes.count == 1)
+        let mesh = try #require(scene.meshes.first)
+        #expect(mesh.name == "World")
+        #expect(mesh.primPath == "/World")
+        #expect(mesh.points == [
+            USDPoint3D(x: 0, y: 0, z: 5),
+            USDPoint3D(x: 1, y: 0, z: 5),
+            USDPoint3D(x: 0, y: 1, z: 5),
+        ])
+        #expect(mesh.subdivisionScheme == "none")
+        #expect(mesh.faceVertexCounts == [3])
+        #expect(mesh.faceVertexIndices == [0, 1, 2])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func usdzReaderTraversesUSDAReferences() throws {
         let root = Data("""
         #usda 1.0
@@ -7365,13 +7463,30 @@ struct OpenUSDTests {
 
         let scene = try USDZReader().read(from: package)
 
-        #expect(scene.meshes.map(\.name) == ["Scene"])
-        #expect(scene.meshes.map(\.primPath) == ["/Scene"])
-        #expect(scene.meshes.first?.points == [
+        guard scene.meshes.count == 1 else {
+            Issue.record("Expected one local mesh, got \(scene.meshes.count).")
+            return
+        }
+        guard let mesh = scene.meshes.first else {
+            Issue.record("Expected a local mesh.")
+            return
+        }
+        guard mesh.name == "Scene" else {
+            Issue.record("Expected local mesh name Scene, got \(String(describing: mesh.name)).")
+            return
+        }
+        guard mesh.primPath == "/Scene" else {
+            Issue.record("Expected local mesh path /Scene, got \(String(describing: mesh.primPath)).")
+            return
+        }
+        guard mesh.points == [
             USDPoint3D(x: 10, y: 0, z: 0),
             USDPoint3D(x: 11, y: 0, z: 0),
             USDPoint3D(x: 10, y: 1, z: 0),
-        ])
+        ] else {
+            Issue.record("Unexpected local mesh points: \(mesh.points).")
+            return
+        }
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -8625,6 +8740,7 @@ private func makeUSDCMeshSceneFixture(
     faceVertexCounts: [Int32] = [3],
     faceVertexIndices: [Int32] = [0, 1, 2],
     compressedXformOpOrder: Bool = false,
+    translateTimeSamples: [(timeCode: Double, value: USDPoint3D)]? = nil,
     includeExtent: Bool = false,
     extentTimeSamples: [(timeCode: Double, points: [USDPoint3D])]? = nil,
     blockedTopologyTimeSampleField: String? = nil,
@@ -8674,7 +8790,7 @@ private func makeUSDCMeshSceneFixture(
     }
     let translateOffset: UInt64?
     let xformOpOrderOffset: UInt64?
-    if compressedXformOpOrder {
+    if compressedXformOpOrder || translateTimeSamples != nil {
         translateOffset = appendUSDCVec3dScalar(USDPoint3D(x: 2, y: 3, z: 4), to: &valueData)
         xformOpOrderOffset = appendUSDCTokenArray([14], compressed: true, to: &valueData)
     } else {
@@ -8768,6 +8884,7 @@ private func makeUSDCMeshSceneFixture(
         ),
     ]
     let translateFieldIndex: UInt32?
+    let translateTimeSamplesFieldIndex: UInt32?
     let xformOpOrderFieldIndex: UInt32?
     if let translateOffset, let xformOpOrderOffset {
         translateFieldIndex = UInt32(fields.count)
@@ -8775,6 +8892,33 @@ private func makeUSDCMeshSceneFixture(
             tokenIndex: 12,
             valueRep: USDCCrateValueRep(type: .vec3d, isInlined: false, isArray: false, payload: translateOffset)
         ))
+        if let translateTimeSamples {
+            let sampleValueReps = translateTimeSamples.map { sample in
+                USDCCrateValueRep(
+                    type: .vec3d,
+                    isInlined: false,
+                    isArray: false,
+                    payload: appendUSDCVec3dScalar(sample.value, to: &valueData)
+                )
+            }
+            let timeSamplesOffset = appendUSDCTimeSamples(
+                times: translateTimeSamples.map(\.timeCode),
+                valueReps: sampleValueReps,
+                to: &valueData
+            )
+            translateTimeSamplesFieldIndex = UInt32(fields.count)
+            fields.append(USDCCrateField(
+                tokenIndex: 17,
+                valueRep: USDCCrateValueRep(
+                    type: .timeSamples,
+                    isInlined: false,
+                    isArray: false,
+                    payload: timeSamplesOffset
+                )
+            ))
+        } else {
+            translateTimeSamplesFieldIndex = nil
+        }
         var xformOpOrderValueRep = USDCCrateValueRep(type: .token, isInlined: false, isArray: true, payload: xformOpOrderOffset)
         xformOpOrderValueRep.rawValue |= USDCCrateValueRep.isCompressedBit
         xformOpOrderFieldIndex = UInt32(fields.count)
@@ -8784,6 +8928,7 @@ private func makeUSDCMeshSceneFixture(
         ))
     } else {
         translateFieldIndex = nil
+        translateTimeSamplesFieldIndex = nil
         xformOpOrderFieldIndex = nil
     }
     let extentFieldIndex: UInt32?
@@ -8852,7 +8997,11 @@ private func makeUSDCMeshSceneFixture(
     var elementTokenIndexes: [Int32]
     var jumps: [Int32]
     if let translateFieldIndex, let xformOpOrderFieldIndex {
-        specs.append(USDCCrateSpec(pathIndex: 6, fieldSetIndex: appendFieldSet([translateFieldIndex]), specType: .attribute))
+        var translateFieldIndexes = [translateFieldIndex]
+        if let translateTimeSamplesFieldIndex {
+            translateFieldIndexes.append(translateTimeSamplesFieldIndex)
+        }
+        specs.append(USDCCrateSpec(pathIndex: 6, fieldSetIndex: appendFieldSet(translateFieldIndexes), specType: .attribute))
         specs.append(USDCCrateSpec(pathIndex: 7, fieldSetIndex: appendFieldSet([xformOpOrderFieldIndex]), specType: .attribute))
         pathCount = 8
         pathIndexes = [0, 1, 2, 3, 4, 5, 6, 7]

@@ -3,6 +3,7 @@ import Foundation
 public indirect enum SdfFieldValue: Sendable, Equatable, Hashable {
     case unmaterializedValue
     case authored(String)
+    case timeSamples([SdfTimeSample])
     case bool(Bool)
     case boolArray([Bool])
     case token(String)
@@ -30,6 +31,8 @@ public indirect enum SdfFieldValue: Sendable, Equatable, Hashable {
     case timeCodeArray([Double])
     case point2(USDPoint2D)
     case point2Array([USDPoint2D])
+    case point3(USDPoint3D)
+    case point3Array([USDPoint3D])
     case layerOffsetVector([SdfLayerOffset])
     case permission(SdfPermission)
     case variability(SdfVariability)
@@ -41,6 +44,8 @@ public indirect enum SdfFieldValue: Sendable, Equatable, Hashable {
             self = .unmaterializedValue
         case .authored(let value):
             self = .authored(value)
+        case .timeSamples(let samples):
+            self = .timeSamples(samples)
         case .dictionary(let values):
             self = .dictionary(values)
         case .tokenListOperation(let operation):
@@ -89,6 +94,8 @@ public indirect enum SdfFieldValue: Sendable, Equatable, Hashable {
             return .unmaterializedValue
         case .authored(let value):
             return .authored(value)
+        case .timeSamples(let samples):
+            return .timeSamples(samples)
         case .dictionary(let values):
             return .dictionary(values)
         case .pathListOperation(let operation):
@@ -131,6 +138,10 @@ public indirect enum SdfFieldValue: Sendable, Equatable, Hashable {
             return .authored("(\(Self.doubleText(value.x)), \(Self.doubleText(value.y)))")
         case .point2Array(let values):
             return .authored("[\(values.map { "(\(Self.doubleText($0.x)), \(Self.doubleText($0.y)))" }.joined(separator: ", "))]")
+        case .point3(let value):
+            return .authored(Self.point3Text(value))
+        case .point3Array(let values):
+            return .authored("[\(values.map(Self.point3Text).joined(separator: ", "))]")
         case .layerOffsetVector(let values):
             return .authored("[\(values.map(Self.layerOffsetText).joined(separator: ", "))]")
         case .permission(let value):
@@ -210,6 +221,10 @@ public indirect enum SdfFieldValue: Sendable, Equatable, Hashable {
             return "double2 \(usdaDictionaryKeyText(name)) = \(point2Text(value))"
         case .point2Array(let values):
             return "double2[] \(usdaDictionaryKeyText(name)) = [\(values.map(point2Text).joined(separator: ", "))]"
+        case .point3(let value):
+            return "double3 \(usdaDictionaryKeyText(name)) = \(point3Text(value))"
+        case .point3Array(let values):
+            return "double3[] \(usdaDictionaryKeyText(name)) = [\(values.map(point3Text).joined(separator: ", "))]"
         case .timeCode(let value):
             return "timecode \(usdaDictionaryKeyText(name)) = \(doubleText(value))"
         case .timeCodeArray(let values):
@@ -284,6 +299,84 @@ public indirect enum SdfFieldValue: Sendable, Equatable, Hashable {
         "(\(doubleText(value.x)), \(doubleText(value.y)))"
     }
 
+    internal static func point3Text(_ value: USDPoint3D) -> String {
+        "(\(doubleText(value.x)), \(doubleText(value.y)), \(doubleText(value.z)))"
+    }
+
+    internal static func timeSamplesText(_ samples: [SdfTimeSample]) throws -> String {
+        guard !samples.isEmpty else {
+            return "{}"
+        }
+        var seenTimeCodes: Set<Double> = []
+        let lines = try samples.map { sample in
+            guard sample.timeCode.isFinite else {
+                throw USDError.invalidData("SdfFieldValue timeSamples contains a non-finite timeCode.")
+            }
+            guard seenTimeCodes.insert(sample.timeCode).inserted else {
+                throw USDError.invalidData("SdfFieldValue timeSamples contains duplicate timeCode values.")
+            }
+            let valueText = try sample.value?.usdaValueText() ?? "None"
+            return "    \(timeCodeText(sample.timeCode)): \(valueText)"
+        }
+        return "{\n\(lines.joined(separator: ",\n"))\n}"
+    }
+
+    internal func usdaValueText() throws -> String {
+        switch self {
+        case .unmaterializedValue:
+            throw USDError.unsupportedFeature("SdfFieldValue is unmaterialized and cannot be exported to USDA without data loss.")
+        case .authored(let value):
+            return value
+        case .timeSamples(let samples):
+            return try Self.timeSamplesText(samples)
+        case .bool(let value):
+            return value ? "true" : "false"
+        case .boolArray(let values):
+            return "[\(values.map { $0 ? "true" : "false" }.joined(separator: ", "))]"
+        case .token(let value), .string(let value):
+            return Self.quoted(value)
+        case .tokenArray(let values), .tokenVector(let values), .stringVector(let values):
+            return "[\(values.map(Self.quoted).joined(separator: ", "))]"
+        case .assetPath(let value):
+            return Self.assetPathText(value)
+        case .dictionary(let values):
+            return try Self.usdaDictionaryText(values)
+        case .path(let value):
+            return "<\(value.rawValue)>"
+        case .pathVector(let values):
+            return "[\(values.map { "<\($0.rawValue)>" }.joined(separator: ", "))]"
+        case .variantSelectionMap(let values):
+            return Self.variantSelectionMapText(values)
+        case .tokenListOperation,
+             .stringListOperation,
+             .pathListOperation,
+             .referenceListOperation,
+             .payloadListOperation,
+             .payload,
+             .layerOffsetVector,
+             .permission,
+             .variability,
+             .specifier:
+            throw USDError.unsupportedFeature("SdfFieldValue requires statement-style USDA authoring and cannot be used as a bare value.")
+        case .int(let value):
+            return String(value)
+        case .double(let value), .timeCode(let value):
+            return Self.doubleText(value)
+        case .doubleArray(let values), .doubleVector(let values), .timeCodeArray(let values):
+            return "[\(values.map(Self.doubleText).joined(separator: ", "))]"
+        case .intArray(let values):
+            return "[\(values.map(String.init).joined(separator: ", "))]"
+        case .point2(let value):
+            return Self.point2Text(value)
+        case .point2Array(let values):
+            return "[\(values.map(Self.point2Text).joined(separator: ", "))]"
+        case .point3(let value):
+            return Self.point3Text(value)
+        case .point3Array(let values):
+            return "[\(values.map(Self.point3Text).joined(separator: ", "))]"
+        }
+    }
+
     internal static func specifierText(_ specifier: SdfSpecifier) -> String {
         switch specifier {
         case .def:
@@ -304,6 +397,13 @@ public indirect enum SdfFieldValue: Sendable, Equatable, Hashable {
         return String(value)
     }
 
+    internal static func timeCodeText(_ value: Double) -> String {
+        if value.rounded() == value, value.magnitude < 1e15 {
+            return String(Int64(value))
+        }
+        return String(value)
+    }
+
     internal func validateUSDAExportSupport(fieldName: String, path: SdfPath) throws {
         switch self {
         case .unmaterializedValue:
@@ -314,6 +414,15 @@ public indirect enum SdfFieldValue: Sendable, Equatable, Hashable {
             for (childName, childValue) in values {
                 try childValue.validateUSDAExportSupport(fieldName: "\(fieldName).\(childName)", path: path)
                 try childValue.validateDictionaryEntryUSDAExportSupport(fieldName: "\(fieldName).\(childName)", path: path)
+            }
+        case .timeSamples(let samples):
+            var seenTimeCodes: Set<Double> = []
+            for sample in samples {
+                try Self.validateFinite(sample.timeCode, fieldName: "\(fieldName).timeCode", path: path)
+                guard seenTimeCodes.insert(sample.timeCode).inserted else {
+                    throw USDError.invalidData("SdfFieldValue \(fieldName) at \(path.rawValue) contains duplicate timeCode values.")
+                }
+                try sample.value?.validateUSDAExportSupport(fieldName: "\(fieldName).timeSamples", path: path)
             }
         case .referenceListOperation(let operation):
             try validateListOperation(operation) { reference in
@@ -345,6 +454,16 @@ public indirect enum SdfFieldValue: Sendable, Equatable, Hashable {
             for value in values {
                 try Self.validateFinite(value.x, fieldName: fieldName, path: path)
                 try Self.validateFinite(value.y, fieldName: fieldName, path: path)
+            }
+        case .point3(let value):
+            try Self.validateFinite(value.x, fieldName: fieldName, path: path)
+            try Self.validateFinite(value.y, fieldName: fieldName, path: path)
+            try Self.validateFinite(value.z, fieldName: fieldName, path: path)
+        case .point3Array(let values):
+            for value in values {
+                try Self.validateFinite(value.x, fieldName: fieldName, path: path)
+                try Self.validateFinite(value.y, fieldName: fieldName, path: path)
+                try Self.validateFinite(value.z, fieldName: fieldName, path: path)
             }
         case .layerOffsetVector(let values):
             for value in values {
@@ -378,6 +497,7 @@ public indirect enum SdfFieldValue: Sendable, Equatable, Hashable {
         switch self {
         case .authored,
              .unmaterializedValue,
+             .timeSamples,
              .path,
              .pathVector,
              .variantSelectionMap,

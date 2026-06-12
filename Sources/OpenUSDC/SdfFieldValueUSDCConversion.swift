@@ -5,6 +5,8 @@ public extension SdfFieldValue {
         switch value {
         case .unmaterializedValue:
             self = .unmaterializedValue
+        case .timeSamples(let samples):
+            self = .timeSamples(samples)
         case .bool(let value):
             self = .bool(value)
         case .boolArray(let values):
@@ -57,6 +59,10 @@ public extension SdfFieldValue {
             self = .point2(value)
         case .point2Array(let values):
             self = .point2Array(values)
+        case .point3(let value):
+            self = .point3(value)
+        case .point3Array(let values):
+            self = .point3Array(values)
         case .layerOffsetVector(let values):
             self = .layerOffsetVector(values)
         case .permission(let value):

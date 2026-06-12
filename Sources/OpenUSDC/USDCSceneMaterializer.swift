@@ -742,6 +742,9 @@ struct USDCSceneMaterializer {
         record: USDCSpecRecord,
         valueDecoder: USDCCrateValueDecoder
     ) throws -> USDCCrateValueRep? {
+        if let timeSamples = record.fields["timeSamples"], options.timeCode != nil {
+            return try valueDecoder.readTimeSampleValueRep(timeSamples, at: options.timeCode)
+        }
         if let defaultValue = record.fields["default"] {
             if !valueDecoder.isBlockedValue(defaultValue) {
                 return defaultValue

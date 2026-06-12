@@ -2,6 +2,7 @@ import OpenUSD
 
 public enum USDCLayerFieldValue: Sendable, Equatable {
     case unmaterializedValue(USDCUnmaterializedValue)
+    case timeSamples([SdfTimeSample])
     case bool(Bool)
     case boolArray([Bool])
     case token(String)
@@ -28,6 +29,8 @@ public enum USDCLayerFieldValue: Sendable, Equatable {
     case timeCodeArray([Double])
     case point2(USDPoint2D)
     case point2Array([USDPoint2D])
+    case point3(USDPoint3D)
+    case point3Array([USDPoint3D])
     case layerOffsetVector([SdfLayerOffset])
     case permission(SdfPermission)
     case variability(SdfVariability)

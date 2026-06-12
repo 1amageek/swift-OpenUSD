@@ -101,12 +101,19 @@ struct USDCLayerReader {
                 }
                 fieldReps[fieldName] = field.valueRep
             }
+            let specType = try spec.specType.usdSpecType()
+            let authoredTypeName = try fieldReps["typeName"].map { try valueDecoder.readStringLike($0) }
             return USDCLayerRecord(
                 path: path,
                 specType: spec.specType,
                 fields: fieldReps,
                 specifier: try specifier(from: fieldReps["specifier"]),
-                typeName: try fieldReps["typeName"].map { try valueDecoder.readStringLike($0) }
+                typeName: try authoredTypeName ?? inferredTypeName(
+                    for: path,
+                    specType: specType,
+                    fields: fieldReps,
+                    valueDecoder: valueDecoder
+                )
             )
         }
     }
@@ -147,6 +154,87 @@ struct USDCLayerReader {
             values[name] = try valueDecoder.readLayerFieldValue(valueRep)
         }
         return values
+    }
+
+    private func inferredTypeName(
+        for path: String,
+        specType: SdfSpecType,
+        fields: [String: USDCCrateValueRep],
+        valueDecoder: USDCCrateValueDecoder
+    ) throws -> String? {
+        guard specType == .attribute else {
+            return nil
+        }
+        if let defaultValue = fields["default"],
+           !valueDecoder.isBlockedValue(defaultValue) {
+            return inferredTypeName(for: path, valueRep: defaultValue)
+        }
+        if let timeSamples = fields["timeSamples"],
+           let sampledValue = try valueDecoder.readFirstUnblockedTimeSampleValueRep(timeSamples) {
+            return inferredTypeName(for: path, valueRep: sampledValue)
+        }
+        return nil
+    }
+
+    private func inferredTypeName(for path: String, valueRep: USDCCrateValueRep) -> String? {
+        guard let type = valueRep.type else {
+            return nil
+        }
+        let baseName: String
+        switch type {
+        case .bool:
+            baseName = "bool"
+        case .uChar:
+            baseName = "uchar"
+        case .uInt:
+            baseName = "uint"
+        case .int64:
+            baseName = "int64"
+        case .uInt64:
+            baseName = "uint64"
+        case .token:
+            baseName = "token"
+        case .string:
+            baseName = "string"
+        case .assetPath:
+            baseName = "asset"
+        case .float:
+            baseName = "float"
+        case .double:
+            baseName = "double"
+        case .int:
+            baseName = "int"
+        case .timeCode:
+            baseName = "timecode"
+        case .vec2d:
+            baseName = "double2"
+        case .vec2f:
+            baseName = "float2"
+        case .vec3d:
+            baseName = vector3TypeName(for: path, precision: "d")
+        case .vec3f:
+            baseName = vector3TypeName(for: path, precision: "f")
+        default:
+            return nil
+        }
+        return valueRep.isArray ? "\(baseName)[]" : baseName
+    }
+
+    private func vector3TypeName(for path: String, precision: String) -> String {
+        let propertyName = path.split(separator: ".").last.map(String.init) ?? path
+        if propertyName == "points" || propertyName == "extent" {
+            return "point3\(precision)"
+        }
+        if propertyName == "normals" {
+            return "normal3\(precision)"
+        }
+        if propertyName == "primvars:displayColor" {
+            return "color3\(precision)"
+        }
+        if propertyName.hasPrefix("xformOp:") {
+            return precision == "d" ? "double3" : "float3"
+        }
+        return "vector3\(precision)"
     }
 }
 
