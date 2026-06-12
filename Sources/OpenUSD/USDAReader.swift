@@ -28,13 +28,13 @@ public struct USDAReader: USDSceneReader {
     public func read(from text: String, options: USDReadingOptions) throws -> USDScene {
         let text = try readerVisibleText(from: text)
         try validateSignature(in: text)
-        try validateTopLevelSyntax(in: text)
+        // Parse the top-level prim list once and share it between validation
+        // and every downstream consumer.
+        let rootPrims = try validateTopLevelSyntax(in: text)
         let metadataBody = try layerMetadataBody(in: text)
         try validateLayerMetadataStatements(in: metadataBody)
         try validateRelocatesMetadata(in: metadataBody)
-        try validatePrimAttributeSyntax(in: text)
-        // Parse the top-level prim list once and share it between consumers.
-        let rootPrims = try parseDirectPrims(in: text)
+        try validatePrimAttributeSyntax(prims: rootPrims)
         try validateUniqueSiblingPrimPaths(prims: rootPrims, parentPrimPath: "")
         if let timeCode = options.timeCode, !timeCode.isFinite {
             throw USDError.invalidData("USDA requested timeCode must be finite.")
@@ -59,13 +59,13 @@ public struct USDAReader: USDSceneReader {
     public func readLayer(from text: String) throws -> USDALayer {
         let text = try readerVisibleText(from: text)
         try validateSignature(in: text)
-        try validateTopLevelSyntax(in: text)
+        // Parse the top-level prim list once and share it between validation
+        // and every downstream consumer.
+        let rootPrims = try validateTopLevelSyntax(in: text)
         let metadataBody = try layerMetadataBody(in: text)
         try validateLayerMetadataStatements(in: metadataBody)
         try validateRelocatesMetadata(in: metadataBody)
-        try validatePrimAttributeSyntax(in: text)
-        // Parse the top-level prim list once and share it between consumers.
-        let rootPrims = try parseDirectPrims(in: text)
+        try validatePrimAttributeSyntax(prims: rootPrims)
         let specs = try parseLayerSpecs(prims: rootPrims, metadataBody: metadataBody)
         try validateUniqueSiblingPrimPaths(prims: rootPrims, parentPrimPath: "")
         let defaultPrim = try metadataBody.flatMap { try parseOptionalString(named: "defaultPrim", in: $0) }
@@ -99,18 +99,30 @@ public struct USDAReader: USDSceneReader {
     }
 
     private func validateSignature(in text: String) throws {
-        guard text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("#usda") else {
+        // Skip only the leading whitespace/newlines instead of trimming (and
+        // copying) the entire document just to check a five-character prefix.
+        let scalars = text.unicodeScalars
+        let whitespaceAndNewlines = CharacterSet.whitespacesAndNewlines
+        var index = scalars.startIndex
+        while index < scalars.endIndex, whitespaceAndNewlines.contains(scalars[index]) {
+            index = scalars.index(after: index)
+        }
+        guard scalars[index...].starts(with: "#usda".unicodeScalars) else {
             throw USDError.invalidData("USDA data is missing the #usda signature.")
         }
     }
 
-    private func validateTopLevelSyntax(in text: String) throws {
+    /// Validates the top-level structure and returns the parsed direct prims.
+    /// The parse performed here is shared with downstream validation and
+    /// consumers so the top-level prim list is built exactly once per document.
+    private func validateTopLevelSyntax(in text: String) throws -> [USDAPrim] {
+        var prims: [USDAPrim] = []
         var cursor = topLevelSyntaxStart(in: text)
         var hasReadMetadata = false
         while true {
             skipWhitespaceAndLineComments(in: text, index: &cursor)
             guard cursor < text.endIndex else {
-                return
+                return prims
             }
             if text[cursor] == ";" {
                 cursor = text.index(after: cursor)
@@ -124,6 +136,7 @@ public struct USDAReader: USDSceneReader {
             }
             if primDeclarationKeyword(at: cursor, in: text) != nil {
                 let prim = try parsePrim(at: cursor, in: text)
+                prims.append(prim)
                 cursor = prim.fullRange.upperBound
                 continue
             }
@@ -151,8 +164,7 @@ public struct USDAReader: USDSceneReader {
         }
     }
 
-    private func validatePrimAttributeSyntax(in text: String) throws {
-        let prims = try parseDirectPrims(in: text)
+    private func validatePrimAttributeSyntax(prims: [USDAPrim]) throws {
         for prim in prims {
             let directAttributeText = try directAttributeText(from: prim.body)
             try validateBoolMetadata(named: "hidden", in: prim.metadataBody)
@@ -167,18 +179,19 @@ public struct USDAReader: USDSceneReader {
             try validateRelocatesMetadata(in: prim.metadataBody)
             try validatePropertyDeclarations(in: directAttributeText)
             try validateScalarAssignments(in: directAttributeText)
-            try validatePrimAttributeSyntax(in: prim.body)
+            try validatePrimAttributeSyntax(prims: try parseDirectPrims(in: prim.body))
         }
     }
 
     private func validatePropertyDeclarations(in text: String) throws {
+        let scalars = text.unicodeScalars
         var cursor = text.startIndex
         var isStatementStart = true
         var parenthesisDepth = 0
         var bracketDepth = 0
         var braceDepth = 0
         while cursor < text.endIndex {
-            let character = text[cursor]
+            let character = scalars[cursor]
             if character == "#" {
                 skipLineComment(in: text, index: &cursor)
                 if parenthesisDepth == 0 && bracketDepth == 0 && braceDepth == 0 {
@@ -211,18 +224,18 @@ public struct USDAReader: USDSceneReader {
             let isAtTopLevel = parenthesisDepth == 0 && bracketDepth == 0 && braceDepth == 0
             if isAtTopLevel && (character == "\n" || character == "\r" || character == ";") {
                 isStatementStart = true
-                cursor = text.index(after: cursor)
+                cursor = scalars.index(after: cursor)
                 continue
             }
             if isAtTopLevel, isStatementStart {
-                if character.isWhitespace {
-                    cursor = text.index(after: cursor)
+                if isWhitespaceScalar(character) {
+                    cursor = scalars.index(after: cursor)
                     continue
                 }
                 try validatePropertyDeclaration(startingAt: cursor, in: text)
                 isStatementStart = false
             }
-            cursor = text.index(after: cursor)
+            cursor = scalars.index(after: cursor)
         }
     }
 
@@ -2829,12 +2842,18 @@ public struct USDAReader: USDSceneReader {
         from startIndex: String.Index,
         matching kinds: Set<USDADirectDeclarationKind>
     ) throws -> (kind: USDADirectDeclarationKind, index: String.Index)? {
+        // Scan over Unicode scalars rather than grapheme-cluster Characters.
+        // Outside quoted strings, asset paths, and comments (all delegated to
+        // skip helpers) USDA structure is ASCII, so scalar boundaries coincide
+        // with grapheme boundaries while avoiding per-character grapheme
+        // validation on every step. String.Index is shared across both views.
+        let scalars = text.unicodeScalars
         var index = startIndex
         var braceDepth = 0
         var bracketDepth = 0
         var parenthesisDepth = 0
         while index < text.endIndex {
-            let character = text[index]
+            let character = scalars[index]
             if character == "#" {
                 skipLineComment(in: text, index: &index)
                 continue
@@ -2862,14 +2881,24 @@ public struct USDAReader: USDSceneReader {
             } else if braceDepth == 0,
                       bracketDepth == 0,
                       parenthesisDepth == 0 {
-                if kinds.contains(.prim), primDeclarationKeyword(at: index, in: text) != nil {
-                    return (.prim, index)
-                }
-                if kinds.contains(.variantSet), variantSetDeclarationKeyword(at: index, in: text) != nil {
-                    return (.variantSet, index)
+                // A declaration keyword can only begin with one of these ASCII
+                // letters (class/over/def/variantSet), so gating on the current
+                // scalar skips the probe for every other character. The probe
+                // functions still apply the authoritative leading/trailing
+                // boundary rules, so this only filters out guaranteed misses.
+                switch character {
+                case "c", "o", "d", "v":
+                    if kinds.contains(.prim), primDeclarationKeyword(at: index, in: text) != nil {
+                        return (.prim, index)
+                    }
+                    if kinds.contains(.variantSet), variantSetDeclarationKeyword(at: index, in: text) != nil {
+                        return (.variantSet, index)
+                    }
+                default:
+                    break
                 }
             }
-            index = text.index(after: index)
+            index = scalars.index(after: index)
         }
         return nil
     }
@@ -2879,29 +2908,30 @@ public struct USDAReader: USDSceneReader {
             throw USDError.invalidData("USDA prim declaration has an unsupported specifier.")
         }
         let specifier = try primSpecifier(for: keyword)
-        var cursor = text.index(declarationIndex, offsetBy: keyword.count)
+        let scalars = text.unicodeScalars
+        var cursor = scalars.index(declarationIndex, offsetBy: keyword.count)
         try skipPrimDeclarationWhitespace(in: text, index: &cursor)
         var typeName: String?
         let name: String?
-        if cursor < text.endIndex, text[cursor] == "\"" {
+        if cursor < text.endIndex, scalars[cursor] == "\"" {
             let quoted = try parseQuotedString(startingAt: cursor, in: text)
             name = quoted.value
             cursor = quoted.endIndex
         } else {
             let typeStart = cursor
             while cursor < text.endIndex,
-                  !text[cursor].isWhitespace,
-                  text[cursor] != "\"",
-                  text[cursor] != "(",
-                  text[cursor] != "{" {
-                cursor = text.index(after: cursor)
+                  !isWhitespaceScalar(scalars[cursor]),
+                  scalars[cursor] != "\"",
+                  scalars[cursor] != "(",
+                  scalars[cursor] != "{" {
+                cursor = scalars.index(after: cursor)
             }
             guard typeStart < cursor else {
                 throw USDError.invalidData("USDA prim declaration is missing a type name.")
             }
             typeName = String(text[typeStart..<cursor])
             try skipPrimDeclarationWhitespace(in: text, index: &cursor)
-            guard cursor < text.endIndex, text[cursor] == "\"" else {
+            guard cursor < text.endIndex, scalars[cursor] == "\"" else {
                 throw USDError.invalidData("USDA prim declaration is missing a quoted name.")
             }
             let quoted = try parseQuotedString(startingAt: cursor, in: text)
@@ -2913,10 +2943,10 @@ public struct USDAReader: USDSceneReader {
         }
         skipWhitespace(in: text, index: &cursor)
         let metadataBody: String
-        if cursor < text.endIndex, text[cursor] == "(" {
+        if cursor < text.endIndex, scalars[cursor] == "(" {
             let metadataEnd = try matchingParenthesis(startingAt: cursor, in: text)
-            metadataBody = String(text[text.index(after: cursor)..<metadataEnd])
-            cursor = text.index(after: metadataEnd)
+            metadataBody = String(text[scalars.index(after: cursor)..<metadataEnd])
+            cursor = scalars.index(after: metadataEnd)
         } else {
             metadataBody = ""
         }
@@ -2925,19 +2955,19 @@ public struct USDAReader: USDSceneReader {
         guard cursor < text.endIndex else {
             throw USDError.invalidData("USDA prim is missing an opening brace.")
         }
-        guard text[cursor] == "{" else {
+        guard scalars[cursor] == "{" else {
             throw USDError.invalidData("USDA prim declaration contains unexpected token before body.")
         }
         let openBrace = cursor
         let closeBrace = try matchingBrace(startingAt: openBrace, in: text)
-        let body = String(text[text.index(after: openBrace)..<closeBrace])
+        let body = String(text[scalars.index(after: openBrace)..<closeBrace])
         return USDAPrim(
             specifier: specifier,
             typeName: typeName,
             name: name,
             metadataBody: metadataBody,
             body: body,
-            fullRange: declarationIndex..<text.index(after: closeBrace)
+            fullRange: declarationIndex..<scalars.index(after: closeBrace)
         )
     }
 
@@ -3192,7 +3222,7 @@ public struct USDAReader: USDSceneReader {
               text[quoteStart] == "\"" || text[quoteStart] == "'" else {
             throw USDError.invalidData("USDA string is missing an opening quote.")
         }
-        let quote = text[quoteStart]
+        let quote = text.unicodeScalars[quoteStart]
         let delimiterLength = repeatedCharacterCount(at: quoteStart, character: quote, in: text) >= 3 ? 3 : 1
         var cursor = text.index(quoteStart, offsetBy: delimiterLength)
         var value = ""
@@ -3367,45 +3397,81 @@ public struct USDAReader: USDSceneReader {
         return isValidUSDIdentifier(name[componentStart..<name.endIndex])
     }
 
+    /// Scalar-level prefix match for an ASCII keyword. USDA keywords are pure
+    /// ASCII, so comparing scalars avoids grapheme-cluster subscripting.
+    private func matchesASCIIKeyword(
+        _ keyword: String,
+        at index: String.Index,
+        in scalars: String.UnicodeScalarView
+    ) -> Bool {
+        var cursor = index
+        for keywordScalar in keyword.unicodeScalars {
+            guard cursor < scalars.endIndex, scalars[cursor] == keywordScalar else {
+                return false
+            }
+            cursor = scalars.index(after: cursor)
+        }
+        return true
+    }
+
+    private func hasKeywordLeadingBoundary(at index: String.Index, in scalars: String.UnicodeScalarView) -> Bool {
+        guard index != scalars.startIndex else {
+            return true
+        }
+        let previous = scalars[scalars.index(before: index)]
+        return isWhitespaceScalar(previous) || previous == "{" || previous == "}" || previous == ";"
+    }
+
     private func primDeclarationKeyword(at index: String.Index, in text: String) -> String? {
+        let scalars = text.unicodeScalars
         let keywords = ["class", "over", "def"]
-        guard let keyword = keywords.first(where: { text[index...].hasPrefix($0) }) else {
+        guard let keyword = keywords.first(where: { matchesASCIIKeyword($0, at: index, in: scalars) }) else {
             return nil
         }
-        guard let keywordEnd = text.index(index, offsetBy: keyword.count, limitedBy: text.endIndex) else {
+        guard let keywordEnd = scalars.index(index, offsetBy: keyword.count, limitedBy: scalars.endIndex) else {
             return nil
         }
-        let hasLeadingBoundary: Bool
-        if index == text.startIndex {
-            hasLeadingBoundary = true
-        } else {
-            let previous = text[text.index(before: index)]
-            hasLeadingBoundary = previous.isWhitespace || previous == "{" || previous == "}" || previous == ";"
-        }
-        let hasTrailingBoundary = keywordEnd == text.endIndex || text[keywordEnd].isWhitespace
-        return hasLeadingBoundary && hasTrailingBoundary ? keyword : nil
+        let hasTrailingBoundary = keywordEnd == scalars.endIndex || isWhitespaceScalar(scalars[keywordEnd])
+        return hasKeywordLeadingBoundary(at: index, in: scalars) && hasTrailingBoundary ? keyword : nil
     }
 
     private func variantSetDeclarationKeyword(at index: String.Index, in text: String) -> String? {
+        let scalars = text.unicodeScalars
         let keyword = "variantSet"
-        guard text[index...].hasPrefix(keyword),
-              let keywordEnd = text.index(index, offsetBy: keyword.count, limitedBy: text.endIndex) else {
+        guard matchesASCIIKeyword(keyword, at: index, in: scalars),
+              let keywordEnd = scalars.index(index, offsetBy: keyword.count, limitedBy: scalars.endIndex) else {
             return nil
         }
-        let hasLeadingBoundary: Bool
-        if index == text.startIndex {
-            hasLeadingBoundary = true
-        } else {
-            let previous = text[text.index(before: index)]
-            hasLeadingBoundary = previous.isWhitespace || previous == "{" || previous == "}" || previous == ";"
+        let hasTrailingBoundary = keywordEnd == scalars.endIndex || isWhitespaceScalar(scalars[keywordEnd])
+        return hasKeywordLeadingBoundary(at: index, in: scalars) && hasTrailingBoundary ? keyword : nil
+    }
+
+    /// True when the scalar is whitespace under the same rule as
+    /// `Character.isWhitespace` applies to a single-scalar character.
+    private func isWhitespaceScalar(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.value {
+        case 0x20, 0x09, 0x0A, 0x0B, 0x0C, 0x0D:
+            return true
+        default:
+            return scalar.properties.isWhitespace
         }
-        let hasTrailingBoundary = keywordEnd == text.endIndex || text[keywordEnd].isWhitespace
-        return hasLeadingBoundary && hasTrailingBoundary ? keyword : nil
+    }
+
+    /// True when the scalar is a line break under the same rule as
+    /// `Character.isNewline` applies to a single-scalar character.
+    private func isNewlineScalar(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.value {
+        case 0x0A, 0x0B, 0x0C, 0x0D, 0x85, 0x2028, 0x2029:
+            return true
+        default:
+            return false
+        }
     }
 
     private func skipWhitespace(in text: String, index: inout String.Index) {
-        while index < text.endIndex, text[index].isWhitespace {
-            index = text.index(after: index)
+        let scalars = text.unicodeScalars
+        while index < text.endIndex, isWhitespaceScalar(scalars[index]) {
+            index = scalars.index(after: index)
         }
     }
 
@@ -3450,46 +3516,48 @@ public struct USDAReader: USDSceneReader {
     }
 
     private func skipLineComment(in text: String, index: inout String.Index) {
-        while index < text.endIndex, !text[index].isNewline {
-            index = text.index(after: index)
+        let scalars = text.unicodeScalars
+        while index < text.endIndex, !isNewlineScalar(scalars[index]) {
+            index = scalars.index(after: index)
         }
     }
 
     /// Skips a USDA asset literal using the same delimiter rules as
     /// `parseAssetPath(startingAt:in:endIndex:)`.
     private func skipAssetPathLiteral(in text: String, index: inout String.Index) throws {
+        let scalars = text.unicodeScalars
         let openRunLength = repeatedCharacterCount(at: index, character: "@", in: text)
         let delimiterLength = openRunLength >= 3 ? 3 : 1
-        index = text.index(index, offsetBy: delimiterLength)
+        index = scalars.index(index, offsetBy: delimiterLength)
         if delimiterLength == 1 {
             while index < text.endIndex {
-                if text[index] == "@" {
-                    index = text.index(after: index)
+                if scalars[index] == "@" {
+                    index = scalars.index(after: index)
                     return
                 }
-                index = text.index(after: index)
+                index = scalars.index(after: index)
             }
             throw USDError.invalidData("USDA asset path is unterminated.")
         }
         while index < text.endIndex {
-            if text[index] == "\\" {
-                let escapeStart = text.index(after: index)
+            if scalars[index] == "\\" {
+                let escapeStart = scalars.index(after: index)
                 if repeatedCharacterCount(at: escapeStart, character: "@", in: text) >= 3 {
-                    index = text.index(escapeStart, offsetBy: 3)
+                    index = scalars.index(escapeStart, offsetBy: 3)
                     continue
                 }
-                index = text.index(after: index)
+                index = scalars.index(after: index)
                 continue
             }
-            if text[index] == "@" {
+            if scalars[index] == "@" {
                 let runLength = repeatedCharacterCount(at: index, character: "@", in: text)
-                index = text.index(index, offsetBy: runLength)
+                index = scalars.index(index, offsetBy: runLength)
                 if runLength >= 3 {
                     return
                 }
                 continue
             }
-            index = text.index(after: index)
+            index = scalars.index(after: index)
         }
         throw USDError.invalidData("USDA asset path is unterminated.")
     }
@@ -5117,12 +5185,13 @@ public struct USDAReader: USDSceneReader {
     }
 
     private func attributeNameRange(named name: String, in text: String) throws -> Range<String.Index>? {
+        let scalars = text.unicodeScalars
         var index = text.startIndex
         var braceDepth = 0
         var bracketDepth = 0
         var parenthesisDepth = 0
         while index < text.endIndex {
-            let character = text[index]
+            let character = scalars[index]
             if character == "#" {
                 skipLineComment(in: text, index: &index)
                 continue
@@ -5137,8 +5206,8 @@ public struct USDAReader: USDSceneReader {
             }
             let isAtTopLevel = braceDepth == 0 && bracketDepth == 0 && parenthesisDepth == 0
             guard isAtTopLevel,
-                  text[index...].hasPrefix(name),
-                  let nameEnd = text.index(index, offsetBy: name.count, limitedBy: text.endIndex) else {
+                  matchesASCIIKeyword(name, at: index, in: scalars),
+                  let nameEnd = scalars.index(index, offsetBy: name.count, limitedBy: scalars.endIndex) else {
                 if character == "{" {
                     braceDepth += 1
                 } else if character == "}" {
@@ -5152,32 +5221,34 @@ public struct USDAReader: USDSceneReader {
                 } else if character == ")" {
                     parenthesisDepth = max(0, parenthesisDepth - 1)
                 }
-                index = text.index(after: index)
+                index = scalars.index(after: index)
                 continue
             }
             if hasValidAttributeLeadingBoundary(at: index, in: text),
                hasValidAttributeTrailingBoundary(at: nameEnd, in: text) {
                 return index..<nameEnd
             }
-            index = text.index(after: index)
+            index = scalars.index(after: index)
         }
         return nil
     }
 
     private func hasValidAttributeLeadingBoundary(at index: String.Index, in text: String) -> Bool {
-        guard index > text.startIndex else {
+        let scalars = text.unicodeScalars
+        guard index > scalars.startIndex else {
             return true
         }
-        let previous = text[text.index(before: index)]
-        return previous.isWhitespace || previous == "]" || previous == "(" || previous == ","
+        let previous = scalars[scalars.index(before: index)]
+        return isWhitespaceScalar(previous) || previous == "]" || previous == "(" || previous == ","
     }
 
     private func hasValidAttributeTrailingBoundary(at index: String.Index, in text: String) -> Bool {
-        guard index < text.endIndex else {
+        let scalars = text.unicodeScalars
+        guard index < scalars.endIndex else {
             return true
         }
-        let next = text[index]
-        return next.isWhitespace
+        let next = scalars[index]
+        return isWhitespaceScalar(next)
             || next == "="
             || next == "["
             || next == "("
@@ -5209,14 +5280,15 @@ public struct USDAReader: USDSceneReader {
 
     private func matchingDelimiter(
         startingAt openIndex: String.Index,
-        open: Character,
-        close: Character,
+        open: Unicode.Scalar,
+        close: Unicode.Scalar,
         in text: String
     ) throws -> String.Index {
+        let scalars = text.unicodeScalars
         var depth = 0
         var index = openIndex
         while index < text.endIndex {
-            let character = text[index]
+            let character = scalars[index]
             if character == "#" {
                 skipLineComment(in: text, index: &index)
                 continue
@@ -5237,38 +5309,40 @@ public struct USDAReader: USDSceneReader {
                     return index
                 }
             }
-            index = text.index(after: index)
+            index = scalars.index(after: index)
         }
         throw USDError.invalidData("USDA delimiter is unterminated.")
     }
 
     private func skipQuotedString(in text: String, index: inout String.Index) throws {
-        let quote = text[index]
+        let scalars = text.unicodeScalars
+        let quote = scalars[index]
         let delimiterLength = repeatedCharacterCount(at: index, character: quote, in: text) >= 3 ? 3 : 1
-        index = text.index(index, offsetBy: delimiterLength)
+        index = scalars.index(index, offsetBy: delimiterLength)
         while index < text.endIndex {
-            if text[index] == "\\" {
-                index = text.index(after: index)
+            if scalars[index] == "\\" {
+                index = scalars.index(after: index)
                 if index < text.endIndex {
-                    index = text.index(after: index)
+                    index = scalars.index(after: index)
                 }
                 continue
             }
             if repeatedCharacterCount(at: index, character: quote, in: text) >= delimiterLength {
-                index = text.index(index, offsetBy: delimiterLength)
+                index = scalars.index(index, offsetBy: delimiterLength)
                 return
             }
-            index = text.index(after: index)
+            index = scalars.index(after: index)
         }
         throw USDError.invalidData("USDA string is unterminated.")
     }
 
-    private func repeatedCharacterCount(at index: String.Index, character: Character, in text: String) -> Int {
+    private func repeatedCharacterCount(at index: String.Index, character: Unicode.Scalar, in text: String) -> Int {
+        let scalars = text.unicodeScalars
         var cursor = index
         var count = 0
-        while cursor < text.endIndex, text[cursor] == character {
+        while cursor < text.endIndex, scalars[cursor] == character {
             count += 1
-            cursor = text.index(after: cursor)
+            cursor = scalars.index(after: cursor)
         }
         return count
     }
