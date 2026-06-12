@@ -468,6 +468,306 @@ struct CompositionSemanticsTests {
         ))
     }
 
+    // MARK: - Transform merging across the layer stack
+
+    @Test(.timeLimit(.minutes(1)))
+    func sublayerChildTransformInheritsWeakerParentTransform() throws {
+        let weakLayer = try USDAReader().readLayer(from: """
+        #usda 1.0
+
+        def Xform "World"
+        {
+            double3 xformOp:translate = (10, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+        """)
+        let strongLayer = try USDAReader().readLayer(from: """
+        #usda 1.0
+
+        over "World"
+        {
+            def Xform "Geom"
+            {
+                double3 xformOp:translate = (0, 2, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate"]
+            }
+        }
+        """)
+        let rootLayer = USDALayer(
+            composition: USDLayerComposition(sublayers: [
+                USDSublayer(assetPath: "strong.usda"),
+                USDSublayer(assetPath: "weak.usda"),
+            ]),
+            specs: [USDLayerSpec(path: "/", specType: .pseudoRoot)]
+        )
+        let provider = try makeInMemoryProvider([
+            "strong.usda": strongLayer,
+            "weak.usda": weakLayer,
+        ])
+
+        let flattened = try USDStage(rootLayer: rootLayer).flattenedLayer(
+            resolvingWith: provider,
+            rootIdentifier: "root.usda"
+        )
+        let transform = try #require(flattened.primTransforms["/World/Geom"])
+
+        #expect(try transform.transform(USDPoint3D(x: 0, y: 0, z: 0)) == USDPoint3D(x: 10, y: 2, z: 0))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func transformRebuildDoesNotDependOnSpecOrder() throws {
+        let parsedLayer = try USDAReader().readLayer(from: """
+        #usda 1.0
+
+        def Xform "World"
+        {
+            double3 xformOp:translate = (10, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+
+            def Xform "Geom"
+            {
+                double3 xformOp:translate = (0, 2, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate"]
+            }
+        }
+        """)
+        let outOfOrderLayer = try USDALayer(
+            specs: [
+                #require(parsedLayer.spec(at: "/World/Geom")),
+                #require(parsedLayer.spec(at: "/World/Geom.xformOp:translate")),
+                #require(parsedLayer.spec(at: "/World/Geom.xformOpOrder")),
+                #require(parsedLayer.spec(at: "/")),
+                #require(parsedLayer.spec(at: "/World")),
+                #require(parsedLayer.spec(at: "/World.xformOp:translate")),
+                #require(parsedLayer.spec(at: "/World.xformOpOrder")),
+            ],
+            primTransforms: parsedLayer.primTransforms,
+            resetXformStackPrimPaths: parsedLayer.resetXformStackPrimPaths
+        )
+        let rootLayer = USDALayer(
+            composition: USDLayerComposition(sublayers: [
+                USDSublayer(assetPath: "out-of-order.usda"),
+            ]),
+            specs: [USDLayerSpec(path: "/", specType: .pseudoRoot)]
+        )
+        let provider = try makeInMemoryProvider(["out-of-order.usda": outOfOrderLayer])
+
+        let flattened = try USDStage(rootLayer: rootLayer).flattenedLayer(
+            resolvingWith: provider,
+            rootIdentifier: "root.usda"
+        )
+        let transform = try #require(flattened.primTransforms["/World/Geom"])
+
+        #expect(try transform.transform(USDPoint3D(x: 0, y: 0, z: 0)) == USDPoint3D(x: 10, y: 2, z: 0))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func strongerXformOpDefaultOverridesWeakerDefault() throws {
+        let weakLayer = try USDAReader().readLayer(from: """
+        #usda 1.0
+
+        def Xform "World"
+        {
+            double3 xformOp:translate = (10, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+        """)
+        let strongLayer = try USDAReader().readLayer(from: """
+        #usda 1.0
+
+        over "World"
+        {
+            double3 xformOp:translate = (2, 0, 0)
+        }
+        """)
+        let rootLayer = USDALayer(
+            composition: USDLayerComposition(sublayers: [
+                USDSublayer(assetPath: "strong.usda"),
+                USDSublayer(assetPath: "weak.usda"),
+            ]),
+            specs: [USDLayerSpec(path: "/", specType: .pseudoRoot)]
+        )
+        let provider = try makeInMemoryProvider([
+            "strong.usda": strongLayer,
+            "weak.usda": weakLayer,
+        ])
+
+        let flattened = try USDStage(rootLayer: rootLayer).flattenedLayer(
+            resolvingWith: provider,
+            rootIdentifier: "root.usda"
+        )
+        let transform = try #require(flattened.primTransforms["/World"])
+
+        #expect(try transform.transform(USDPoint3D(x: 0, y: 0, z: 0)) == USDPoint3D(x: 2, y: 0, z: 0))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func xformOpOrderAndOperationCanComposeAcrossLayers() throws {
+        let weakLayer = try USDAReader().readLayer(from: """
+        #usda 1.0
+
+        def Xform "World"
+        {
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+        """)
+        let strongLayer = try USDAReader().readLayer(from: """
+        #usda 1.0
+
+        over "World"
+        {
+            double3 xformOp:translate = (0, 2, 0)
+        }
+        """)
+        let rootLayer = USDALayer(
+            composition: USDLayerComposition(sublayers: [
+                USDSublayer(assetPath: "strong.usda"),
+                USDSublayer(assetPath: "weak.usda"),
+            ]),
+            specs: [USDLayerSpec(path: "/", specType: .pseudoRoot)]
+        )
+        let provider = try makeInMemoryProvider([
+            "strong.usda": strongLayer,
+            "weak.usda": weakLayer,
+        ])
+
+        let flattened = try USDStage(rootLayer: rootLayer).flattenedLayer(
+            resolvingWith: provider,
+            rootIdentifier: "root.usda"
+        )
+        let transform = try #require(flattened.primTransforms["/World"])
+
+        #expect(try transform.transform(USDPoint3D(x: 0, y: 0, z: 0)) == USDPoint3D(x: 0, y: 2, z: 0))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func referenceSubrootTransformComposesWithSameValuedLocalSiteTransform() throws {
+        let modelLayer = try USDAReader().readLayer(from: """
+        #usda 1.0
+        (
+            defaultPrim = "Model"
+        )
+
+        def Xform "Model"
+        {
+            def Xform "Geom"
+            {
+                double3 xformOp:translate = (5, 0, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate"]
+            }
+        }
+        """)
+        let rootLayer = try USDAReader().readLayer(from: """
+        #usda 1.0
+
+        def Xform "Scene" (
+            references = @model.usda@</Model/Geom>
+        )
+        {
+            double3 xformOp:translate = (5, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+        """)
+        let provider = try makeInMemoryProvider(["model.usda": modelLayer])
+
+        let flattened = try USDStage(rootLayer: rootLayer).flattenedLayer(
+            resolvingWith: provider,
+            rootIdentifier: "root.usda"
+        )
+        let transform = try #require(flattened.primTransforms["/Scene"])
+
+        #expect(try transform.transform(USDPoint3D(x: 0, y: 0, z: 0)) == USDPoint3D(x: 10, y: 0, z: 0))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func referenceSubrootDropsParentTransformAuthoredByTargetSublayer() throws {
+        let assetRootLayer = USDALayer(
+            composition: USDLayerComposition(sublayers: [
+                USDSublayer(assetPath: "model.usda"),
+            ]),
+            specs: [USDLayerSpec(path: "/", specType: .pseudoRoot)]
+        )
+        let modelLayer = try USDAReader().readLayer(from: """
+        #usda 1.0
+        (
+            defaultPrim = "Model"
+        )
+
+        def Xform "Model"
+        {
+            double3 xformOp:translate = (100, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+
+            def Xform "Geom"
+            {
+                double3 xformOp:translate = (0, 5, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate"]
+            }
+        }
+        """)
+        let rootLayer = try USDAReader().readLayer(from: """
+        #usda 1.0
+
+        def Xform "Scene" (
+            references = @asset.usda@</Model/Geom>
+        )
+        {
+            double3 xformOp:translate = (10, 0, 0)
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+        """)
+        let provider = try makeInMemoryProvider([
+            "asset.usda": assetRootLayer,
+            "model.usda": modelLayer,
+        ])
+
+        let flattened = try USDStage(rootLayer: rootLayer).flattenedLayer(
+            resolvingWith: provider,
+            rootIdentifier: "root.usda"
+        )
+        let transform = try #require(flattened.primTransforms["/Scene"])
+
+        #expect(try transform.transform(USDPoint3D(x: 0, y: 0, z: 0)) == USDPoint3D(x: 10, y: 5, z: 0))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func referenceSubrootLocalXformOrderOnlyDoesNotApplyReferencedOperationTwice() throws {
+        let modelLayer = try USDAReader().readLayer(from: """
+        #usda 1.0
+        (
+            defaultPrim = "Model"
+        )
+
+        def Xform "Model"
+        {
+            def Xform "Geom"
+            {
+                double3 xformOp:translate = (5, 0, 0)
+                uniform token[] xformOpOrder = ["xformOp:translate"]
+            }
+        }
+        """)
+        let rootLayer = try USDAReader().readLayer(from: """
+        #usda 1.0
+
+        def Xform "Scene" (
+            references = @model.usda@</Model/Geom>
+        )
+        {
+            uniform token[] xformOpOrder = ["xformOp:translate"]
+        }
+        """)
+        let provider = try makeInMemoryProvider(["model.usda": modelLayer])
+
+        let flattened = try USDStage(rootLayer: rootLayer).flattenedLayer(
+            resolvingWith: provider,
+            rootIdentifier: "root.usda"
+        )
+        let transform = try #require(flattened.primTransforms["/Scene"])
+
+        #expect(try transform.transform(USDPoint3D(x: 0, y: 0, z: 0)) == USDPoint3D(x: 5, y: 0, z: 0))
+    }
+
     // MARK: - Field merging across the layer stack
 
     @Test(.timeLimit(.minutes(1)))

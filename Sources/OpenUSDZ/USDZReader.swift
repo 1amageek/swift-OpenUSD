@@ -138,19 +138,13 @@ public struct USDZReader: USDSceneReader {
         guard let rootLayer = try provider.layer(forResolvedIdentifier: defaultLayerPath) else {
             throw USDError.invalidData("USDZ package could not load root layer \(defaultLayerPath).")
         }
-        let flattenedLayer: USDALayer
-        do {
-            flattenedLayer = try USDStage(rootLayer: rootLayer).flattenedLayer(
-                resolvingWith: provider,
-                rootIdentifier: defaultLayerPath
-            )
-        } catch USDError.invalidData(let message) where message.contains(
-            "has no defaultPrim for an unqualified reference"
-        ) {
-            flattenedLayer = rootLayer.toUSDALayer()
-        }
+        let flattenedLayer = try USDStage(rootLayer: rootLayer).flattenedLayer(
+            resolvingWith: provider,
+            rootIdentifier: defaultLayerPath,
+            missingDefaultPrimPolicy: .skipArc
+        )
         let metadataFallback = try sceneMetadataFallback(defaultLayerPath: defaultLayerPath, in: archive)
-        return try USDZLayerSceneMaterializer(textReader: textReader).scene(
+        return try USDZLayerSceneMaterializer().scene(
             from: flattenedLayer,
             options: options,
             metadataFallback: metadataFallback
@@ -329,8 +323,6 @@ private struct USDZSceneMetadataFallback {
 }
 
 private struct USDZLayerSceneMaterializer {
-    var textReader: USDAReader
-
     func scene(
         from layer: USDALayer,
         options: USDReadingOptions,
@@ -370,37 +362,60 @@ private struct USDZLayerSceneMaterializer {
         in layer: USDALayer,
         options: USDReadingOptions
     ) throws -> USDMesh {
-        let untransformedMesh = try parseUntransformedMesh(meshSpec, in: layer, options: options)
+        let untransformedMesh = try untransformedMesh(meshSpec, in: layer, options: options)
         let transform = layer.primTransforms[meshSpec.path] ?? .identity
         return try applying(transform, to: untransformedMesh, originalSpec: meshSpec)
     }
 
-    private func parseUntransformedMesh(
+    private func untransformedMesh(
         _ meshSpec: USDLayerSpec,
         in layer: USDALayer,
         options: USDReadingOptions
     ) throws -> USDMesh {
-        let meshPath = "/Mesh"
-        var propertySpecs: [USDLayerSpec] = []
+        var attributes: [String: USDLayerSpec] = [:]
         for spec in directAttributeSpecs(for: meshSpec.path, in: layer) {
             let propertyName = propertyName(for: spec.path, parentPath: meshSpec.path)
             guard propertyName != "xformOpOrder", !propertyName.hasPrefix("xformOp:") else {
                 continue
             }
-            var rewrittenSpec = spec
-            rewrittenSpec.path = "\(meshPath).\(propertyName)"
-            propertySpecs.append(rewrittenSpec)
+            attributes[propertyName] = spec
         }
-        let layer = USDALayer(defaultPrim: "Mesh", specs: [
-            USDLayerSpec(path: "/", specType: .pseudoRoot),
-            USDLayerSpec(path: meshPath, specType: .prim, specifier: .def, typeName: "Mesh"),
-        ] + propertySpecs)
-        let data = try USDAWriter().data(for: layer)
-        let scene = try textReader.read(from: data, options: options)
-        guard let mesh = scene.meshes.first else {
-            throw USDError.invalidData("USDA scene contains no Mesh prims.")
+        let reader = USDZMeshAttributeReader(attributes: attributes)
+        let points = try reader.requiredPoint3Array(named: "points", options: options)
+        let faceVertexCounts = try reader.requiredIntArray(named: "faceVertexCounts", options: options)
+        let faceVertexIndices = try reader.requiredIntArray(named: "faceVertexIndices", options: options)
+        try USDMesh.validateTopology(
+            pointCount: points.count,
+            faceVertexCounts: faceVertexCounts,
+            faceVertexIndices: faceVertexIndices
+        )
+        let textureCoordinates = try reader.optionalTextureCoordinates(options: options)
+        let displayColor = try reader.optionalDisplayColor(options: options)
+        let displayOpacity = try reader.optionalDisplayOpacity(options: options)
+        if let textureCoordinates {
+            try textureCoordinates.validate(pointCount: points.count, faceVertexCounts: faceVertexCounts)
         }
-        return mesh
+        if let displayColor {
+            try displayColor.validate(pointCount: points.count, faceVertexCounts: faceVertexCounts)
+        }
+        if let displayOpacity {
+            try displayOpacity.validate(pointCount: points.count, faceVertexCounts: faceVertexCounts)
+        }
+        return USDMesh(
+            name: primName(for: meshSpec.path),
+            primPath: meshSpec.path,
+            points: points,
+            faceVertexCounts: faceVertexCounts,
+            faceVertexIndices: faceVertexIndices,
+            normals: try reader.optionalPoint3Array(named: "normals", options: options) ?? [],
+            normalsInterpolation: try reader.optionalMetadataString(named: "interpolation", for: "normals"),
+            orientation: try reader.optionalOrientation(),
+            subdivisionScheme: try reader.optionalString(named: "subdivisionScheme"),
+            textureCoordinates: textureCoordinates,
+            displayColor: displayColor,
+            displayOpacity: displayOpacity,
+            extent: try reader.optionalPoint3Array(named: "extent", options: options)
+        )
     }
 
     private func directAttributeSpecs(for primPath: String, in layer: USDALayer) -> [USDLayerSpec] {
@@ -477,6 +492,779 @@ private struct USDZLayerSceneMaterializer {
             return nil
         }
         return String(path[path.index(after: slashIndex)...])
+    }
+}
+
+private struct USDZMeshAttributeReader {
+    var attributes: [String: USDLayerSpec]
+
+    func requiredPoint3Array(named name: String, options: USDReadingOptions) throws -> [USDPoint3D] {
+        guard let values = try optionalPoint3Array(named: name, options: options) else {
+            throw USDError.missingRequiredField(name)
+        }
+        return values
+    }
+
+    func optionalPoint3Array(named name: String, options: USDReadingOptions) throws -> [USDPoint3D]? {
+        guard let spec = attributes[name] else {
+            return nil
+        }
+        if let sampled = try sampledPoint3Array(named: name, spec: spec, options: options) {
+            switch sampled {
+            case .value(let values):
+                return values
+            case .blocked:
+                return nil
+            case .unresolved:
+                break
+            }
+        }
+        guard let field = spec.fields["default"] else {
+            return nil
+        }
+        if isNoneField(field) {
+            return nil
+        }
+        return try point3Array(from: field, name: name)
+    }
+
+    func requiredIntArray(named name: String, options: USDReadingOptions) throws -> [Int] {
+        guard let values = try optionalIntArray(named: name, options: options) else {
+            throw USDError.missingRequiredField(name)
+        }
+        guard !values.isEmpty else {
+            throw USDError.invalidData("USDZ Mesh \(name) is empty.")
+        }
+        return values
+    }
+
+    func optionalString(named name: String) throws -> String? {
+        guard let field = attributes[name]?.fields["default"] else {
+            return nil
+        }
+        if isNoneField(field) {
+            return nil
+        }
+        return try string(from: field, name: name)
+    }
+
+    func optionalOrientation() throws -> USDOrientation? {
+        guard let value = try optionalString(named: "orientation") else {
+            return nil
+        }
+        guard let orientation = USDOrientation(rawValue: value) else {
+            throw USDError.invalidData("Unsupported USDZ orientation \(value).")
+        }
+        return orientation
+    }
+
+    func optionalTextureCoordinates(options: USDReadingOptions) throws -> USDTextureCoordinatePrimvar? {
+        guard let values = try optionalPoint2Array(named: "primvars:st", options: options) else {
+            return nil
+        }
+        return USDTextureCoordinatePrimvar(
+            values: values,
+            indices: try optionalIntArray(named: "primvars:st:indices", options: options),
+            interpolation: try optionalMetadataString(named: "interpolation", for: "primvars:st")
+        )
+    }
+
+    func optionalDisplayColor(options: USDReadingOptions) throws -> USDDisplayColorPrimvar? {
+        guard let values = try optionalPoint3Array(named: "primvars:displayColor", options: options) else {
+            return nil
+        }
+        return USDDisplayColorPrimvar(
+            values: values.map { USDColorRGB(r: $0.x, g: $0.y, b: $0.z) },
+            indices: try optionalIntArray(named: "primvars:displayColor:indices", options: options),
+            interpolation: try optionalMetadataString(named: "interpolation", for: "primvars:displayColor")
+        )
+    }
+
+    func optionalDisplayOpacity(options: USDReadingOptions) throws -> USDDisplayOpacityPrimvar? {
+        guard let values = try optionalDoubleArray(named: "primvars:displayOpacity", options: options) else {
+            return nil
+        }
+        return USDDisplayOpacityPrimvar(
+            values: values,
+            indices: try optionalIntArray(named: "primvars:displayOpacity:indices", options: options),
+            interpolation: try optionalMetadataString(named: "interpolation", for: "primvars:displayOpacity")
+        )
+    }
+
+    func optionalMetadataString(named metadataName: String, for attributeName: String) throws -> String? {
+        guard let field = attributes[attributeName]?.fields[metadataName] else {
+            return nil
+        }
+        if isNoneField(field) {
+            return nil
+        }
+        return try string(from: field, name: "\(attributeName).\(metadataName)")
+    }
+
+    private func optionalPoint2Array(named name: String, options: USDReadingOptions) throws -> [USDPoint2D]? {
+        guard let spec = attributes[name] else {
+            return nil
+        }
+        if let sampled = try sampledPoint2Array(named: name, spec: spec, options: options) {
+            switch sampled {
+            case .value(let values):
+                return values
+            case .blocked:
+                return nil
+            case .unresolved:
+                break
+            }
+        }
+        guard let field = spec.fields["default"] else {
+            return nil
+        }
+        if isNoneField(field) {
+            return nil
+        }
+        return try point2Array(from: field, name: name)
+    }
+
+    private func optionalIntArray(named name: String, options: USDReadingOptions) throws -> [Int]? {
+        guard let spec = attributes[name] else {
+            return nil
+        }
+        if let sampled = try sampledIntArray(named: name, spec: spec, options: options) {
+            switch sampled {
+            case .value(let values):
+                return values
+            case .blocked:
+                return nil
+            case .unresolved:
+                break
+            }
+        }
+        guard let field = spec.fields["default"] else {
+            return nil
+        }
+        if isNoneField(field) {
+            return nil
+        }
+        return try intArray(from: field, name: name)
+    }
+
+    private func optionalDoubleArray(named name: String, options: USDReadingOptions) throws -> [Double]? {
+        guard let spec = attributes[name] else {
+            return nil
+        }
+        if let sampled = try sampledDoubleArray(named: name, spec: spec, options: options) {
+            switch sampled {
+            case .value(let values):
+                return values
+            case .blocked:
+                return nil
+            case .unresolved:
+                break
+            }
+        }
+        guard let field = spec.fields["default"] else {
+            return nil
+        }
+        if isNoneField(field) {
+            return nil
+        }
+        return try doubleArray(from: field, name: name)
+    }
+}
+
+private extension USDZMeshAttributeReader {
+    func sampledPoint3Array(
+        named name: String,
+        spec: USDLayerSpec,
+        options: USDReadingOptions
+    ) throws -> USDZSampleResolution<[USDPoint3D]>? {
+        guard let field = spec.fields["timeSamples"] else {
+            return nil
+        }
+        let samples = try point3Samples(from: field, name: name)
+        return resolvedArraySample(samples, options: options, interpolate: interpolatePoint3Arrays)
+    }
+
+    func sampledPoint2Array(
+        named name: String,
+        spec: USDLayerSpec,
+        options: USDReadingOptions
+    ) throws -> USDZSampleResolution<[USDPoint2D]>? {
+        guard let field = spec.fields["timeSamples"] else {
+            return nil
+        }
+        let samples = try point2Samples(from: field, name: name)
+        return resolvedArraySample(samples, options: options, interpolate: interpolatePoint2Arrays)
+    }
+
+    func sampledDoubleArray(
+        named name: String,
+        spec: USDLayerSpec,
+        options: USDReadingOptions
+    ) throws -> USDZSampleResolution<[Double]>? {
+        guard let field = spec.fields["timeSamples"] else {
+            return nil
+        }
+        let samples = try doubleSamples(from: field, name: name)
+        return resolvedArraySample(samples, options: options, interpolate: interpolateDoubleArrays)
+    }
+
+    func sampledIntArray(
+        named name: String,
+        spec: USDLayerSpec,
+        options: USDReadingOptions
+    ) throws -> USDZSampleResolution<[Int]>? {
+        guard let field = spec.fields["timeSamples"] else {
+            return nil
+        }
+        let samples = try intSamples(from: field, name: name)
+        return resolvedArraySample(samples, options: options, interpolate: nil)
+    }
+
+    func point3Samples(from field: USDLayerFieldValue, name: String) throws -> [USDZTimeSample<[USDPoint3D]>] {
+        try samples(from: field, name: name, typedValue: point3Array, authoredValue: parsePoint3Array)
+    }
+
+    func point2Samples(from field: USDLayerFieldValue, name: String) throws -> [USDZTimeSample<[USDPoint2D]>] {
+        try samples(from: field, name: name, typedValue: point2Array, authoredValue: parsePoint2Array)
+    }
+
+    func doubleSamples(from field: USDLayerFieldValue, name: String) throws -> [USDZTimeSample<[Double]>] {
+        try samples(from: field, name: name, typedValue: doubleArray, authoredValue: parseDoubleArray)
+    }
+
+    func intSamples(from field: USDLayerFieldValue, name: String) throws -> [USDZTimeSample<[Int]>] {
+        try samples(from: field, name: name, typedValue: intArray, authoredValue: parseIntArray)
+    }
+
+    func samples<Value>(
+        from field: USDLayerFieldValue,
+        name: String,
+        typedValue: (SdfFieldValue, String) throws -> Value,
+        authoredValue: (String, String) throws -> Value
+    ) throws -> [USDZTimeSample<Value>] {
+        switch field {
+        case .timeSamples(let samples):
+            return try samples.map { sample in
+                USDZTimeSample(
+                    timeCode: sample.timeCode,
+                    value: try sample.value.map { try typedValue($0, name) }
+                )
+            }
+        case .authored(let text):
+            return try authoredTimeSamples(text).map { sample in
+                USDZTimeSample(
+                    timeCode: sample.timeCode,
+                    value: try sample.value.map { try authoredValue($0, name) }
+                )
+            }
+        default:
+            throw USDError.unsupportedFeature("USDZ Mesh \(name).timeSamples uses an unsupported field value.")
+        }
+    }
+
+    func resolvedArraySample<Value>(
+        _ samples: [USDZTimeSample<[Value]>],
+        options: USDReadingOptions,
+        interpolate: (([Value], [Value], Double) -> [Value]?)?
+    ) -> USDZSampleResolution<[Value]> {
+        resolvedSample(samples, options: options, interpolate: interpolate)
+    }
+
+    func resolvedSample<Value>(
+        _ samples: [USDZTimeSample<Value>],
+        options: USDReadingOptions,
+        interpolate: ((Value, Value, Double) -> Value?)?
+    ) -> USDZSampleResolution<Value> {
+        guard let timeCode = options.timeCode else {
+            guard let value = samples.first(where: { $0.value != nil })?.value else {
+                return .unresolved
+            }
+            return .value(value)
+        }
+        var lowerSample: USDZTimeSample<Value>?
+        var upperSample: USDZTimeSample<Value>?
+        for sample in samples.sorted(by: { $0.timeCode < $1.timeCode }) {
+            if sample.timeCode == timeCode {
+                guard let value = sample.value else {
+                    return .blocked
+                }
+                return .value(value)
+            }
+            if sample.timeCode < timeCode {
+                lowerSample = sample
+            } else {
+                upperSample = sample
+                break
+            }
+        }
+        switch options.timeSampleInterpolation {
+        case .held:
+            guard let sample = lowerSample ?? upperSample else {
+                return .unresolved
+            }
+            guard let value = sample.value else {
+                return .blocked
+            }
+            return .value(value)
+        case .linear:
+            guard let lowerSample else {
+                guard let upperSample else {
+                    return .unresolved
+                }
+                guard let value = upperSample.value else {
+                    return .blocked
+                }
+                return .value(value)
+            }
+            guard let lowerValue = lowerSample.value else {
+                return .blocked
+            }
+            guard let upperSample, let upperValue = upperSample.value else {
+                return .value(lowerValue)
+            }
+            let fraction = (timeCode - lowerSample.timeCode) / (upperSample.timeCode - lowerSample.timeCode)
+            guard fraction.isFinite, let interpolate else {
+                return .value(lowerValue)
+            }
+            return .value(interpolate(lowerValue, upperValue, fraction) ?? lowerValue)
+        }
+    }
+
+    func interpolatePoint3Arrays(
+        lower: [USDPoint3D],
+        upper: [USDPoint3D],
+        fraction: Double
+    ) -> [USDPoint3D]? {
+        guard lower.count == upper.count else {
+            return nil
+        }
+        return zip(lower, upper).map {
+            USDPoint3D(
+                x: $0.x + ($1.x - $0.x) * fraction,
+                y: $0.y + ($1.y - $0.y) * fraction,
+                z: $0.z + ($1.z - $0.z) * fraction
+            )
+        }
+    }
+
+    func interpolatePoint2Arrays(
+        lower: [USDPoint2D],
+        upper: [USDPoint2D],
+        fraction: Double
+    ) -> [USDPoint2D]? {
+        guard lower.count == upper.count else {
+            return nil
+        }
+        return zip(lower, upper).map {
+            USDPoint2D(
+                x: $0.x + ($1.x - $0.x) * fraction,
+                y: $0.y + ($1.y - $0.y) * fraction
+            )
+        }
+    }
+
+    func interpolateDoubleArrays(lower: [Double], upper: [Double], fraction: Double) -> [Double]? {
+        guard lower.count == upper.count else {
+            return nil
+        }
+        return zip(lower, upper).map { $0 + ($1 - $0) * fraction }
+    }
+}
+
+private extension USDZMeshAttributeReader {
+    func point3Array(from field: USDLayerFieldValue, name: String) throws -> [USDPoint3D] {
+        switch field {
+        case .authored(let text):
+            return try parsePoint3Array(text, name)
+        default:
+            throw USDError.unsupportedFeature("USDZ Mesh \(name) uses an unsupported point3 array value.")
+        }
+    }
+
+    func point3Array(from value: SdfFieldValue, name: String) throws -> [USDPoint3D] {
+        switch value {
+        case .point3Array(let values):
+            return values
+        case .authored(let text):
+            return try parsePoint3Array(text, name)
+        default:
+            throw USDError.unsupportedFeature("USDZ Mesh \(name) time sample is not a point3 array.")
+        }
+    }
+
+    func point2Array(from field: USDLayerFieldValue, name: String) throws -> [USDPoint2D] {
+        switch field {
+        case .authored(let text):
+            return try parsePoint2Array(text, name)
+        default:
+            throw USDError.unsupportedFeature("USDZ Mesh \(name) uses an unsupported point2 array value.")
+        }
+    }
+
+    func point2Array(from value: SdfFieldValue, name: String) throws -> [USDPoint2D] {
+        switch value {
+        case .point2Array(let values):
+            return values
+        case .authored(let text):
+            return try parsePoint2Array(text, name)
+        default:
+            throw USDError.unsupportedFeature("USDZ Mesh \(name) time sample is not a point2 array.")
+        }
+    }
+
+    func intArray(from field: USDLayerFieldValue, name: String) throws -> [Int] {
+        switch field {
+        case .authored(let text):
+            return try parseIntArray(text, name)
+        default:
+            throw USDError.unsupportedFeature("USDZ Mesh \(name) uses an unsupported int array value.")
+        }
+    }
+
+    func intArray(from value: SdfFieldValue, name: String) throws -> [Int] {
+        switch value {
+        case .intArray(let values):
+            return values
+        case .authored(let text):
+            return try parseIntArray(text, name)
+        default:
+            throw USDError.unsupportedFeature("USDZ Mesh \(name) time sample is not an int array.")
+        }
+    }
+
+    func doubleArray(from field: USDLayerFieldValue, name: String) throws -> [Double] {
+        switch field {
+        case .authored(let text):
+            return try parseDoubleArray(text, name)
+        default:
+            throw USDError.unsupportedFeature("USDZ Mesh \(name) uses an unsupported double array value.")
+        }
+    }
+
+    func doubleArray(from value: SdfFieldValue, name: String) throws -> [Double] {
+        switch value {
+        case .doubleArray(let values), .doubleVector(let values), .timeCodeArray(let values):
+            return values
+        case .authored(let text):
+            return try parseDoubleArray(text, name)
+        default:
+            throw USDError.unsupportedFeature("USDZ Mesh \(name) time sample is not a double array.")
+        }
+    }
+
+    func string(from field: USDLayerFieldValue, name: String) throws -> String {
+        switch field {
+        case .authored(let text):
+            return try parseString(text, name)
+        default:
+            throw USDError.unsupportedFeature("USDZ Mesh \(name) uses an unsupported string value.")
+        }
+    }
+}
+
+private struct USDZTimeSample<Value> {
+    var timeCode: Double
+    var value: Value?
+}
+
+private enum USDZSampleResolution<Value> {
+    case value(Value)
+    case blocked
+    case unresolved
+}
+
+private extension USDZMeshAttributeReader {
+    func parsePoint3Array(_ text: String, _ name: String) throws -> [USDPoint3D] {
+        try parseTupleArray(text, expectedCount: 3, name: name).map {
+            USDPoint3D(x: $0[0], y: $0[1], z: $0[2])
+        }
+    }
+
+    func parsePoint2Array(_ text: String, _ name: String) throws -> [USDPoint2D] {
+        try parseTupleArray(text, expectedCount: 2, name: name).map {
+            USDPoint2D(x: $0[0], y: $0[1])
+        }
+    }
+
+    func parseIntArray(_ text: String, _ name: String) throws -> [Int] {
+        try arrayScalarTokens(text, name: name).map { token in
+            guard let value = Int(token) else {
+                throw USDError.invalidData("USDZ Mesh \(name) contains a non-integer value.")
+            }
+            return value
+        }
+    }
+
+    func parseDoubleArray(_ text: String, _ name: String) throws -> [Double] {
+        try arrayScalarTokens(text, name: name).map { token in
+            guard let value = Double(token), value.isFinite else {
+                throw USDError.invalidData("USDZ Mesh \(name) contains a non-finite value.")
+            }
+            return value
+        }
+    }
+
+    func parseString(_ text: String, _ name: String) throws -> String {
+        var cursor = text.startIndex
+        skipWhitespace(in: text, index: &cursor)
+        guard cursor < text.endIndex else {
+            return ""
+        }
+        if text[cursor] == "\"" || text[cursor] == "'" {
+            let value = try quotedString(in: text, index: &cursor)
+            skipWhitespace(in: text, index: &cursor)
+            guard cursor == text.endIndex else {
+                throw USDError.invalidData("USDZ Mesh \(name) string contains trailing content.")
+            }
+            return value
+        }
+        return removingLineComments(from: text).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func parseTupleArray(_ text: String, expectedCount: Int, name: String) throws -> [[Double]] {
+        let body = try bracketBody(text, name: name)
+        var cursor = body.startIndex
+        var tuples: [[Double]] = []
+        while true {
+            skipSeparators(in: body, index: &cursor)
+            guard cursor < body.endIndex else {
+                break
+            }
+            guard body[cursor] == "(" else {
+                throw USDError.invalidData("USDZ Mesh \(name) tuple array contains unexpected content.")
+            }
+            let close = try matchingDelimiter(in: body, from: cursor, open: "(", close: ")")
+            let tupleBody = String(body[body.index(after: cursor)..<close])
+            tuples.append(try parseNumericTupleBody(tupleBody, expectedCount: expectedCount, name: name))
+            cursor = body.index(after: close)
+        }
+        guard !tuples.isEmpty else {
+            throw USDError.invalidData("USDZ Mesh \(name) contains no tuples.")
+        }
+        return tuples
+    }
+
+    func parseNumericTupleBody(_ body: String, expectedCount: Int, name: String) throws -> [Double] {
+        let tokens = removingLineComments(from: body).split { $0 == "," || $0.isWhitespace || $0.isNewline }
+        guard tokens.count == expectedCount else {
+            throw USDError.invalidData("USDZ Mesh \(name) tuple contains \(tokens.count) values.")
+        }
+        return try tokens.map { token in
+            guard let value = Double(token), value.isFinite else {
+                throw USDError.invalidData("USDZ Mesh \(name) tuple contains a non-finite number.")
+            }
+            return value
+        }
+    }
+
+    func arrayScalarTokens(_ text: String, name: String) throws -> [Substring] {
+        let body = try bracketBody(text, name: name)
+        let tokens = removingLineComments(from: body).split { $0 == "," || $0.isWhitespace || $0.isNewline }
+        guard !tokens.isEmpty else {
+            throw USDError.invalidData("USDZ Mesh \(name) is empty.")
+        }
+        return tokens
+    }
+
+    func bracketBody(_ text: String, name: String) throws -> String {
+        var cursor = text.startIndex
+        skipWhitespace(in: text, index: &cursor)
+        guard cursor < text.endIndex, text[cursor] == "[" else {
+            throw USDError.invalidData("USDZ Mesh \(name) is missing an opening bracket.")
+        }
+        let close = try matchingDelimiter(in: text, from: cursor, open: "[", close: "]")
+        var trailing = text.index(after: close)
+        skipWhitespace(in: text, index: &trailing)
+        guard trailing == text.endIndex else {
+            throw USDError.invalidData("USDZ Mesh \(name) contains trailing array content.")
+        }
+        return String(text[text.index(after: cursor)..<close])
+    }
+
+    func authoredTimeSamples(_ text: String) throws -> [USDZTimeSample<String>] {
+        var cursor = text.startIndex
+        skipWhitespace(in: text, index: &cursor)
+        guard cursor < text.endIndex, text[cursor] == "{" else {
+            throw USDError.invalidData("USDZ timeSamples is missing an opening brace.")
+        }
+        let closeBrace = try matchingDelimiter(in: text, from: cursor, open: "{", close: "}")
+        let body = String(text[text.index(after: cursor)..<closeBrace])
+        var bodyCursor = body.startIndex
+        var samples: [USDZTimeSample<String>] = []
+        var seenTimeCodes: Set<Double> = []
+        while true {
+            skipSeparators(in: body, index: &bodyCursor)
+            guard bodyCursor < body.endIndex else {
+                break
+            }
+            let timeStart = bodyCursor
+            while bodyCursor < body.endIndex, isNumberLiteralCharacter(body[bodyCursor]) {
+                bodyCursor = body.index(after: bodyCursor)
+            }
+            guard timeStart < bodyCursor,
+                  let timeCode = Double(body[timeStart..<bodyCursor]),
+                  timeCode.isFinite else {
+                throw USDError.invalidData("USDZ timeSamples entry has an invalid timeCode.")
+            }
+            guard seenTimeCodes.insert(timeCode).inserted else {
+                throw USDError.invalidData("USDZ timeSamples contains duplicate timeCode values.")
+            }
+            skipWhitespace(in: body, index: &bodyCursor)
+            guard bodyCursor < body.endIndex, body[bodyCursor] == ":" else {
+                throw USDError.invalidData("USDZ timeSamples entry is missing a colon.")
+            }
+            bodyCursor = body.index(after: bodyCursor)
+            skipWhitespace(in: body, index: &bodyCursor)
+            if isNone(at: bodyCursor, in: body) {
+                samples.append(USDZTimeSample(timeCode: timeCode, value: nil))
+                bodyCursor = body.index(bodyCursor, offsetBy: 4)
+                continue
+            }
+            guard bodyCursor < body.endIndex, body[bodyCursor] == "[" else {
+                throw USDError.invalidData("USDZ timeSamples entry is not an array value.")
+            }
+            let close = try matchingDelimiter(in: body, from: bodyCursor, open: "[", close: "]")
+            samples.append(USDZTimeSample(timeCode: timeCode, value: String(body[bodyCursor...close])))
+            bodyCursor = body.index(after: close)
+        }
+        guard !samples.isEmpty else {
+            throw USDError.invalidData("USDZ timeSamples contains no samples.")
+        }
+        return samples.sorted { $0.timeCode < $1.timeCode }
+    }
+
+    func matchingDelimiter(
+        in text: String,
+        from openIndex: String.Index,
+        open: Character,
+        close: Character
+    ) throws -> String.Index {
+        var depth = 0
+        var cursor = openIndex
+        while cursor < text.endIndex {
+            let character = text[cursor]
+            if character == "#" {
+                skipLineComment(in: text, index: &cursor)
+                continue
+            }
+            if character == "\"" || character == "'" {
+                var quotedCursor = cursor
+                _ = try quotedString(in: text, index: &quotedCursor)
+                cursor = quotedCursor
+                continue
+            }
+            if character == open {
+                depth += 1
+            } else if character == close {
+                depth -= 1
+                if depth == 0 {
+                    return cursor
+                }
+            }
+            cursor = text.index(after: cursor)
+        }
+        throw USDError.invalidData("USDZ value delimiter is unterminated.")
+    }
+
+    func quotedString(in text: String, index: inout String.Index) throws -> String {
+        let quote = text[index]
+        index = text.index(after: index)
+        var value = ""
+        while index < text.endIndex {
+            let character = text[index]
+            if character == quote {
+                index = text.index(after: index)
+                return value
+            }
+            if character == "\\" {
+                index = text.index(after: index)
+                guard index < text.endIndex else {
+                    throw USDError.invalidData("USDZ string escape is unterminated.")
+                }
+            }
+            value.append(text[index])
+            index = text.index(after: index)
+        }
+        throw USDError.invalidData("USDZ string is unterminated.")
+    }
+
+    func skipWhitespace(in text: String, index: inout String.Index) {
+        while index < text.endIndex {
+            if text[index].isWhitespace {
+                index = text.index(after: index)
+                continue
+            }
+            if text[index] == "#" {
+                skipLineComment(in: text, index: &index)
+                continue
+            }
+            break
+        }
+    }
+
+    func skipSeparators(in text: String, index: inout String.Index) {
+        while index < text.endIndex {
+            if text[index].isWhitespace || text[index] == "," {
+                index = text.index(after: index)
+                continue
+            }
+            if text[index] == "#" {
+                skipLineComment(in: text, index: &index)
+                continue
+            }
+            break
+        }
+    }
+
+    func skipLineComment(in text: String, index: inout String.Index) {
+        while index < text.endIndex, text[index] != "\n", text[index] != "\r" {
+            index = text.index(after: index)
+        }
+    }
+
+    func removingLineComments(from text: String) -> String {
+        var result = ""
+        var cursor = text.startIndex
+        while cursor < text.endIndex {
+            if text[cursor] == "#" {
+                skipLineComment(in: text, index: &cursor)
+                continue
+            }
+            result.append(text[cursor])
+            cursor = text.index(after: cursor)
+        }
+        return result
+    }
+
+    func isNumberLiteralCharacter(_ character: Character) -> Bool {
+        character.isNumber || character == "." || character == "+" || character == "-" || character == "e" || character == "E"
+    }
+
+    func isNoneField(_ field: USDLayerFieldValue) -> Bool {
+        guard case .authored(let text) = field else {
+            return false
+        }
+        return isNoneValue(text)
+    }
+
+    func isNoneValue(_ text: String) -> Bool {
+        removingLineComments(from: text).trimmingCharacters(in: .whitespacesAndNewlines) == "None"
+    }
+
+    func isNone(at index: String.Index, in text: String) -> Bool {
+        guard let end = text.index(index, offsetBy: 4, limitedBy: text.endIndex) else {
+            return false
+        }
+        guard text[index..<end] == "None" else {
+            return false
+        }
+        if end < text.endIndex {
+            let next = text[end]
+            guard next.isWhitespace || next == "," || next == "}" else {
+                return false
+            }
+        }
+        return true
     }
 }
 

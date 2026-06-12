@@ -12,6 +12,12 @@ enum USDCPointTimeSampleResolution {
     case unresolved
 }
 
+enum USDCTimeSampleResolution<Value> {
+    case value(Value)
+    case blocked
+    case unresolved
+}
+
 struct USDCCrateValueDecoder {
     /// Maximum nesting depth for recursive value encodings (dictionaries and
     /// reference list operations). Hostile files can otherwise encode cycles
@@ -354,6 +360,229 @@ struct USDCCrateValueDecoder {
                 )
             })
         }
+    }
+
+    func readVector3TimeSample(
+        _ valueRep: USDCCrateValueRep,
+        at timeCode: Double?,
+        interpolation: USDTimeSampleInterpolation
+    ) throws -> USDCTimeSampleResolution<USDCVector3D> {
+        try readTimeSample(
+            valueRep,
+            at: timeCode,
+            interpolation: interpolation,
+            readValue: readVector3,
+            interpolate: interpolateVector3
+        )
+    }
+
+    func readDoubleTimeSample(
+        _ valueRep: USDCCrateValueRep,
+        at timeCode: Double?,
+        interpolation: USDTimeSampleInterpolation
+    ) throws -> USDCTimeSampleResolution<Double> {
+        try readTimeSample(
+            valueRep,
+            at: timeCode,
+            interpolation: interpolation,
+            readValue: readDouble,
+            interpolate: { lower, upper, fraction in lower + (upper - lower) * fraction }
+        )
+    }
+
+    func readPoint2TimeSampleArray(
+        _ valueRep: USDCCrateValueRep,
+        at timeCode: Double?,
+        interpolation: USDTimeSampleInterpolation
+    ) throws -> USDCTimeSampleResolution<[USDPoint2D]> {
+        try readArrayTimeSample(
+            valueRep,
+            at: timeCode,
+            interpolation: interpolation,
+            readValue: readPoint2Array,
+            interpolate: interpolatePoint2Arrays
+        )
+    }
+
+    func readDoubleTimeSampleArray(
+        _ valueRep: USDCCrateValueRep,
+        at timeCode: Double?,
+        interpolation: USDTimeSampleInterpolation
+    ) throws -> USDCTimeSampleResolution<[Double]> {
+        try readArrayTimeSample(
+            valueRep,
+            at: timeCode,
+            interpolation: interpolation,
+            readValue: readDoubleArray,
+            interpolate: interpolateDoubleArrays
+        )
+    }
+
+    private func readTimeSample<Value>(
+        _ valueRep: USDCCrateValueRep,
+        at timeCode: Double?,
+        interpolation: USDTimeSampleInterpolation,
+        readValue: (USDCCrateValueRep) throws -> Value,
+        interpolate: (Value, Value, Double) -> Value
+    ) throws -> USDCTimeSampleResolution<Value> {
+        let samples = try readTimeSampleValueReps(valueRep, at: timeCode)
+        guard let timeCode else {
+            guard let firstSample = samples.first(where: { $0.valueRep != nil })?.valueRep else {
+                return .unresolved
+            }
+            return .value(try readValue(firstSample))
+        }
+        var lowerSample: USDCTimeSampleValueRep?
+        var upperSample: USDCTimeSampleValueRep?
+        for sample in samples {
+            if sample.timeCode == timeCode {
+                guard let valueRep = sample.valueRep else {
+                    return .blocked
+                }
+                return .value(try readValue(valueRep))
+            }
+            if sample.timeCode < timeCode {
+                lowerSample = sample
+            } else {
+                upperSample = sample
+                break
+            }
+        }
+        switch interpolation {
+        case .held:
+            guard let sample = lowerSample ?? upperSample else {
+                return .unresolved
+            }
+            guard let valueRep = sample.valueRep else {
+                return .blocked
+            }
+            return .value(try readValue(valueRep))
+        case .linear:
+            guard let lowerSample else {
+                guard let upperSample else {
+                    return .unresolved
+                }
+                guard let valueRep = upperSample.valueRep else {
+                    return .blocked
+                }
+                return .value(try readValue(valueRep))
+            }
+            guard let lowerRep = lowerSample.valueRep else {
+                return .blocked
+            }
+            guard let upperSample, let upperRep = upperSample.valueRep else {
+                return .value(try readValue(lowerRep))
+            }
+            let fraction = (timeCode - lowerSample.timeCode) / (upperSample.timeCode - lowerSample.timeCode)
+            guard fraction.isFinite else {
+                return .value(try readValue(lowerRep))
+            }
+            return .value(interpolate(try readValue(lowerRep), try readValue(upperRep), fraction))
+        }
+    }
+
+    private func readArrayTimeSample<Value>(
+        _ valueRep: USDCCrateValueRep,
+        at timeCode: Double?,
+        interpolation: USDTimeSampleInterpolation,
+        readValue: (USDCCrateValueRep) throws -> [Value],
+        interpolate: ([Value], [Value], Double) -> [Value]?
+    ) throws -> USDCTimeSampleResolution<[Value]> {
+        let samples = try readTimeSampleValueReps(valueRep, at: timeCode)
+        guard let timeCode else {
+            guard let firstSample = samples.first(where: { $0.valueRep != nil })?.valueRep else {
+                return .unresolved
+            }
+            return .value(try readValue(firstSample))
+        }
+        var lowerSample: USDCTimeSampleValueRep?
+        var upperSample: USDCTimeSampleValueRep?
+        for sample in samples {
+            if sample.timeCode == timeCode {
+                guard let valueRep = sample.valueRep else {
+                    return .blocked
+                }
+                return .value(try readValue(valueRep))
+            }
+            if sample.timeCode < timeCode {
+                lowerSample = sample
+            } else {
+                upperSample = sample
+                break
+            }
+        }
+        switch interpolation {
+        case .held:
+            guard let sample = lowerSample ?? upperSample else {
+                return .unresolved
+            }
+            guard let valueRep = sample.valueRep else {
+                return .blocked
+            }
+            return .value(try readValue(valueRep))
+        case .linear:
+            guard let lowerSample else {
+                guard let upperSample else {
+                    return .unresolved
+                }
+                guard let valueRep = upperSample.valueRep else {
+                    return .blocked
+                }
+                return .value(try readValue(valueRep))
+            }
+            guard let lowerRep = lowerSample.valueRep else {
+                return .blocked
+            }
+            let lowerValue = try readValue(lowerRep)
+            guard let upperSample, let upperRep = upperSample.valueRep else {
+                return .value(lowerValue)
+            }
+            let upperValue = try readValue(upperRep)
+            let fraction = (timeCode - lowerSample.timeCode) / (upperSample.timeCode - lowerSample.timeCode)
+            guard fraction.isFinite else {
+                return .value(lowerValue)
+            }
+            return .value(interpolate(lowerValue, upperValue, fraction) ?? lowerValue)
+        }
+    }
+
+    private func interpolateVector3(
+        lower: USDCVector3D,
+        upper: USDCVector3D,
+        fraction: Double
+    ) -> USDCVector3D {
+        USDCVector3D(
+            x: lower.x + (upper.x - lower.x) * fraction,
+            y: lower.y + (upper.y - lower.y) * fraction,
+            z: lower.z + (upper.z - lower.z) * fraction
+        )
+    }
+
+    private func interpolatePoint2Arrays(
+        lower: [USDPoint2D],
+        upper: [USDPoint2D],
+        fraction: Double
+    ) -> [USDPoint2D]? {
+        guard lower.count == upper.count else {
+            return nil
+        }
+        return zip(lower, upper).map {
+            USDPoint2D(
+                x: $0.x + ($1.x - $0.x) * fraction,
+                y: $0.y + ($1.y - $0.y) * fraction
+            )
+        }
+    }
+
+    private func interpolateDoubleArrays(
+        lower: [Double],
+        upper: [Double],
+        fraction: Double
+    ) -> [Double]? {
+        guard lower.count == upper.count else {
+            return nil
+        }
+        return zip(lower, upper).map { $0 + ($1 - $0) * fraction }
     }
 
     private func readTimeSampleValueReps(

@@ -38,9 +38,14 @@ public struct USDStage: Sendable, Equatable {
     public func prim(
         at path: SdfPath,
         resolvingWith provider: any USDLayerProvider,
-        rootIdentifier: String = "root"
+        rootIdentifier: String = "root",
+        missingDefaultPrimPolicy: USDCompositionMissingDefaultPrimPolicy = .fail
     ) throws -> USDPrim? {
-        let layer = try flattenedLayer(resolvingWith: provider, rootIdentifier: rootIdentifier)
+        let layer = try flattenedLayer(
+            resolvingWith: provider,
+            rootIdentifier: rootIdentifier,
+            missingDefaultPrimPolicy: missingDefaultPrimPolicy
+        )
         guard let spec = layer.spec(at: path.rawValue), spec.specType == .prim else {
             return nil
         }
@@ -49,20 +54,27 @@ public struct USDStage: Sendable, Equatable {
 
     public func flattenedLayer(
         resolvingWith provider: any USDLayerProvider,
-        rootIdentifier: String = "root"
+        rootIdentifier: String = "root",
+        missingDefaultPrimPolicy: USDCompositionMissingDefaultPrimPolicy = .fail
     ) throws -> USDALayer {
         try USDStageCompositionResolver(
             rootLayer: rootLayer,
             rootIdentifier: rootIdentifier,
-            provider: provider
+            provider: provider,
+            missingDefaultPrimPolicy: missingDefaultPrimPolicy
         ).flattenedLayer()
     }
 
     public func resolved(
         resolvingWith provider: any USDLayerProvider,
-        rootIdentifier: String = "root"
+        rootIdentifier: String = "root",
+        missingDefaultPrimPolicy: USDCompositionMissingDefaultPrimPolicy = .fail
     ) throws -> USDStage {
-        try USDStage(rootLayer: flattenedLayer(resolvingWith: provider, rootIdentifier: rootIdentifier))
+        try USDStage(rootLayer: flattenedLayer(
+            resolvingWith: provider,
+            rootIdentifier: rootIdentifier,
+            missingDefaultPrimPolicy: missingDefaultPrimPolicy
+        ))
     }
 
     @discardableResult

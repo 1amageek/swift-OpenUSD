@@ -413,45 +413,190 @@ struct USDCSceneMaterializer {
         record: USDCSpecRecord,
         valueDecoder: USDCCrateValueDecoder
     ) throws -> USDCMatrix4x4 {
-        guard let defaultValue = try resolvedValueRep(record: record, valueDecoder: valueDecoder) else {
-            throw USDError.invalidData("USDC xform op \(opName) has no default value.")
-        }
         guard let operationType = xformOperationType(from: opName) else {
             throw USDError.invalidData("USDC xform op \(opName) is malformed.")
         }
         switch operationType {
         case "translate":
-            return .translation(try valueDecoder.readVector3(defaultValue))
+            return .translation(try requiredVector3Value(forXformOp: opName, record: record, valueDecoder: valueDecoder))
         case "translateX":
-            return .translation(USDCVector3D(x: try valueDecoder.readDouble(defaultValue), y: 0, z: 0))
+            return .translation(USDCVector3D(
+                x: try requiredDoubleValue(forXformOp: opName, record: record, valueDecoder: valueDecoder),
+                y: 0,
+                z: 0
+            ))
         case "translateY":
-            return .translation(USDCVector3D(x: 0, y: try valueDecoder.readDouble(defaultValue), z: 0))
+            return .translation(USDCVector3D(
+                x: 0,
+                y: try requiredDoubleValue(forXformOp: opName, record: record, valueDecoder: valueDecoder),
+                z: 0
+            ))
         case "translateZ":
-            return .translation(USDCVector3D(x: 0, y: 0, z: try valueDecoder.readDouble(defaultValue)))
+            return .translation(USDCVector3D(
+                x: 0,
+                y: 0,
+                z: try requiredDoubleValue(forXformOp: opName, record: record, valueDecoder: valueDecoder)
+            ))
         case "scale":
-            return .scale(try valueDecoder.readVector3(defaultValue))
+            return .scale(try requiredVector3Value(forXformOp: opName, record: record, valueDecoder: valueDecoder))
         case "scaleX":
-            return .scale(USDCVector3D(x: try valueDecoder.readDouble(defaultValue), y: 1, z: 1))
+            return .scale(USDCVector3D(
+                x: try requiredDoubleValue(forXformOp: opName, record: record, valueDecoder: valueDecoder),
+                y: 1,
+                z: 1
+            ))
         case "scaleY":
-            return .scale(USDCVector3D(x: 1, y: try valueDecoder.readDouble(defaultValue), z: 1))
+            return .scale(USDCVector3D(
+                x: 1,
+                y: try requiredDoubleValue(forXformOp: opName, record: record, valueDecoder: valueDecoder),
+                z: 1
+            ))
         case "scaleZ":
-            return .scale(USDCVector3D(x: 1, y: 1, z: try valueDecoder.readDouble(defaultValue)))
+            return .scale(USDCVector3D(
+                x: 1,
+                y: 1,
+                z: try requiredDoubleValue(forXformOp: opName, record: record, valueDecoder: valueDecoder)
+            ))
         case "rotateX":
-            return try .rotationX(angleInDegrees: valueDecoder.readDouble(defaultValue))
+            return try .rotationX(angleInDegrees: requiredDoubleValue(
+                forXformOp: opName,
+                record: record,
+                valueDecoder: valueDecoder
+            ))
         case "rotateY":
-            return try .rotationY(angleInDegrees: valueDecoder.readDouble(defaultValue))
+            return try .rotationY(angleInDegrees: requiredDoubleValue(
+                forXformOp: opName,
+                record: record,
+                valueDecoder: valueDecoder
+            ))
         case "rotateZ":
-            return try .rotationZ(angleInDegrees: valueDecoder.readDouble(defaultValue))
+            return try .rotationZ(angleInDegrees: requiredDoubleValue(
+                forXformOp: opName,
+                record: record,
+                valueDecoder: valueDecoder
+            ))
         case "rotateXYZ", "rotateXZY", "rotateYXZ", "rotateYZX", "rotateZXY", "rotateZYX":
             let order = String(operationType.dropFirst("rotate".count))
-            return try .eulerRotation(order: order, anglesInDegrees: valueDecoder.readVector3(defaultValue))
+            return try .eulerRotation(
+                order: order,
+                anglesInDegrees: requiredVector3Value(forXformOp: opName, record: record, valueDecoder: valueDecoder)
+            )
         case "orient":
+            let defaultValue = try requiredDiscreteValueRep(
+                forXformOp: opName,
+                operationType: operationType,
+                record: record,
+                valueDecoder: valueDecoder
+            )
             return try valueDecoder.readQuaternion(defaultValue).rotationMatrix()
         case "transform":
+            let defaultValue = try requiredDiscreteValueRep(
+                forXformOp: opName,
+                operationType: operationType,
+                record: record,
+                valueDecoder: valueDecoder
+            )
             return try valueDecoder.readMatrix4x4(defaultValue)
         default:
             throw USDError.unsupportedFeature("USDC xform op \(operationType) is not supported yet.")
         }
+    }
+
+    private func requiredVector3Value(
+        forXformOp opName: String,
+        record: USDCSpecRecord,
+        valueDecoder: USDCCrateValueDecoder
+    ) throws -> USDCVector3D {
+        if let timeSamples = record.fields["timeSamples"] {
+            switch try valueDecoder.readVector3TimeSample(
+                timeSamples,
+                at: options.timeCode,
+                interpolation: options.timeSampleInterpolation
+            ) {
+            case .value(let value):
+                return value
+            case .blocked:
+                throw USDError.invalidData("USDC xform op \(opName) is blocked at the requested time.")
+            case .unresolved:
+                break
+            }
+        }
+        let valueRep = try requiredFallbackValueRep(forXformOp: opName, record: record, valueDecoder: valueDecoder)
+        return try valueDecoder.readVector3(valueRep)
+    }
+
+    private func requiredDoubleValue(
+        forXformOp opName: String,
+        record: USDCSpecRecord,
+        valueDecoder: USDCCrateValueDecoder
+    ) throws -> Double {
+        if let timeSamples = record.fields["timeSamples"] {
+            switch try valueDecoder.readDoubleTimeSample(
+                timeSamples,
+                at: options.timeCode,
+                interpolation: options.timeSampleInterpolation
+            ) {
+            case .value(let value):
+                return value
+            case .blocked:
+                throw USDError.invalidData("USDC xform op \(opName) is blocked at the requested time.")
+            case .unresolved:
+                break
+            }
+        }
+        let valueRep = try requiredFallbackValueRep(forXformOp: opName, record: record, valueDecoder: valueDecoder)
+        return try valueDecoder.readDouble(valueRep)
+    }
+
+    private func requiredValueRep(
+        forXformOp opName: String,
+        record: USDCSpecRecord,
+        valueDecoder: USDCCrateValueDecoder
+    ) throws -> USDCCrateValueRep {
+        guard let valueRep = try resolvedValueRep(record: record, valueDecoder: valueDecoder) else {
+            throw USDError.invalidData("USDC xform op \(opName) has no default value.")
+        }
+        return valueRep
+    }
+
+    private func requiredDiscreteValueRep(
+        forXformOp opName: String,
+        operationType: String,
+        record: USDCSpecRecord,
+        valueDecoder: USDCCrateValueDecoder
+    ) throws -> USDCCrateValueRep {
+        if record.fields["timeSamples"] != nil,
+           options.timeCode != nil,
+           options.timeSampleInterpolation == .linear {
+            throw USDError.unsupportedFeature(
+                "USDC xform op \(operationType) timeSamples do not support linear interpolation yet."
+            )
+        }
+        return try requiredValueRep(forXformOp: opName, record: record, valueDecoder: valueDecoder)
+    }
+
+    private func requiredFallbackValueRep(
+        forXformOp opName: String,
+        record: USDCSpecRecord,
+        valueDecoder: USDCCrateValueDecoder
+    ) throws -> USDCCrateValueRep {
+        guard let valueRep = try fallbackValueRep(record: record, valueDecoder: valueDecoder) else {
+            throw USDError.invalidData("USDC xform op \(opName) has no default value.")
+        }
+        return valueRep
+    }
+
+    private func fallbackValueRep(
+        record: USDCSpecRecord,
+        valueDecoder: USDCCrateValueDecoder
+    ) throws -> USDCCrateValueRep? {
+        if let defaultValue = record.fields["default"], !valueDecoder.isBlockedValue(defaultValue) {
+            return defaultValue
+        }
+        if let timeSamples = record.fields["timeSamples"] {
+            return try valueDecoder.readFirstUnblockedTimeSampleValueRep(timeSamples)
+        }
+        return nil
     }
 
     private func xformOperationType(from opName: String) -> String? {
@@ -555,13 +700,27 @@ struct USDCSceneMaterializer {
         attributeRecords: [String: USDCSpecRecord],
         valueDecoder: USDCCrateValueDecoder
     ) throws -> [USDPoint2D]? {
-        guard
-            let record = attributeRecords[name],
-            let defaultValue = try resolvedValueRep(record: record, valueDecoder: valueDecoder)
-        else {
+        guard let record = attributeRecords[name] else {
             return nil
         }
-        return try valueDecoder.readPoint2Array(defaultValue)
+        if let timeSamples = record.fields["timeSamples"] {
+            switch try valueDecoder.readPoint2TimeSampleArray(
+                timeSamples,
+                at: options.timeCode,
+                interpolation: options.timeSampleInterpolation
+            ) {
+            case .value(let values):
+                return values
+            case .blocked:
+                return nil
+            case .unresolved:
+                break
+            }
+        }
+        guard let valueRep = try fallbackValueRep(record: record, valueDecoder: valueDecoder) else {
+            return nil
+        }
+        return try valueDecoder.readPoint2Array(valueRep)
     }
 
     private func requiredIntArray(
@@ -611,13 +770,27 @@ struct USDCSceneMaterializer {
         attributeRecords: [String: USDCSpecRecord],
         valueDecoder: USDCCrateValueDecoder
     ) throws -> [Double]? {
-        guard
-            let record = attributeRecords[name],
-            let defaultValue = try resolvedValueRep(record: record, valueDecoder: valueDecoder)
-        else {
+        guard let record = attributeRecords[name] else {
             return nil
         }
-        return try valueDecoder.readDoubleArray(defaultValue)
+        if let timeSamples = record.fields["timeSamples"] {
+            switch try valueDecoder.readDoubleTimeSampleArray(
+                timeSamples,
+                at: options.timeCode,
+                interpolation: options.timeSampleInterpolation
+            ) {
+            case .value(let values):
+                return values
+            case .blocked:
+                return nil
+            case .unresolved:
+                break
+            }
+        }
+        guard let valueRep = try fallbackValueRep(record: record, valueDecoder: valueDecoder) else {
+            return nil
+        }
+        return try valueDecoder.readDoubleArray(valueRep)
     }
 
     private func optionalTextureCoordinates(

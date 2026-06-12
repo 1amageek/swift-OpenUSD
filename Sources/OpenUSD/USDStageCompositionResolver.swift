@@ -4,6 +4,7 @@ struct USDStageCompositionResolver: Sendable {
     var rootLayer: USDALayer
     var rootIdentifier: String
     var provider: any USDLayerProvider
+    var missingDefaultPrimPolicy: USDCompositionMissingDefaultPrimPolicy = .fail
 
     func flattenedLayer() throws -> USDALayer {
         try flattenedLayer(
@@ -47,20 +48,24 @@ struct USDStageCompositionResolver: Sendable {
         var accumulator = USDStageLayerAccumulator()
         let arcs = try compositionArcs(in: layerStack, targetPrimPath: targetPrimPath)
         for arc in arcs.payloads.reversed() {
-            let payloadLayer = try flattenedReferencedLayer(
+            guard let payloadLayer = try flattenedReferencedLayer(
                 arc: arc,
                 ancestorKeys: descendantAncestorKeys,
                 cache: cache
-            )
-            try accumulator.merge(strongerLayer: payloadLayer)
+            ) else {
+                continue
+            }
+            try accumulator.merge(strongerLayer: payloadLayer, preservingWorldTransforms: true)
         }
         for arc in arcs.references.reversed() {
-            let referenceLayer = try flattenedReferencedLayer(
+            guard let referenceLayer = try flattenedReferencedLayer(
                 arc: arc,
                 ancestorKeys: descendantAncestorKeys,
                 cache: cache
-            )
-            try accumulator.merge(strongerLayer: referenceLayer)
+            ) else {
+                continue
+            }
+            try accumulator.merge(strongerLayer: referenceLayer, preservingWorldTransforms: true)
         }
 
         try accumulator.merge(strongerLayer: localLayerStack(from: layerStack))
@@ -167,7 +172,7 @@ struct USDStageCompositionResolver: Sendable {
         arc: USDStageResolvedCompositionArc,
         ancestorKeys: Set<USDStageCompositionKey>,
         cache: USDStageCompositionCache
-    ) throws -> USDALayer {
+    ) throws -> USDALayer? {
         let targetIdentifier: String
         let targetLayer: USDALayer
         if arc.assetPath.isEmpty {
@@ -178,11 +183,13 @@ struct USDStageCompositionResolver: Sendable {
             targetLayer = try requireLayer(resolvedIdentifier: targetIdentifier, cache: cache)
         }
 
-        let effectiveTargetPrimPath = try self.effectiveTargetPrimPath(
+        guard let effectiveTargetPrimPath = try self.effectiveTargetPrimPath(
             authoredTargetPrimPath: arc.targetPrimPath,
             targetLayer: targetLayer,
             targetIdentifier: targetIdentifier
-        )
+        ) else {
+            return nil
+        }
         let flattenedTargetLayer = try flattenedLayer(
             targetLayer,
             identifier: targetIdentifier,
@@ -195,14 +202,10 @@ struct USDStageCompositionResolver: Sendable {
                 "USDStage composition target prim \(effectiveTargetPrimPath) was not found in layer \(targetIdentifier)."
             )
         }
-        let targetParentTransform: USDTransformMatrix4x4
-        if targetLayer.resetXformStackPrimPaths.contains(effectiveTargetPrimPath) {
-            targetParentTransform = .identity
-        } else {
-            targetParentTransform = parentPrimPath(effectiveTargetPrimPath)
-                .flatMap { targetLayer.primTransforms[$0] }
-                ?? .identity
-        }
+        let targetParentTransform = composedTargetParentTransform(
+            for: effectiveTargetPrimPath,
+            in: flattenedTargetLayer
+        )
         let rewrittenLayer = try rewrite(
             flattenedTargetLayer,
             sourceTargetPrimPath: effectiveTargetPrimPath,
@@ -210,6 +213,18 @@ struct USDStageCompositionResolver: Sendable {
             targetParentTransform: targetParentTransform
         )
         return try applying(arc.layerOffset, to: rewrittenLayer)
+    }
+
+    private func composedTargetParentTransform(
+        for targetPrimPath: String,
+        in layer: USDALayer
+    ) -> USDTransformMatrix4x4 {
+        if layer.resetXformStackPrimPaths.contains(targetPrimPath) {
+            return .identity
+        }
+        return parentPrimPath(targetPrimPath)
+            .flatMap { layer.primTransforms[$0] }
+            ?? .identity
     }
 
     // MARK: - Layer resolution
@@ -239,11 +254,14 @@ struct USDStageCompositionResolver: Sendable {
         authoredTargetPrimPath: String?,
         targetLayer: USDALayer,
         targetIdentifier: String
-    ) throws -> String {
+    ) throws -> String? {
         if let authoredTargetPrimPath, !authoredTargetPrimPath.isEmpty, authoredTargetPrimPath != "/" {
             return authoredTargetPrimPath
         }
         guard let defaultPrim = targetLayer.defaultPrim, !defaultPrim.isEmpty else {
+            if missingDefaultPrimPolicy == .skipArc {
+                return nil
+            }
             throw USDError.invalidData(
                 "USDStage composition target layer \(targetIdentifier) has no defaultPrim for an unqualified reference."
             )
@@ -985,40 +1003,593 @@ private struct USDStageResolvedCompositionArc: Sendable {
     var stackRootIdentifier: String
 }
 
+private struct USDStageXformAuthorship: Sendable, Equatable {
+    var authorsOrder = false
+    var authorsOperation = false
+    var localSiteTransform: USDTransformMatrix4x4?
+}
+
 /// Accumulates layers from weakest to strongest, merging each stronger layer over the
 /// accumulated result. Spec lookup stays O(1) through the layer's own path index.
 private struct USDStageLayerAccumulator {
     private(set) var layer = USDALayer()
+    private var preservedLocalTransforms: [String: USDTransformMatrix4x4] = [:]
+    private var locallyAuthoredXformOpinions: [String: USDStageXformAuthorship] = [:]
 
-    mutating func merge(strongerLayer: USDALayer) throws {
+    mutating func merge(strongerLayer: USDALayer, preservingWorldTransforms: Bool = false) throws {
         layer.defaultPrim = strongerLayer.defaultPrim ?? layer.defaultPrim
         layer.metersPerUnit = strongerLayer.metersPerUnit ?? layer.metersPerUnit
         layer.upAxis = strongerLayer.upAxis ?? layer.upAxis
+        if !preservingWorldTransforms {
+            try mergeLocallyAuthoredXformOpinions(from: strongerLayer)
+        }
         for spec in strongerLayer.specs {
             try merge(strongerSpec: spec)
         }
-        try propagateAncestorTransforms(from: strongerLayer)
-        for (path, transform) in strongerLayer.primTransforms {
-            if let existingTransform = layer.primTransforms[path] {
-                layer.primTransforms[path] = try existingTransform.concatenating(transform)
-            } else {
-                layer.primTransforms[path] = transform
-            }
+        if preservingWorldTransforms {
+            try mergePreservedLocalTransforms(from: strongerLayer)
         }
-        layer.resetXformStackPrimPaths.formUnion(strongerLayer.resetXformStackPrimPaths)
+        layer.resetXformStackPrimPaths = try Self.resetXformStackPrimPaths(in: layer)
+        layer.primTransforms = try Self.worldTransforms(
+            in: layer,
+            preservedLocalTransforms: preservedLocalTransforms,
+            locallyAuthoredXformOpinions: locallyAuthoredXformOpinions,
+            resetXformStackPrimPaths: layer.resetXformStackPrimPaths
+        )
     }
 
-    private mutating func propagateAncestorTransforms(from strongerLayer: USDALayer) throws {
-        let existingTransforms = layer.primTransforms
-        for (ancestorPath, ancestorTransform) in strongerLayer.primTransforms {
-            for (descendantPath, descendantTransform) in existingTransforms {
-                guard descendantPath.hasPrefix(ancestorPath + "/"),
-                      strongerLayer.primTransforms[descendantPath] == nil else {
-                    continue
+    private mutating func mergePreservedLocalTransforms(from strongerLayer: USDALayer) throws {
+        let strongerTransforms = try Self.localTransformsFromWorldCache(in: strongerLayer)
+        for (path, transform) in strongerTransforms {
+            // Field merging already resolves arc strength; the sidecar keeps only
+            // the strongest preserved transform for later local-site composition.
+            preservedLocalTransforms[path] = transform
+        }
+    }
+
+    private mutating func mergeLocallyAuthoredXformOpinions(from strongerLayer: USDALayer) throws {
+        var opinions = Self.authoredXformOpinions(in: strongerLayer)
+        for (path, opinion) in opinions where opinion.authorsOrder {
+            opinions[path]?.localSiteTransform = try Self.localTransform(at: path, in: strongerLayer)
+        }
+        for (path, opinion) in opinions {
+            locallyAuthoredXformOpinions[path] = opinion
+        }
+    }
+
+    private static func localTransformsFromWorldCache(in layer: USDALayer) throws -> [String: USDTransformMatrix4x4] {
+        var transforms: [String: USDTransformMatrix4x4] = [:]
+        for path in layer.primTransforms.keys.sorted(by: compareNamespaceDepthThenPath) {
+            guard let worldTransform = layer.primTransforms[path] else {
+                continue
+            }
+            if layer.resetXformStackPrimPaths.contains(path) {
+                transforms[path] = worldTransform
+                continue
+            }
+            guard let parentPath = parentPrimPath(path),
+                  let parentWorldTransform = layer.primTransforms[parentPath] else {
+                transforms[path] = worldTransform
+                continue
+            }
+            transforms[path] = try worldTransform.concatenating(parentWorldTransform.inverted())
+        }
+        return transforms
+    }
+
+    private static func worldTransforms(
+        in layer: USDALayer,
+        preservedLocalTransforms: [String: USDTransformMatrix4x4],
+        locallyAuthoredXformOpinions: [String: USDStageXformAuthorship],
+        resetXformStackPrimPaths: Set<String>
+    ) throws -> [String: USDTransformMatrix4x4] {
+        var worldTransforms: [String: USDTransformMatrix4x4] = [:]
+        let primPaths = layer.specs
+            .filter { $0.specType == .prim }
+            .map(\.path)
+            .sorted(by: compareNamespaceDepthThenPath)
+        for path in primPaths {
+            let mergedLocalTransform = try localTransform(at: path, in: layer)
+            let localMatrix: USDTransformMatrix4x4
+            if let preservedLocalTransform = preservedLocalTransforms[path] {
+                if let opinion = locallyAuthoredXformOpinions[path], opinion.authorsOrder {
+                    localMatrix = try preservedLocalTransform.concatenating(
+                        opinion.localSiteTransform ?? .identity
+                    )
+                } else if let opinion = locallyAuthoredXformOpinions[path], opinion.authorsOperation {
+                    localMatrix = mergedLocalTransform
+                } else {
+                    localMatrix = preservedLocalTransform
                 }
-                layer.primTransforms[descendantPath] = try descendantTransform.concatenating(ancestorTransform)
+            } else {
+                localMatrix = mergedLocalTransform
+            }
+            if resetXformStackPrimPaths.contains(path) {
+                worldTransforms[path] = localMatrix
+                continue
+            }
+            guard let parentPath = parentPrimPath(path),
+                  let parentTransform = worldTransforms[parentPath] else {
+                worldTransforms[path] = localMatrix
+                continue
+            }
+            worldTransforms[path] = try localMatrix.concatenating(parentTransform)
+        }
+        return worldTransforms
+    }
+
+    private static func authoredXformOpinions(in layer: USDALayer) -> [String: USDStageXformAuthorship] {
+        var opinions: [String: USDStageXformAuthorship] = [:]
+        for spec in layer.specs where spec.specType == .attribute {
+            guard let propertyPath = propertyPathComponents(spec.path) else {
+                continue
+            }
+            if propertyPath.propertyName == "xformOpOrder" {
+                opinions[propertyPath.primPath, default: USDStageXformAuthorship()].authorsOrder = true
+            } else if propertyPath.propertyName.hasPrefix("xformOp:") {
+                opinions[propertyPath.primPath, default: USDStageXformAuthorship()].authorsOperation = true
             }
         }
+        return opinions
+    }
+
+    private static func propertyPathComponents(_ path: String) -> (primPath: String, propertyName: String)? {
+        guard let separator = path.firstIndex(of: "."), separator != path.startIndex else {
+            return nil
+        }
+        let propertyStart = path.index(after: separator)
+        guard propertyStart < path.endIndex else {
+            return nil
+        }
+        return (String(path[..<separator]), String(path[propertyStart...]))
+    }
+
+    private static func localTransform(at primPath: String, in layer: USDALayer) throws -> USDTransformMatrix4x4 {
+        guard let xformOpOrder = try xformOpOrderTokens(at: primPath, in: layer) else {
+            return .identity
+        }
+        var localMatrix = USDTransformMatrix4x4.identity
+        for opName in xformOpOrder.reversed() {
+            if opName == "!resetXformStack!" {
+                break
+            }
+            let orderedOp = orderedXformOperationName(from: opName)
+            guard let opSpec = layer.spec(at: "\(primPath).\(orderedOp.attributeName)") else {
+                continue
+            }
+            let opTransform = try transform(forXformOp: orderedOp.attributeName, spec: opSpec)
+            let effectiveTransform = orderedOp.isInverted ? try opTransform.inverted() : opTransform
+            localMatrix = try localMatrix.concatenating(effectiveTransform)
+        }
+        return localMatrix
+    }
+
+    private static func orderedXformOperationName(from opName: String) -> (attributeName: String, isInverted: Bool) {
+        let prefix = "!invert!"
+        guard opName.hasPrefix(prefix) else {
+            return (opName, false)
+        }
+        var attributeName = String(opName.dropFirst(prefix.count))
+        if attributeName.hasPrefix(":") {
+            attributeName.removeFirst()
+        }
+        return (attributeName, true)
+    }
+
+    private static func transform(forXformOp opName: String, spec: USDLayerSpec) throws -> USDTransformMatrix4x4 {
+        guard let operationType = xformOperationType(from: opName) else {
+            throw USDError.invalidData("USDStage composition xform op \(opName) is malformed.")
+        }
+        switch operationType {
+        case "translate":
+            return .translation(try requiredVector3Value(forXformOp: opName, spec: spec))
+        case "translateX":
+            return .translation(USDTransformVector3D(
+                x: try requiredScalarValue(forXformOp: opName, spec: spec),
+                y: 0,
+                z: 0
+            ))
+        case "translateY":
+            return .translation(USDTransformVector3D(
+                x: 0,
+                y: try requiredScalarValue(forXformOp: opName, spec: spec),
+                z: 0
+            ))
+        case "translateZ":
+            return .translation(USDTransformVector3D(
+                x: 0,
+                y: 0,
+                z: try requiredScalarValue(forXformOp: opName, spec: spec)
+            ))
+        case "scale":
+            return .scale(try requiredVector3Value(forXformOp: opName, spec: spec))
+        case "scaleX":
+            return .scale(USDTransformVector3D(
+                x: try requiredScalarValue(forXformOp: opName, spec: spec),
+                y: 1,
+                z: 1
+            ))
+        case "scaleY":
+            return .scale(USDTransformVector3D(
+                x: 1,
+                y: try requiredScalarValue(forXformOp: opName, spec: spec),
+                z: 1
+            ))
+        case "scaleZ":
+            return .scale(USDTransformVector3D(
+                x: 1,
+                y: 1,
+                z: try requiredScalarValue(forXformOp: opName, spec: spec)
+            ))
+        case "rotateX":
+            return try .rotationX(angleInDegrees: requiredScalarValue(forXformOp: opName, spec: spec))
+        case "rotateY":
+            return try .rotationY(angleInDegrees: requiredScalarValue(forXformOp: opName, spec: spec))
+        case "rotateZ":
+            return try .rotationZ(angleInDegrees: requiredScalarValue(forXformOp: opName, spec: spec))
+        case "rotateXYZ", "rotateXZY", "rotateYXZ", "rotateYZX", "rotateZXY", "rotateZYX":
+            let order = String(operationType.dropFirst("rotate".count))
+            return try .eulerRotation(order: order, anglesInDegrees: requiredVector3Value(forXformOp: opName, spec: spec))
+        case "orient":
+            return try requiredQuaternionValue(forXformOp: opName, spec: spec).rotationMatrix()
+        case "transform":
+            return try requiredMatrix4x4Value(forXformOp: opName, spec: spec)
+        default:
+            throw USDError.unsupportedFeature("USDStage composition xform op \(operationType) is not supported yet.")
+        }
+    }
+
+    private static func xformOperationType(from opName: String) -> String? {
+        let prefix = "xformOp:"
+        guard opName.hasPrefix(prefix) else {
+            return nil
+        }
+        let suffixStart = opName.index(opName.startIndex, offsetBy: prefix.count)
+        return opName[suffixStart...].split(separator: ":", maxSplits: 1).first.map(String.init)
+    }
+
+    private static func requiredScalarValue(forXformOp opName: String, spec: USDLayerSpec) throws -> Double {
+        guard let field = spec.fields["default"] else {
+            throw USDError.missingRequiredField(opName)
+        }
+        return try scalarValue(from: field, name: opName)
+    }
+
+    private static func requiredVector3Value(forXformOp opName: String, spec: USDLayerSpec) throws -> USDTransformVector3D {
+        guard let field = spec.fields["default"] else {
+            throw USDError.missingRequiredField(opName)
+        }
+        return try vector3Value(from: field, name: opName)
+    }
+
+    private static func requiredQuaternionValue(forXformOp opName: String, spec: USDLayerSpec) throws -> USDTransformQuaternion {
+        guard let field = spec.fields["default"] else {
+            throw USDError.missingRequiredField(opName)
+        }
+        let values = try tupleValues(from: field, expectedCount: 4, name: opName)
+        return USDTransformQuaternion(
+            real: values[0],
+            imaginaryX: values[1],
+            imaginaryY: values[2],
+            imaginaryZ: values[3]
+        )
+    }
+
+    private static func requiredMatrix4x4Value(forXformOp opName: String, spec: USDLayerSpec) throws -> USDTransformMatrix4x4 {
+        guard let field = spec.fields["default"] else {
+            throw USDError.missingRequiredField(opName)
+        }
+        return USDTransformMatrix4x4(values: try matrix4x4Values(from: field, name: opName))
+    }
+
+    private static func scalarValue(from field: USDLayerFieldValue, name: String) throws -> Double {
+        switch field {
+        case .authored(let text):
+            let trimmedText = removingLineComments(from: text).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let value = Double(trimmedText), value.isFinite else {
+                throw USDError.invalidData("USDStage composition \(name) contains a non-finite scalar.")
+            }
+            return value
+        default:
+            throw USDError.unsupportedFeature("USDStage composition cannot read a typed scalar xform op field yet.")
+        }
+    }
+
+    private static func vector3Value(from field: USDLayerFieldValue, name: String) throws -> USDTransformVector3D {
+        let values = try tupleValues(from: field, expectedCount: 3, name: name)
+        return USDTransformVector3D(x: values[0], y: values[1], z: values[2])
+    }
+
+    private static func tupleValues(
+        from field: USDLayerFieldValue,
+        expectedCount: Int,
+        name: String
+    ) throws -> [Double] {
+        switch field {
+        case .authored(let text):
+            return try tupleValues(from: text, expectedCount: expectedCount, name: name)
+        default:
+            throw USDError.unsupportedFeature("USDStage composition cannot read a typed tuple xform op field yet.")
+        }
+    }
+
+    private static func tupleValues(
+        from text: String,
+        expectedCount: Int,
+        name: String
+    ) throws -> [Double] {
+        let body = try parenthesizedBody(text, name: name)
+        let values = try numericValues(in: body, name: name)
+        guard values.count == expectedCount else {
+            throw USDError.invalidData("USDStage composition \(name) tuple contains \(values.count) values.")
+        }
+        return values
+    }
+
+    private static func matrix4x4Values(from field: USDLayerFieldValue, name: String) throws -> [Double] {
+        switch field {
+        case .authored(let text):
+            return try matrix4x4Values(from: text, name: name)
+        default:
+            throw USDError.unsupportedFeature("USDStage composition cannot read a typed matrix xform op field yet.")
+        }
+    }
+
+    private static func matrix4x4Values(from text: String, name: String) throws -> [Double] {
+        let body = try parenthesizedBody(text, name: name)
+        guard body.contains("(") else {
+            let values = try numericValues(in: body, name: name)
+            guard values.count == 16 else {
+                throw USDError.invalidData("USDStage composition \(name) matrix contains \(values.count) values.")
+            }
+            return values
+        }
+        var cursor = body.startIndex
+        var rows: [[Double]] = []
+        while true {
+            skipSeparators(in: body, index: &cursor)
+            guard cursor < body.endIndex else {
+                break
+            }
+            guard body[cursor] == "(" else {
+                throw USDError.invalidData("USDStage composition \(name) matrix contains unexpected content.")
+            }
+            let close = try matchingDelimiter(in: body, from: cursor, open: "(", close: ")")
+            let rowBody = String(body[body.index(after: cursor)..<close])
+            let row = try numericValues(in: rowBody, name: name)
+            guard row.count == 4 else {
+                throw USDError.invalidData("USDStage composition \(name) matrix row contains \(row.count) values.")
+            }
+            rows.append(row)
+            cursor = body.index(after: close)
+        }
+        guard rows.count == 4 else {
+            throw USDError.invalidData("USDStage composition \(name) matrix contains \(rows.count) rows.")
+        }
+        return rows.flatMap { $0 }
+    }
+
+    private static func parenthesizedBody(_ text: String, name: String) throws -> String {
+        var cursor = text.startIndex
+        skipWhitespace(in: text, index: &cursor)
+        guard cursor < text.endIndex, text[cursor] == "(" else {
+            throw USDError.invalidData("USDStage composition \(name) is missing an opening parenthesis.")
+        }
+        let close = try matchingDelimiter(in: text, from: cursor, open: "(", close: ")")
+        var trailing = text.index(after: close)
+        skipWhitespace(in: text, index: &trailing)
+        guard trailing == text.endIndex else {
+            throw USDError.invalidData("USDStage composition \(name) contains trailing tuple content.")
+        }
+        return String(text[text.index(after: cursor)..<close])
+    }
+
+    private static func numericValues(in text: String, name: String) throws -> [Double] {
+        let tokens = removingLineComments(from: text).split { $0 == "," || $0.isWhitespace || $0.isNewline }
+        return try tokens.map { token in
+            guard let value = Double(token), value.isFinite else {
+                throw USDError.invalidData("USDStage composition \(name) contains a non-finite number.")
+            }
+            return value
+        }
+    }
+
+    private static func resetXformStackPrimPaths(in layer: USDALayer) throws -> Set<String> {
+        var paths: Set<String> = []
+        for spec in layer.specs where spec.specType == .prim {
+            guard let tokens = try xformOpOrderTokens(at: spec.path, in: layer),
+                  tokens.contains("!resetXformStack!") else {
+                continue
+            }
+            paths.insert(spec.path)
+        }
+        return paths
+    }
+
+    private static func xformOpOrderTokens(at primPath: String, in layer: USDALayer) throws -> [String]? {
+        guard let spec = layer.spec(at: "\(primPath).xformOpOrder"),
+              let field = spec.fields["default"] else {
+            return nil
+        }
+        return try tokenArray(from: field)
+    }
+
+    private static func tokenArray(from field: USDLayerFieldValue) throws -> [String] {
+        switch field {
+        case .authored(let text):
+            return try authoredTokenArray(text)
+        default:
+            throw USDError.unsupportedFeature("USDStage composition cannot read a typed xformOpOrder field yet.")
+        }
+    }
+
+    private static func authoredTokenArray(_ text: String) throws -> [String] {
+        var cursor = text.startIndex
+        skipWhitespace(in: text, index: &cursor)
+        guard cursor < text.endIndex, text[cursor] == "[" else {
+            throw USDError.invalidData("USDStage composition xformOpOrder must be a token array.")
+        }
+        cursor = text.index(after: cursor)
+        var tokens: [String] = []
+        while true {
+            skipWhitespace(in: text, index: &cursor)
+            guard cursor < text.endIndex else {
+                throw USDError.invalidData("USDStage composition xformOpOrder is unterminated.")
+            }
+            if text[cursor] == "]" {
+                cursor = text.index(after: cursor)
+                skipWhitespace(in: text, index: &cursor)
+                guard cursor == text.endIndex else {
+                    throw USDError.invalidData("USDStage composition xformOpOrder contains trailing content.")
+                }
+                return tokens
+            }
+            tokens.append(try authoredStringToken(in: text, index: &cursor))
+            skipWhitespace(in: text, index: &cursor)
+            if cursor < text.endIndex, text[cursor] == "," {
+                cursor = text.index(after: cursor)
+            }
+        }
+    }
+
+    private static func authoredStringToken(in text: String, index: inout String.Index) throws -> String {
+        guard index < text.endIndex else {
+            throw USDError.invalidData("USDStage composition xformOpOrder token is missing.")
+        }
+        if text[index] == "\"" || text[index] == "'" {
+            return try quotedString(in: text, index: &index)
+        }
+        let start = index
+        while index < text.endIndex, text[index] != "," && text[index] != "]" && !text[index].isWhitespace {
+            index = text.index(after: index)
+        }
+        guard start < index else {
+            throw USDError.invalidData("USDStage composition xformOpOrder token is empty.")
+        }
+        return String(text[start..<index])
+    }
+
+    private static func quotedString(in text: String, index: inout String.Index) throws -> String {
+        let quote = text[index]
+        index = text.index(after: index)
+        var value = ""
+        while index < text.endIndex {
+            let character = text[index]
+            if character == quote {
+                index = text.index(after: index)
+                return value
+            }
+            if character == "\\" {
+                index = text.index(after: index)
+                guard index < text.endIndex else {
+                    throw USDError.invalidData("USDStage composition xformOpOrder escape is unterminated.")
+                }
+            }
+            value.append(text[index])
+            index = text.index(after: index)
+        }
+        throw USDError.invalidData("USDStage composition xformOpOrder string is unterminated.")
+    }
+
+    private static func skipWhitespace(in text: String, index: inout String.Index) {
+        while index < text.endIndex {
+            if text[index].isWhitespace {
+                index = text.index(after: index)
+                continue
+            }
+            if text[index] == "#" {
+                skipLineComment(in: text, index: &index)
+                continue
+            }
+            break
+        }
+    }
+
+    private static func skipSeparators(in text: String, index: inout String.Index) {
+        while index < text.endIndex {
+            if text[index].isWhitespace || text[index] == "," {
+                index = text.index(after: index)
+                continue
+            }
+            if text[index] == "#" {
+                skipLineComment(in: text, index: &index)
+                continue
+            }
+            break
+        }
+    }
+
+    private static func matchingDelimiter(
+        in text: String,
+        from openIndex: String.Index,
+        open: Character,
+        close: Character
+    ) throws -> String.Index {
+        var depth = 0
+        var cursor = openIndex
+        while cursor < text.endIndex {
+            let character = text[cursor]
+            if character == "#" {
+                skipLineComment(in: text, index: &cursor)
+                continue
+            }
+            if character == "\"" || character == "'" {
+                var quotedCursor = cursor
+                _ = try quotedString(in: text, index: &quotedCursor)
+                cursor = quotedCursor
+                continue
+            }
+            if character == open {
+                depth += 1
+            } else if character == close {
+                depth -= 1
+                if depth == 0 {
+                    return cursor
+                }
+            }
+            cursor = text.index(after: cursor)
+        }
+        throw USDError.invalidData("USDStage composition value delimiter is unterminated.")
+    }
+
+    private static func skipLineComment(in text: String, index: inout String.Index) {
+        while index < text.endIndex, text[index] != "\n", text[index] != "\r" {
+            index = text.index(after: index)
+        }
+    }
+
+    private static func removingLineComments(from text: String) -> String {
+        var result = ""
+        var cursor = text.startIndex
+        while cursor < text.endIndex {
+            if text[cursor] == "#" {
+                skipLineComment(in: text, index: &cursor)
+                continue
+            }
+            result.append(text[cursor])
+            cursor = text.index(after: cursor)
+        }
+        return result
+    }
+
+    private static func parentPrimPath(_ path: String) -> String? {
+        guard path != "/", let slash = path.lastIndex(of: "/"), slash != path.startIndex else {
+            return nil
+        }
+        return String(path[..<slash])
+    }
+
+    private static func compareNamespaceDepthThenPath(_ lhs: String, _ rhs: String) -> Bool {
+        let lhsDepth = namespaceDepth(of: lhs)
+        let rhsDepth = namespaceDepth(of: rhs)
+        guard lhsDepth == rhsDepth else {
+            return lhsDepth < rhsDepth
+        }
+        return lhs < rhs
+    }
+
+    private static func namespaceDepth(of path: String) -> Int {
+        path.split(separator: "/").count
     }
 
     private mutating func merge(strongerSpec: USDLayerSpec) throws {
